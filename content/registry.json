@@ -1,0 +1,99 @@
+{
+  "brand": "HeightCue",
+  "updatedAt": "2026-08-20T04:00:00+09:00",
+  "channel": "https://www.youtube.com/@heightcue",
+  "items": [
+    {
+      "id": "hc-20260820-01",
+      "slug": "01-measure-height",
+      "title": "아이 키, 잴 때마다 다른 이유",
+      "platform": "youtube_shorts",
+      "videoId": "q2reSMWwntc",
+      "url": "https://youtube.com/shorts/q2reSMWwntc",
+      "status": "public",
+      "language": "ko",
+      "aiDisclosure": true,
+      "captions": "ko",
+      "article": "https://heungkyulee.github.io/heightcue/articles/measure-height-correctly.html",
+      "sources": [
+        "https://www.cdc.gov/growth-chart-training/hcp/using-growth-charts/recommendations-and-rationale.html",
+        "https://pedsendo.org/clinical-resource/child-with-suspected-short-stature/"
+      ],
+      "claimClass": "measurement"
+    },
+    {
+      "id": "hc-20260820-02",
+      "slug": "02-growth-curve",
+      "title": "백분위 숫자 하나보다 중요한 것",
+      "platform": "youtube_shorts",
+      "videoId": "aDkQ1LNWqzo",
+      "url": "https://youtube.com/shorts/aDkQ1LNWqzo",
+      "status": "public",
+      "language": "ko",
+      "aiDisclosure": true,
+      "captions": "ko",
+      "article": "https://heungkyulee.github.io/heightcue/articles/growth-curve-signals.html",
+      "sources": [
+        "https://www.cdc.gov/growthcharts/cdc-growth-charts.htm",
+        "https://pedsendo.org/clinical-resource/child-with-suspected-short-stature/"
+      ],
+      "claimClass": "growth-curve"
+    },
+    {
+      "id": "hc-20260820-03",
+      "slug": "03-calcium-vitamin",
+      "title": "칼슘과 비타민 D가 키를 키워줄까?",
+      "platform": "youtube_shorts",
+      "videoId": "pujoAcy2JDQ",
+      "url": "https://youtube.com/shorts/pujoAcy2JDQ",
+      "status": "public",
+      "language": "ko",
+      "aiDisclosure": true,
+      "captions": "ko",
+      "article": "https://heungkyulee.github.io/heightcue/articles/calcium-vitamin-d-height.html",
+      "sources": [
+        "https://ods.od.nih.gov/factsheets/VitaminD-HealthProfessional/",
+        "https://www.ncbi.nlm.nih.gov/books/NBK73502/",
+        "https://www.foodsafetykorea.go.kr/portal/healthyfoodlife/functionalityView.do?viewNo=31"
+      ],
+      "claimClass": "nutrition"
+    },
+    {
+      "id": "hc-20260820-04",
+      "slug": "04-sleep-height",
+      "title": "잠을 더 자면 몇 cm 더 클까?",
+      "platform": "youtube_shorts",
+      "videoId": "2xZRazUSBpE",
+      "url": "https://youtube.com/shorts/2xZRazUSBpE",
+      "status": "public",
+      "language": "ko",
+      "aiDisclosure": true,
+      "captions": "ko",
+      "article": "https://heungkyulee.github.io/heightcue/articles/sleep-and-growth.html",
+      "sources": [
+        "https://publications.aap.org/aapnews/news/6630/AAP-endorses-new-recommendations-on-sleep-times",
+        "https://www.jped.com.br/en-sleep-weight-height-development-articulo-S0021755718310192"
+      ],
+      "claimClass": "sleep"
+    },
+    {
+      "id": "hc-20260820-05",
+      "slug": "05-stretching-device",
+      "title": "스트레칭 기구가 늘리는 것은 키일까?",
+      "platform": "youtube_shorts",
+      "videoId": "x3ObVtnMGfw",
+      "url": "https://youtube.com/shorts/x3ObVtnMGfw",
+      "status": "public",
+      "language": "ko",
+      "aiDisclosure": true,
+      "captions": "ko",
+      "article": "https://heungkyulee.github.io/heightcue/articles/stretching-posture-height.html",
+      "sources": [
+        "https://www.endocrine.org/patient-engagement/endocrine-library/growth-and-short-stature",
+        "https://pubmed.ncbi.nlm.nih.gov/30593790/",
+        "https://emedi.mfds.go.kr/portal"
+      ],
+      "claimClass": "product-evidence"
+    }
+  ]
+}
