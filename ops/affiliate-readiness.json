@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-08-20T04:02:00+09:00",
+  "operator": "이흥규 개인",
+  "brand": "HeightCue",
+  "businessModel": "affiliate-only intermediary; HeightCue is never merchant of record",
+  "revenueEnabled": false,
+  "status": "blocked_pending_human_identity_and_contract_steps",
+  "programs": [
+    {
+      "id": "coupang-partners-kr",
+      "market": "KR",
+      "status": "signup_blocked",
+      "merchantOfRecord": "Coupang or named marketplace seller",
+      "blockers": [
+        "No usable Coupang login credential",
+        "Coupang membership and Partners terms require user acceptance",
+        "Real-name/phone verification required",
+        "Settlement bank and tax status require user confirmation"
+      ],
+      "automaticActionsAllowed": [
+        "browser research",
+        "candidate verification",
+        "draft link placement plan"
+      ],
+      "automaticActionsForbidden": [
+        "terms acceptance",
+        "identity or phone verification",
+        "bank or tax entry",
+        "self-approval",
+        "publishing unapproved affiliate links"
+      ]
+    },
+    {
+      "id": "amazon-associates-us",
+      "market": "US",
+      "status": "researched_not_enrolled",
+      "merchantOfRecord": "Amazon or marketplace seller",
+      "blockers": [
+        "Program enrollment and tax/payout forms not completed"
+      ]
+    }
+  ],
+  "products": [
+    {
+      "id": "kr-huk2",
+      "title": "휴비딕 초음파 무선 신장계 HUK-2",
+      "url": "https://www.coupang.com/vp/products/156667324?itemId=2969645903&vendorItemId=94482220041",
+      "seller": "㈜성욱인터내셔널",
+      "fulfillment": "CJ대한통운 / third-party marketplace",
+      "priceObservedKRW": 27650,
+      "reviewsObserved": 2398,
+      "claimClass": "measurement-only",
+      "affiliateLinkStatus": "inactive"
+    },
+    {
+      "id": "kr-cas-km01",
+      "title": "카스 키즈 미터 CES-KM01",
+      "url": "https://www.coupang.com/vp/products/7478630797?itemId=19529740283&vendorItemId=94667316117",
+      "seller": "엘제이커머스",
+      "fulfillment": "third-party marketplace",
+      "priceObservedKRW": 26900,
+      "reviewsObserved": 457,
+      "claimClass": "measurement-only",
+      "affiliateLinkStatus": "inactive"
+    },
+    {
+      "id": "kr-modusmile-180",
+      "title": "모두스마일 키재기자 화이트 180cm",
+      "url": "https://www.coupang.com/vp/products/7658275053?itemId=24126566896&vendorItemId=91145636141",
+      "seller": "주식회사 모두그룹",
+      "fulfillment": "third-party marketplace",
+      "priceObservedKRW": 13800,
+      "reviewsObserved": 1754,
+      "claimClass": "measurement-only",
+      "affiliateLinkStatus": "inactive"
+    },
+    {
+      "id": "kr-warmnest-sticker",
+      "title": "웜네스트 투명 키재기 스티커 시트지",
+      "url": "https://www.coupang.com/vp/products/9125480496?itemId=26845936736&vendorItemId=95588023377",
+      "seller": "재즈몽",
+      "fulfillment": "third-party marketplace",
+      "priceObservedKRW": 3000,
+      "reviewsObserved": 560,
+      "claimClass": "growth-recording-only",
+      "affiliateLinkStatus": "inactive"
+    },
+    {
+      "id": "kr-nuela-sticker",
+      "title": "누엘라 키성장 기록 키재기 스티커",
+      "url": "https://www.coupang.com/vp/products/9003620104?itemId=26385019835&vendorItemId=93361447526",
+      "seller": "not shown",
+      "fulfillment": "Coupang Rocket fulfillment",
+      "priceObservedKRW": 2510,
+      "reviewsObserved": 510,
+      "claimClass": "growth-recording-only",
+      "affiliateLinkStatus": "inactive"
+    }
+  ],
+  "trackingPlan": {
+    "contentRegistry": "/content/registry.json",
+    "performanceLog": "/ops/performance-log.csv",
+    "browserSourcesOfTruth": [
+      "public YouTube channel and per-video analytics",
+      "GitHub Pages live state",
+      "affiliate dashboard after approval"
+    ],
+    "contentKeyFormat": "hc-YYYYMMDD-NN",
+    "outboundKeyFormat": "product-id__content-id",
+    "activationGate": "Program approved and a browser-generated affiliate link is visibly accepted",
+    "requiredDisclosures": [
+      "이 포스팅은 제휴 활동의 일환으로 일정액의 수수료를 제공받을 수 있습니다.",
+      "일반 교육 정보이며 진단이나 치료를 대신하지 않습니다."
+    ],
+    "currentCollection": [
+      "public video count",
+      "public views by video",
+      "subscriber count",
+      "site deployment state"
+    ],
+    "postApprovalCollection": [
+      "affiliate clicks",
+      "ordered items",
+      "commission",
+      "conversion rate when both click and order counts are available"
+    ]
+  },
+  "humanResumeChecklist": [
+    "Use or create a Coupang account under the operator’s real identity",
+    "Review and accept mandatory Coupang and Coupang Partners terms",
+    "Complete phone/real-name verification",
+    "Confirm tax/business classification without assumption",
+    "Enter settlement bank details personally",
+    "Wait for provider approval",
+    "Generate each product link in the Partners browser UI",
+    "Place disclosure adjacent to every live affiliate link",
+    "Verify link, click report, and merchant-of-record behavior end to end"
+  ]
+}
