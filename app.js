@@ -1,0 +1,1 @@
+document.addEventListener('click',e=>{const a=e.target.closest('a[data-track]');if(!a)return;const detail={label:a.dataset.track,href:a.href,at:new Date().toISOString()};window.dispatchEvent(new CustomEvent('heightcue:outbound',{detail}));if(typeof window.gtag==='function')window.gtag('event','outbound_click',detail);});
