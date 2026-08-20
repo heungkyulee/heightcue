@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HeightCue | 身高管理，从准确测量开始</title>
+<meta name="description" content="基于循证的儿童身高管理指南。如何准确测量、如何读懂生长曲线、什么时候该去看医生。">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#fff;--bg2:#F7F7F5;--tx:#111;--tx2:#555;--tx3:#999;--ac:#EA580C;--gn:#047857;--gn2:#ECFDF5;--bd:#E5E5E3;--r:20px;--sh:0 1px 3px rgba(0,0,0,.04),0 4px 16px rgba(0,0,0,.06)}
+html{scroll-behavior:smooth}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;color:var(--tx);background:var(--bg);line-height:1.7;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+.ct{max-width:740px;margin:0 auto;padding:0 20px}
+header{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.88);backdrop-filter:blur(20px);border-bottom:1px solid var(--bd)}
+header .ct{display:flex;align-items:center;justify-content:space-between;height:52px}
+.logo{font-weight:900;font-size:18px;letter-spacing:-.03em}
+.lsw{display:flex;gap:2px;background:var(--bg2);border-radius:10px;padding:2px}
+.lsw a{padding:5px 12px;border-radius:8px;font-size:12px;font-weight:700;color:var(--tx3);transition:.15s}
+.lsw a.on{background:#fff;color:var(--tx);box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.hero{padding:56px 0 40px}
+.hero h1{font-size:clamp(26px,5vw,40px);line-height:1.2;letter-spacing:-.03em;font-weight:900}
+.hero h1 em{font-style:normal;color:var(--ac)}
+.hero .sub{margin-top:14px;font-size:16px;color:var(--tx2);line-height:1.8}
+.hero .tags{display:flex;gap:16px;margin-top:22px;flex-wrap:wrap}
+.hero .tag{font-size:12px;font-weight:700;color:var(--gn);display:flex;align-items:center;gap:5px}
+.hero .tag::before{content:"✓";display:inline-flex;width:18px;height:18px;border-radius:50%;background:var(--gn2);align-items:center;justify-content:center;font-size:10px}
+.sec{padding:44px 0;border-top:1px solid var(--bd)}
+.sec h2{font-size:clamp(20px,4vw,28px);font-weight:900;letter-spacing:-.03em;line-height:1.25}
+.sec .intro{margin-top:10px;color:var(--tx2);font-size:15px}
+.card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-top:24px}
+.card{background:#fff;border-radius:16px;box-shadow:var(--sh);padding:22px}
+.card h3{font-size:17px;font-weight:800;margin-bottom:6px}
+.card p{font-size:14px;color:var(--tx2);line-height:1.65}
+.card .src{margin-top:10px;font-size:12px;color:var(--tx3)}
+.card .src a{color:var(--gn);text-decoration:underline}
+.notice{background:#FFF7ED;border:1px solid #FDBA74;border-radius:16px;padding:20px 24px;margin:32px 0;font-size:14px;color:#9A3412;line-height:1.65}
+.notice b{display:block;margin-bottom:4px;font-size:15px;color:#7C2D12}
+.disc{background:var(--bg2);border-radius:16px;padding:20px 24px;margin-bottom:40px;font-size:12px;color:var(--tx2);line-height:1.7}
+.disc b{color:var(--tx);font-size:13px}
+.disc p+p{margin-top:6px}
+footer{border-top:1px solid var(--bd)}
+footer .ct{padding:24px 20px 48px;display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;font-size:12px;color:var(--tx3)}
+footer nav{display:flex;gap:14px}
+@media(max-width:600px){
+  .hero{padding:40px 0 28px}
+  .card-grid{grid-template-columns:1fr}
+  footer .ct{flex-direction:column}
+}
+</style>
+</head>
+<body>
+
+<header>
+<div class="ct">
+  <a class="logo" href="/heightcue/">HeightCue</a>
+  <div class="lsw">
+    <a href="/heightcue/kr/">🇰🇷 한국</a>
+    <a href="/heightcue/us/">🇺🇸 US</a>
+    <a class="on">🇨🇳 中文</a>
+  </div>
+</div>
+</header>
+
+<main>
+
+<section class="hero">
+<div class="ct">
+  <h1>身高管理，<br>从<em>准确测量</em>开始。</h1>
+  <p class="sub">HeightCue 提供基于循证医学的儿童身高管理指南。我们不销售任何产品，不承诺增高效果，只帮助家长读懂孩子的生长信号。</p>
+  <div class="tags">
+    <span class="tag">循证医学来源</span>
+    <span class="tag">不销售任何产品</span>
+    <span class="tag">不承诺增高效果</span>
+  </div>
+</div>
+</section>
+
+<section class="sec">
+<div class="ct">
+  <h2>孩子的身高，你量对了吗？</h2>
+  <p class="intro">同一个孩子，不同时间、不同姿势、不同工具测量，结果可以相差 1-2 厘米。要追踪生长趋势，必须在相同条件下反复测量。</p>
+  <div class="card-grid">
+    <div class="card">
+      <h3>测量四步法</h3>
+      <p>① 脱鞋，双脚并拢站在平坦硬地面上<br>② 背靠垂直墙面<br>③ 目视前方，下巴自然放松<br>④ 记录日期和结果，尽量在同一时间段测量</p>
+      <div class="src">来源：<a href="https://www.cdc.gov/growthcharts/" target="_blank" rel="noopener">CDC Growth Charts</a></div>
+    </div>
+    <div class="card">
+      <h3>为什么每次量的不一样？</h3>
+      <p>早晨比晚上高 1-2 厘米（椎间盘白天受压缩短）。站姿不同、地面软硬不同、测量工具不同都会影响结果。这不是孩子在"缩水"，而是测量条件不一致。</p>
+    </div>
+  </div>
+</div>
+</section>
+
+<section class="sec">
+<div class="ct">
+  <h2>生长曲线怎么看？</h2>
+  <p class="intro">一次测量的百分位数字不重要。重要的是多次测量连成的趋势线。</p>
+  <div class="card-grid">
+    <div class="card">
+      <h3>百分位 ≠ 诊断</h3>
+      <p>第 10 百分位不意味着"矮"。如果孩子一直沿着第 10 百分位稳定生长，说明生长正常。关注的是曲线方向，不是单次数字。</p>
+      <div class="src">来源：<a href="https://www.who.int/tools/child-growth-standards" target="_blank" rel="noopener">WHO 儿童生长标准</a></div>
+    </div>
+    <div class="card">
+      <h3>什么时候该去看医生？</h3>
+      <p>如果生长曲线连续穿越两条百分位线向下、一年生长速度明显低于同龄标准、或出现其他症状，建议带记录去看儿童内分泌科。</p>
+      <div class="src">来源：<a href="https://pedsendo.org/clinical-resource/child-with-suspected-short-stature/" target="_blank" rel="noopener">Pediatric Endocrine Society</a></div>
+    </div>
+  </div>
+</div>
+</section>
+
+<section class="sec">
+<div class="ct">
+  <h2>营养和睡眠的真实作用</h2>
+  <div class="card-grid">
+    <div class="card">
+      <h3>钙和维生素 D</h3>
+      <p>支持骨骼正常发育，但不能让正常发育的孩子长得更高。缺乏时需要补充，不缺时额外补充没有增高效果。</p>
+    </div>
+    <div class="card">
+      <h3>充足的睡眠</h3>
+      <p>生长激素在深度睡眠期间分泌最多。睡眠不足可能影响正常生长，但"多睡就能多长"没有临床证据支持。建议参考年龄段推荐睡眠时长。</p>
+    </div>
+    <div class="card">
+      <h3>拉伸和运动</h3>
+      <p>运动有益健康，但没有任何拉伸器材或运动方式被证实能永久增加身高。"用了这个器材长高 X 厘米"是虚假宣传。</p>
+    </div>
+  </div>
+</div>
+</section>
+
+<div class="ct">
+<div class="notice">
+  <b>⚠ 关于中国市场的说明</b>
+  HeightCue 在中国大陆地区仅提供教育内容，不推荐、不销售、不代理任何身高相关产品。根据中国现行法规，"改善生长发育"已于 2023 年从保健食品功能声称目录中移除，任何产品不得声称促进身高增长。HeightCue 严格遵守这一规定。
+</div>
+</div>
+
+<div class="ct">
+<div class="disc">
+  <p><b>医学声明</b> HeightCue 的内容是面向成人照护者的一般教育信息，不替代医学诊断或治疗。如果对孩子的生长有疑虑，请咨询儿童内分泌科医生。</p>
+  <p><b>内容声明</b> 本页面内容基于公开发表的循证医学资料。部分内容使用 AI 辅助撰写，所有引用来源均已标注。</p>
+</div>
+</div>
+
+</main>
+
+<footer>
+<div class="ct">
+  <div>
+    <strong>HeightCue</strong>
+    <div style="margin-top:4px">&copy; 2026 HeightCue</div>
+  </div>
+  <nav>
+    <a href="/heightcue/">首页</a>
+    <a href="/heightcue/disclosure.html">声明</a>
+    <a href="/heightcue/privacy.html">隐私</a>
+  </nav>
+</div>
+</footer>
+
+</body>
+</html>

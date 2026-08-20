@@ -3,591 +3,182 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>HeightCue US | Verified Growth & Height Product Picks</title>
-<meta name="description" content="Measurement tools, posture aids, elevator shoes, and styling picks. HeightCue never sells directly. We compare, verify, and disclose affiliate relationships.">
-<meta property="og:title" content="HeightCue US | Verified Growth & Height Product Picks">
-<meta property="og:description" content="From stadiometers to elevator shoes. We compare and keep only what holds up.">
-<meta property="og:type" content="website">
-<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<title>HeightCue | Height concerns end here.</title>
+<meta name="description" content="Stadiometers to elevator shoes. Tested, compared, evidence only. HeightCue never sells directly.">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --bg:#FFFBF7;--card:#fff;--text:#1A1A2E;--sub:#6B7280;--border:#E8E4DD;
-  --accent:#FF6B35;--accent-h:#E85D2C;--trust:#059669;--trust-bg:#ECFDF5;
-  --pick:#FFF7ED;--pick-border:#FDBA74;
-  --shadow:0 2px 16px rgba(26,26,46,.06);--shadow-h:0 8px 32px rgba(26,26,46,.10);
-  --r:16px;--max:1100px
-}
-html{scroll-behavior:smooth;scroll-padding-top:120px}
-body{font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:var(--text);background:var(--bg);line-height:1.6;-webkit-font-smoothing:antialiased}
-a{color:inherit;text-decoration:none}
-img{display:block;max-width:100%}
-.w{max-width:var(--max);margin:0 auto;padding:0 20px}
-.hd{position:sticky;top:0;z-index:50;background:rgba(255,251,247,.92);backdrop-filter:blur(16px);border-bottom:1px solid var(--border)}
-.hd .w{display:flex;align-items:center;justify-content:space-between;height:56px}
-.logo{font-weight:900;font-size:20px;letter-spacing:-.04em;display:flex;align-items:center;gap:8px}
-.logo svg{width:28px;height:28px}
-.lang{display:flex;gap:2px;background:#F3F0EB;border-radius:10px;padding:3px}
-.lang a{padding:6px 14px;border-radius:8px;font-size:13px;font-weight:700;color:var(--sub);transition:all .15s}
-.lang a.on{background:var(--card);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.08)}
-.hero{padding:56px 0 48px;text-align:center}
-.hero .ey{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:99px;background:var(--pick);border:1px solid var(--pick-border);font-size:13px;font-weight:800;color:var(--accent);margin-bottom:20px}
-.hero h1{font-size:clamp(36px,6vw,56px);line-height:1.08;letter-spacing:-.05em;font-weight:900}
-.hero h1 em{font-style:normal;color:var(--accent)}
-.hero .ld{max-width:600px;margin:18px auto 0;font-size:17px;color:var(--sub);line-height:1.65}
-.badges{display:flex;justify-content:center;gap:20px;margin-top:28px;flex-wrap:wrap}
-.badges span{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:var(--trust)}
-.badges svg{width:16px;height:16px;flex-shrink:0}
-.cn{position:sticky;top:56px;z-index:40;background:rgba(255,251,247,.95);backdrop-filter:blur(12px);border-bottom:1px solid var(--border)}
-.cn .w{display:flex;gap:4px;overflow-x:auto;padding:10px 20px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
-.cn .w::-webkit-scrollbar{display:none}
-.cn a{flex-shrink:0;padding:8px 16px;border-radius:10px;font-size:14px;font-weight:700;color:var(--sub);transition:all .15s;white-space:nowrap}
-.cn a:hover,.cn a.on{background:var(--text);color:#fff}
-.sec{padding:56px 0 24px;border-top:1px solid var(--border)}
-.sec:first-of-type{border-top:none}
-.sec-hd{margin-bottom:32px}
-.sec-hd .ic{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:14px;font-size:22px;margin-bottom:12px}
-.sec-hd h2{font-size:28px;font-weight:900;letter-spacing:-.04em;line-height:1.2}
-.sec-hd p{margin-top:8px;color:var(--sub);font-size:15px;max-width:640px}
-.sec-hd .ic.measure{background:#EFF6FF}
-.sec-hd .ic.insole{background:#FFF7ED}
-.sec-hd .ic.posture{background:#F0FDF4}
-.sec-hd .ic.stretch{background:#FDF2F8}
-.sec-hd .ic.shoes{background:#FEF3C7}
-.sec-hd .ic.pants{background:#EDE9FE}
-.sec-hd .ic.sleep{background:#E0E7FF}
-.tips{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:28px}
-.tip{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;font-size:14px;line-height:1.55}
-.tip b{display:block;font-size:13px;font-weight:800;color:var(--trust);margin-bottom:4px}
-.pg{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin-bottom:24px}
-.pc{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;display:flex;flex-direction:column;transition:box-shadow .2s,transform .2s}
-.pc:hover{box-shadow:var(--shadow-h);transform:translateY(-2px)}
-.pc.pick{border-color:var(--pick-border);box-shadow:0 0 0 1px var(--pick-border)}
-.pc .vis{height:180px;display:flex;align-items:center;justify-content:center;font-size:56px;position:relative}
-.pc .vis.v-measure{background:linear-gradient(135deg,#EFF6FF,#DBEAFE)}
-.pc .vis.v-insole{background:linear-gradient(135deg,#FFF7ED,#FFEDD5)}
-.pc .vis.v-posture{background:linear-gradient(135deg,#F0FDF4,#DCFCE7)}
-.pc .vis.v-stretch{background:linear-gradient(135deg,#FDF2F8,#FCE7F3)}
-.pc .vis.v-shoes{background:linear-gradient(135deg,#FEF3C7,#FDE68A)}
-.pc .vis.v-pants{background:linear-gradient(135deg,#EDE9FE,#DDD6FE)}
-.pc .vis.v-sleep{background:linear-gradient(135deg,#E0E7FF,#C7D2FE)}
-.pc .vis .pbadge{position:absolute;top:12px;left:12px;padding:4px 10px;border-radius:8px;font-size:11px;font-weight:800;letter-spacing:.04em}
-.pc .vis .pbadge.best{background:var(--accent);color:#fff}
-.pc .vis .pbadge.value{background:var(--trust);color:#fff}
-.pc .vis .pbadge.soon{background:var(--sub);color:#fff}
-.pc .bd{padding:18px;flex:1;display:flex;flex-direction:column}
-.pc .brand{font-size:12px;font-weight:800;color:var(--sub);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
-.pc .pname{font-size:17px;font-weight:800;line-height:1.35;letter-spacing:-.02em}
-.pc .stars{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:13px;color:var(--sub)}
-.pc .stars .s{color:#F59E0B;letter-spacing:1px}
-.pc .price{font-size:22px;font-weight:900;letter-spacing:-.03em;margin-top:10px}
-.pc .price small{font-size:14px;font-weight:600;color:var(--sub);margin-left:2px}
-.pc .why{margin-top:10px;font-size:14px;color:var(--sub);line-height:1.55;flex:1}
-.pc .cta{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:14px;padding:13px;border-radius:12px;background:var(--accent);color:#fff;font-size:15px;font-weight:800;transition:background .15s;cursor:pointer;border:none;width:100%}
-.pc .cta:hover{background:var(--accent-h)}
-.pc .cta.soon-cta{background:#F3F0EB;color:var(--sub);cursor:default}
-.pc .cta svg{width:16px;height:16px}
-.pc .aff{margin-top:8px;font-size:11px;color:#9CA3AF;text-align:center}
-.cmp{overflow-x:auto;margin-bottom:32px;-webkit-overflow-scrolling:touch}
-.cmp table{width:100%;min-width:600px;border-collapse:collapse;font-size:14px;background:var(--card);border-radius:var(--r);overflow:hidden;border:1px solid var(--border)}
-.cmp th,.cmp td{padding:12px 16px;text-align:left;border-bottom:1px solid var(--border)}
-.cmp th{background:#F9FAFB;font-weight:800;font-size:13px;color:var(--sub);text-transform:uppercase;letter-spacing:.04em}
-.cmp td:first-child{font-weight:700}
-.cmp tr:last-child td{border-bottom:none}
-.cmp .hl{background:var(--pick)}
-.lane{padding:48px 0 8px}
-.lane h2{font-size:24px;font-weight:900;letter-spacing:-.04em;display:flex;align-items:center;gap:10px}
-.lane h2 .dot{width:10px;height:10px;border-radius:50%}
-.lane h2 .dot.grow{background:var(--trust)}
-.lane h2 .dot.look{background:var(--accent)}
-.lane p{color:var(--sub);font-size:15px;margin-top:6px;max-width:600px}
-.trust{background:var(--text);color:#fff;border-radius:24px;padding:40px;margin:40px auto;max-width:var(--max)}
-.trust h2{font-size:24px;font-weight:900;letter-spacing:-.03em;margin-bottom:24px}
-.trust-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
-.trust-card{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:20px}
-.trust-card h3{font-size:16px;font-weight:800;margin-bottom:6px}
-.trust-card p{font-size:14px;color:#CBD5E1;line-height:1.6}
-.disc{max-width:var(--max);margin:0 auto 40px;padding:0 20px}
-.disc-box{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px}
-.disc-box h3{font-size:15px;font-weight:800;margin-bottom:8px;display:flex;align-items:center;gap:6px}
-.disc-box p{font-size:13px;color:var(--sub);line-height:1.7}
-.disc-box p+p{margin-top:8px}
-.ft{border-top:1px solid var(--border);margin-top:20px}
-.ft .w{padding:28px 20px 48px;display:flex;justify-content:space-between;align-items:start;gap:24px;flex-wrap:wrap}
-.ft .brand-f{font-weight:900;font-size:17px;letter-spacing:-.03em}
-.ft .copy{font-size:12px;color:var(--sub);margin-top:6px}
-.ft nav{display:flex;gap:16px;font-size:13px;color:var(--sub)}
-.ft nav a:hover{color:var(--text)}
-.ft .social{display:flex;gap:12px}
-.ft .social a{width:36px;height:36px;border-radius:10px;background:#F3F0EB;display:flex;align-items:center;justify-content:center;font-size:16px;transition:background .15s}
-.ft .social a:hover{background:var(--border)}
-@media(max-width:700px){
-  .hero{padding:40px 0 36px}
-  .hero h1{font-size:32px}
-  .pg{grid-template-columns:1fr}
-  .trust{margin:24px 12px;padding:28px 20px;border-radius:20px}
-  .trust-grid{grid-template-columns:1fr}
-  .badges{flex-direction:column;align-items:center;gap:10px}
-  .ft .w{flex-direction:column;gap:16px}
-  .tips{grid-template-columns:1fr}
-  .lane h2{font-size:20px}
-}
-@media(min-width:701px) and (max-width:900px){
-  .pg{grid-template-columns:repeat(2,1fr)}
-}
+:root{--bg:#fff;--bg2:#F7F7F5;--tx:#111;--tx2:#555;--tx3:#999;--ac:#EA580C;--ac2:#DC4A04;--gn:#047857;--gn2:#ECFDF5;--bd:#E5E5E3;--r:20px;--sh:0 1px 3px rgba(0,0,0,.04),0 4px 16px rgba(0,0,0,.06);--shh:0 2px 8px rgba(0,0,0,.06),0 8px 28px rgba(0,0,0,.1)}
+html{scroll-behavior:smooth;scroll-padding-top:60px}
+body{font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:var(--tx);background:var(--bg);line-height:1.65;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}img{display:block;max-width:100%;height:auto}.ct{max-width:860px;margin:0 auto;padding:0 20px}
+header{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.88);backdrop-filter:blur(20px);border-bottom:1px solid var(--bd)}
+header .ct{display:flex;align-items:center;justify-content:space-between;height:52px}
+.logo{font-weight:900;font-size:18px;letter-spacing:-.03em}
+.lsw{display:flex;gap:2px;background:var(--bg2);border-radius:10px;padding:2px}
+.lsw a{padding:5px 12px;border-radius:8px;font-size:12px;font-weight:700;color:var(--tx3);transition:.15s}
+.lsw a.on{background:#fff;color:var(--tx);box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.hero{padding:52px 0 40px}.hero h1{font-size:clamp(28px,5.5vw,44px);line-height:1.15;letter-spacing:-.045em;font-weight:900}
+.hero h1 em{font-style:normal;background:linear-gradient(120deg,var(--ac),#F97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hero .sub{margin-top:14px;font-size:16px;color:var(--tx2);max-width:520px;line-height:1.7}
+.hero .tags{display:flex;gap:16px;margin-top:22px;flex-wrap:wrap}
+.hero .tag{font-size:12px;font-weight:700;color:var(--gn);display:flex;align-items:center;gap:5px}
+.hero .tag::before{content:"✓";display:inline-flex;width:18px;height:18px;border-radius:50%;background:var(--gn2);align-items:center;justify-content:center;font-size:10px}
+.sec{padding:48px 0;border-top:1px solid var(--bd)}
+.sec-t{font-size:13px;font-weight:800;color:var(--ac);letter-spacing:.06em;text-transform:uppercase}
+.sec h2{font-size:clamp(22px,4vw,32px);font-weight:900;letter-spacing:-.04em;margin-top:6px;line-height:1.2}
+.sec .intro{margin-top:10px;color:var(--tx2);font-size:15px;max-width:600px}
+.sec-guide{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin-top:20px;margin-bottom:28px;list-style:none}
+.sec-guide li{background:var(--bg2);border-radius:12px;padding:12px 14px;font-size:13px;line-height:1.5}
+.sec-guide li b{color:var(--gn);display:block;font-size:12px;margin-bottom:2px}
+.pc{background:#fff;border-radius:var(--r);box-shadow:var(--sh);overflow:hidden;transition:box-shadow .25s,transform .25s}
+.pc:hover{box-shadow:var(--shh);transform:translateY(-3px)}.pc+.pc{margin-top:16px}
+.pc-main{display:grid;grid-template-columns:280px 1fr;gap:0}
+.pc-img{background:var(--bg2);display:flex;align-items:center;justify-content:center;min-height:240px;position:relative;overflow:hidden}
+.pc-img img{width:100%;height:100%;object-fit:contain;padding:16px}
+.pc-badge{position:absolute;top:12px;left:12px;padding:5px 12px;border-radius:8px;font-size:11px;font-weight:800;color:#fff;letter-spacing:.03em}
+.pc-badge.best{background:var(--ac)}.pc-badge.budget{background:#6366F1}
+.pc-bd{padding:24px;display:flex;flex-direction:column}
+.pc-brand{font-size:11px;font-weight:800;color:var(--tx3);text-transform:uppercase;letter-spacing:.08em}
+.pc-name{font-size:20px;font-weight:800;letter-spacing:-.03em;margin-top:4px;line-height:1.3}
+.pc-meta{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:13px;color:var(--tx2)}
+.pc-meta .stars{color:#F59E0B}
+.pc-price{font-size:26px;font-weight:900;letter-spacing:-.03em;margin-top:12px}
+.pc-price small{font-size:14px;font-weight:500;color:var(--tx3);margin-left:4px}
+.pc-why{margin-top:12px;font-size:14px;color:var(--tx2);line-height:1.65;flex:1}
+.pc-cta{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:16px;padding:14px 20px;border-radius:14px;background:var(--ac);color:#fff;font-size:15px;font-weight:800;border:none;cursor:pointer;transition:.15s;width:100%}
+.pc-cta:hover{background:var(--ac2)}.pc-cta.pending{background:var(--bg2);color:var(--tx3);cursor:default}
+.pc-aff{margin-top:8px;font-size:11px;color:var(--tx3);text-align:center;line-height:1.4}
+.pt{background:#fff;border-radius:16px;box-shadow:var(--sh);padding:20px;display:flex;flex-direction:column;transition:box-shadow .25s,transform .25s}
+.pt:hover{box-shadow:var(--shh);transform:translateY(-2px)}
+.pt .pc-badge{position:static;display:inline-block;margin-bottom:8px;width:fit-content}
+.pt-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;margin-top:20px}
+.cmp{margin-top:24px;overflow-x:auto}.cmp table{width:100%;border-collapse:collapse;font-size:13px;min-width:500px}
+.cmp th{text-align:left;padding:10px 14px;font-weight:800;color:var(--tx3);font-size:11px;text-transform:uppercase;letter-spacing:.06em;border-bottom:2px solid var(--bd);background:var(--bg2)}
+.cmp td{padding:10px 14px;border-bottom:1px solid var(--bd)}.cmp tr.hl td{background:#FFF7ED;font-weight:600}.cmp td:first-child{font-weight:700}
+.lane{padding:40px 0 8px}.lane-t{font-size:22px;font-weight:900;letter-spacing:-.04em;display:flex;align-items:center;gap:10px}
+.lane-d{width:8px;height:8px;border-radius:50%}.lane-d.grow{background:var(--gn)}.lane-d.look{background:var(--ac)}
+.lane p{color:var(--tx2);font-size:14px;margin-top:4px}
+.trust{background:var(--tx);color:#fff;border-radius:24px;padding:36px;margin:48px 0}
+.trust h2{font-size:22px;font-weight:900;letter-spacing:-.03em;margin-bottom:20px}
+.trust-g{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.trust-c{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:18px}
+.trust-c h3{font-size:14px;font-weight:800;margin-bottom:6px}.trust-c p{font-size:13px;color:#A1A1AA;line-height:1.6}
+.disc{background:var(--bg2);border-radius:16px;padding:20px 24px;margin-bottom:40px;font-size:12px;color:var(--tx2);line-height:1.7}
+.disc b{color:var(--tx);font-size:13px}.disc p+p{margin-top:6px}
+footer{border-top:1px solid var(--bd)}footer .ct{padding:24px 20px 48px;display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;font-size:12px;color:var(--tx3)}
+footer nav{display:flex;gap:14px}footer .soc{display:flex;gap:8px;margin-top:8px}
+footer .soc a{width:32px;height:32px;border-radius:8px;background:var(--bg2);display:flex;align-items:center;justify-content:center;font-size:14px}
+@media(max-width:700px){.pc-main{grid-template-columns:1fr}.pc-img{min-height:200px}.hero{padding:36px 0 28px}.sec{padding:36px 0}.trust{padding:24px;border-radius:20px;margin:32px 0}.trust-g,.pt-grid,.sec-guide{grid-template-columns:1fr}footer .ct{flex-direction:column}}
 </style>
 </head>
 <body>
+<header><div class="ct"><a class="logo" href="/heightcue/">HeightCue</a><div class="lsw"><a href="/heightcue/kr/">🇰🇷 한국</a><a class="on">🇺🇸 US</a><a href="/heightcue/cn/">🇨🇳 中文</a></div></div></header>
+<main>
+<section class="hero"><div class="ct">
+  <h1>Height concerns<br><em>end here.</em></h1>
+  <p class="sub">From stadiometers to elevator shoes. We test, compare, and keep only what holds up. HeightCue never sells directly.</p>
+  <div class="tags"><span class="tag">Hands-on comparison</span><span class="tag">Affiliate disclosure</span><span class="tag">No medical claims</span></div>
+</div></section>
 
-<header class="hd">
-<div class="w">
-  <a class="logo" href="./">
-    <svg viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="8" fill="#1A1A2E"/><path d="M8 20V8h3v4.5h6V8h3v12h-3v-5h-6v5H8z" fill="#fff"/><line x1="18" y1="7" x2="22" y2="11" stroke="#FF6B35" stroke-width="2.5" stroke-linecap="round"/></svg>
-    HeightCue
-  </a>
-  <div class="lang">
-    <a href="/heightcue/kr/">🇰🇷 한국</a>
-    <a class="on" href="./">🇺🇸 US</a>
-  </div>
-</div>
-</header>
+<div class="ct"><div class="lane"><div class="lane-t"><span class="lane-d grow"></span> Growth Tracking</div><p>Tools for measuring your child's growth accurately and building a healthy environment.</p></div></div>
 
-<nav class="cn">
-<div class="w">
-  <a href="#measure">📏 Measure</a>
-  <a href="#insole">👟 Insoles</a>
-  <a href="#posture">🪑 Posture</a>
-  <a href="#stretch">🧘 Stretch</a>
-  <a href="#shoes">👞 Shoes</a>
-  <a href="#pants">👖 Pants</a>
-  <a href="#sleep">😴 Sleep</a>
-</div>
-</nav>
+<section class="sec" id="measure"><div class="ct">
+  <div class="sec-t">Measure</div>
+  <h2>Are you measuring your child's height correctly?</h2>
+  <p class="intro">Same child, different time of day, different posture, different tool. Results can vary by half an inch. Tracking growth trends requires consistent conditions every time.</p>
+  <ul class="sec-guide">
+    <li><b>Choosing</b>Portable stadiometers for clinical accuracy. Wall-mounted rods for daily simplicity.</li>
+    <li><b>Measuring</b>Shoes off. Same time of day. Flat floor. Eyes level. Record the date.</li>
+    <li><b>Note</b>A measurement tool records height. No tool increases it.</li>
+  </ul>
+  <div class="pc"><div class="pc-main">
+    <div class="pc-img"><span class="pc-badge best">BEST PICK</span><img src="https://m.media-amazon.com/images/I/51c88JdaSZL._AC_SL1500_.jpg" alt="seca 213 Portable Stadiometer" width="280" height="280" loading="lazy"></div>
+    <div class="pc-bd">
+      <div class="pc-brand">seca</div>
+      <div class="pc-name">213 Portable Stadiometer</div>
+      <div class="pc-meta"><span class="stars">★★★★★</span> 4.6 · 109 reviews</div>
+      <div class="pc-price">$189<small>.99</small></div>
+      <p class="pc-why">The same stadiometer pediatricians use. Medical-grade accuracy across a 20-205 cm range. Folds flat for travel. When your doctor measures your child, this is what they reach for.</p>
+      <a class="pc-cta" href="https://www.amazon.com/dp/B00311ERYU" target="_blank" rel="noopener noreferrer nofollow">Check price on Amazon →</a>
+      <div class="pc-aff">As an Amazon Associate, HeightCue may earn from qualifying purchases. Your price stays the same.</div>
+    </div>
+  </div></div>
+  <div class="pc" style="margin-top:16px"><div class="pc-main">
+    <div class="pc-img"><span class="pc-badge budget">BUDGET PICK</span><img src="https://m.media-amazon.com/images/I/71xbKQ6qn8L._SL1500_.jpg" alt="Tetuga Portable Stadiometer" width="280" height="280" loading="lazy"></div>
+    <div class="pc-bd">
+      <div class="pc-brand">Tetuga</div>
+      <div class="pc-name">Portable Stadiometer Chart Rod</div>
+      <div class="pc-meta"><span class="stars">★★★★☆</span> 4.0 · 73 reviews</div>
+      <div class="pc-price">$86<small>.91</small></div>
+      <p class="pc-why">A solid wall-mounted height rod for everyday home tracking. Less than half the price of the seca. Easy install, no batteries. More than enough when you measure at the same spot under the same conditions.</p>
+      <a class="pc-cta" href="https://www.amazon.com/dp/B0BYZD5F15" target="_blank" rel="noopener noreferrer nofollow">Check price on Amazon →</a>
+      <div class="pc-aff">As an Amazon Associate, HeightCue may earn from qualifying purchases. Your price stays the same.</div>
+    </div>
+  </div></div>
+  <div class="cmp"><table>
+    <tr><th>Product</th><th>Type</th><th>Accuracy</th><th>Price</th><th>Best for</th></tr>
+    <tr class="hl"><td>seca 213</td><td>Portable stadiometer</td><td>±1mm</td><td>$189.99</td><td>Clinical-grade home tracking</td></tr>
+    <tr><td>Tetuga Chart Rod</td><td>Wall-mounted</td><td>±0.5cm</td><td>$86.91</td><td>Budget daily tracking</td></tr>
+  </table></div>
+</div></section>
 
-<section class="hero">
-<div class="w">
-  <div class="ey">✦ HeightCue Picks</div>
-  <h1>We compared it.<br><em>Only the evidence stayed.</em></h1>
-  <p class="ld">From stadiometers to elevator shoes. HeightCue never sells directly. We recommend verified products and disclose every affiliate relationship.</p>
-  <div class="badges">
-    <span><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 110 16A8 8 0 018 0zm3.5 5.5l-4.5 5-2.5-2.5 1-1 1.5 1.5 3.5-4 1 1z"/></svg> Hands-on comparison</span>
-    <span><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 110 16A8 8 0 018 0zm3.5 5.5l-4.5 5-2.5-2.5 1-1 1.5 1.5 3.5-4 1 1z"/></svg> Affiliate disclosure</span>
-    <span><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 110 16A8 8 0 018 0zm3.5 5.5l-4.5 5-2.5-2.5 1-1 1.5 1.5 3.5-4 1 1z"/></svg> No medical claims</span>
+<section class="sec" id="posture"><div class="ct">
+  <div class="sec-t">Posture</div>
+  <h2>8 hours a day in the wrong chair adds up.</h2>
+  <p class="intro">A desk and chair that don't match your child's body train bad posture into habit. Posture aids support alignment. They don't increase height.</p>
+  <div class="pt-grid">
+    <div class="pt"><span class="pc-badge best" style="background:var(--gn);position:static;display:inline-block;margin-bottom:8px;width:fit-content">TOP RATED</span><div class="pc-brand">Ergonomic</div><div class="pc-name" style="font-size:17px">Kids Ergonomic Desk Chair</div><div class="pc-meta"><span class="stars">★★★★★</span> 3,100+ reviews</div><div class="pc-price" style="font-size:22px">$189<small>.00</small></div><p class="pc-why">Adjustable seat depth, height, and lumbar. Grows with your child for years.</p><span class="pc-cta pending">Link coming soon</span></div>
+    <div class="pt"><div class="pc-brand">Posture</div><div class="pc-name" style="font-size:17px">Adjustable Footrest</div><div class="pc-meta"><span class="stars">★★★★☆</span> 1,800+ reviews</div><div class="pc-price" style="font-size:22px">$24<small>.99</small></div><p class="pc-why">When feet dangle, posture collapses. Keeps knees at 90 degrees.</p><span class="pc-cta pending">Link coming soon</span></div>
   </div>
-</div>
-</section>
+</div></section>
 
-<!-- GROW LANE -->
-<div class="w">
-<div class="lane">
-  <h2><span class="dot grow"></span> Growth Tracking</h2>
-  <p>Tools and environment for tracking your child's growth accurately and building healthy habits.</p>
-</div>
-</div>
+<div class="ct"><div class="lane"><div class="lane-t"><span class="lane-d look"></span> Height Styling</div><p>You won't actually grow taller. But proportions and silhouette make a real difference.</p></div></div>
 
-<section id="measure" class="sec">
-<div class="w">
-  <div class="sec-hd">
-    <div class="ic measure">📏</div>
-    <h2>Accurate Height Measurement</h2>
-    <p>Consistent conditions make repeated measurements comparable. A measurement tool records height. It does not increase it.</p>
+<section class="sec" id="insole"><div class="ct">
+  <div class="sec-t">Insoles</div>
+  <h2>Job interview, first date, big event. Two inches change the first impression.</h2>
+  <p class="intro">Shoe inserts that add height invisibly. Start at 1 inch. Over 3 inches may affect walking comfort.</p>
+  <div class="pt-grid">
+    <div class="pt"><span class="pc-badge best" style="position:static;display:inline-block;margin-bottom:8px;width:fit-content">BEST PICK</span><div class="pc-brand">Air Cushion</div><div class="pc-name" style="font-size:17px">3-Layer Adjustable Height Insole</div><div class="pc-meta"><span class="stars">★★★★☆</span> 4,200+ reviews</div><div class="pc-price" style="font-size:22px">$12<small>.99</small></div><p class="pc-why">Adjust from 1 to 2.8 inches with removable layers. Air cushion absorbs impact. Works with sneakers and dress shoes. Best starting point.</p><span class="pc-cta pending">Link coming soon</span></div>
+    <div class="pt"><span class="pc-badge budget" style="position:static;display:inline-block;margin-bottom:8px;width:fit-content">BUDGET</span><div class="pc-brand">Silicone</div><div class="pc-name" style="font-size:17px">Silicone Gel Half Insole 1.4"</div><div class="pc-meta"><span class="stars">★★★★☆</span> 2,800+ reviews</div><div class="pc-price" style="font-size:22px">$8<small>.99</small></div><p class="pc-why">Fits inside dress shoes and loafers. Easy to wash. Great heel cushioning.</p><span class="pc-cta pending">Link coming soon</span></div>
   </div>
-  <div class="tips">
-    <div class="tip"><b>✓ Choosing</b>Wall-mounted for accuracy. Portable for multiple locations.</div>
-    <div class="tip"><b>✓ Measuring</b>Shoes off. Same time of day. Flat floor. Eyes level.</div>
-    <div class="tip"><b>✓ Watch out</b>No tool makes a child taller. Evaluate only as a recording device.</div>
-  </div>
-  <div class="pg">
-    <div class="pc pick">
-      <div class="vis v-measure"><span class="pbadge best">BEST PICK</span>📏</div>
-      <div class="bd">
-        <div class="brand">seca</div>
-        <div class="pname">seca 213 Portable Stadiometer</div>
-        <div class="stars"><span class="s">★★★★☆</span> 109 reviews</div>
-        <div class="price">$159<small>.99</small></div>
-        <p class="why">Medical-grade portable stadiometer. Used in clinics worldwide. Folds for travel and stores flat against a wall.</p>
-        <a class="cta" href="https://www.amazon.com/dp/B00311ERYU" target="_blank" rel="noopener noreferrer nofollow">
-          View on Amazon
-          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M6 3l5 5-5 5V3z"/></svg>
-        </a>
-        <div class="aff">As an Amazon Associate, HeightCue may earn from qualifying purchases</div>
-      </div>
-    </div>
-    <div class="pc">
-      <div class="vis v-measure"><span class="pbadge value">BUDGET</span>📐</div>
-      <div class="bd">
-        <div class="brand">Tetuga</div>
-        <div class="pname">Portable Stadiometer Chart Bar</div>
-        <div class="stars"><span class="s">★★★★☆</span> 73 reviews</div>
-        <div class="price">$29<small>.99</small></div>
-        <p class="why">Affordable wall-mounted height rod. Easy to install, no batteries required. Good for home use when clinical precision isn't needed.</p>
-        <a class="cta" href="https://www.amazon.com/dp/B0BYZD5F15" target="_blank" rel="noopener noreferrer nofollow">
-          View on Amazon
-          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M6 3l5 5-5 5V3z"/></svg>
-        </a>
-        <div class="aff">As an Amazon Associate, HeightCue may earn from qualifying purchases</div>
-      </div>
-    </div>
-    <div class="pc">
-      <div class="vis v-measure">🦒</div>
-      <div class="bd">
-        <div class="brand">Growth Chart</div>
-        <div class="pname">Wall Growth Chart for Kids</div>
-        <div class="stars"><span class="s">★★★★☆</span> 2,400+ reviews</div>
-        <div class="price">$12<small>.99</small></div>
-        <p class="why">Decorative growth chart that doubles as a room accent. Best for visual tracking and milestones, not clinical precision.</p>
-        <span class="cta soon-cta">Link coming soon</span>
-        <div class="aff">Product verification in progress</div>
-      </div>
-    </div>
-  </div>
-  <div class="cmp">
-  <table>
-    <thead><tr><th>Product</th><th>Type</th><th>Accuracy</th><th>Price</th><th>Best for</th></tr></thead>
-    <tbody>
-      <tr class="hl"><td>seca 213</td><td>Portable stadiometer</td><td>±1mm</td><td>$159.99</td><td>Clinical-grade home use</td></tr>
-      <tr><td>Tetuga Chart Bar</td><td>Wall-mounted rod</td><td>±0.5cm</td><td>$29.99</td><td>Budget daily tracking</td></tr>
-      <tr><td>Wall Growth Chart</td><td>Decorative</td><td>±2cm</td><td>$12.99</td><td>Visual milestone record</td></tr>
-    </tbody>
-  </table>
-  </div>
-</div>
-</section>
+</div></section>
 
-<section id="posture" class="sec">
-<div class="w">
-  <div class="sec-hd">
-    <div class="ic posture">🪑</div>
-    <h2>Posture & Study Environment</h2>
-    <p>A properly adjusted desk and chair can support good posture during long study sessions. Posture aids support alignment. They do not increase height.</p>
+<section class="sec" id="shoes"><div class="ct">
+  <div class="sec-t">Elevator Shoes</div>
+  <h2>Nobody can tell. You just look taller.</h2>
+  <p class="intro">Shoes with a built-in lift that look completely normal from outside. 2-3 inches is the natural range.</p>
+  <div class="pt-grid">
+    <div class="pt"><span class="pc-badge best" style="position:static;display:inline-block;margin-bottom:8px;width:fit-content">EVERYDAY</span><div class="pc-brand">Sneaker</div><div class="pc-name" style="font-size:17px">Height-Increasing Sneakers 2.4"</div><div class="pc-meta"><span class="stars">★★★★☆</span> 1,200+ reviews</div><div class="pc-price" style="font-size:22px">$49<small>.99</small></div><p class="pc-why">Looks like a regular athletic shoe. Internal lift adds 2.4 inches invisibly.</p><span class="pc-cta pending">Link coming soon</span></div>
+    <div class="pt"><div class="pc-brand">Dress</div><div class="pc-name" style="font-size:17px">Height-Increasing Oxford 2.8"</div><div class="pc-meta"><span class="stars">★★★★☆</span> 680+ reviews</div><div class="pc-price" style="font-size:22px">$69<small>.99</small></div><p class="pc-why">Professional look for office and events. Leather upper, cushioned insole.</p><span class="pc-cta pending">Link coming soon</span></div>
   </div>
-  <div class="tips">
-    <div class="tip"><b>✓ Key check</b>Seat height, backrest angle, and desk height should all match the child's current size.</div>
-    <div class="tip"><b>✓ Growing kids</b>Re-adjust every 6-12 months as they grow.</div>
-  </div>
-  <div class="pg">
-    <div class="pc">
-      <div class="vis v-posture"><span class="pbadge best">TOP RATED</span>🪑</div>
-      <div class="bd">
-        <div class="brand">Ergonomic</div>
-        <div class="pname">Kids Ergonomic Desk Chair</div>
-        <div class="stars"><span class="s">★★★★★</span> 3,100+ reviews</div>
-        <div class="price">$189<small>.00</small></div>
-        <p class="why">Adjustable seat depth, height, and lumbar support. Grows with your child for years of comfortable study.</p>
-        <span class="cta soon-cta">Link coming soon</span>
-        <div class="aff">Product verification in progress</div>
-      </div>
-    </div>
-    <div class="pc">
-      <div class="vis v-posture">🦶</div>
-      <div class="bd">
-        <div class="brand">Posture Aid</div>
-        <div class="pname">Adjustable Footrest</div>
-        <div class="stars"><span class="s">★★★★☆</span> 1,800+ reviews</div>
-        <div class="price">$24<small>.99</small></div>
-        <p class="why">When feet dangle, posture collapses. An adjustable footrest keeps knees at 90 degrees.</p>
-        <span class="cta soon-cta">Link coming soon</span>
-        <div class="aff">Product verification in progress</div>
-      </div>
-    </div>
-  </div>
-</div>
-</section>
+</div></section>
 
-<section id="stretch" class="sec">
-<div class="w">
-  <div class="sec-hd">
-    <div class="ic stretch">🧘</div>
-    <h2>Stretching & Movement</h2>
-    <p>Stretching supports flexibility and posture. Temporary posture improvement and permanent height increase are different things.</p>
+<section class="sec" id="pants"><div class="ct">
+  <div class="sec-t">Style</div>
+  <h2>The right pants add 2 inches to your legs. No insole needed.</h2>
+  <p class="intro">High waist, vertical lines, the right break point. No regulations, no health risk, instant results.</p>
+  <div class="pt-grid">
+    <div class="pt"><span class="pc-badge best" style="position:static;display:inline-block;margin-bottom:8px;width:fit-content">ESSENTIAL</span><div class="pc-brand">High-Rise</div><div class="pc-name" style="font-size:17px">High-Waisted Wide Leg Trousers</div><div class="pc-meta"><span class="stars">★★★★☆</span> 3,200+ reviews</div><div class="pc-price" style="font-size:22px">$34<small>.99</small></div><p class="pc-why">Higher waistline = longer legs. Wide leg creates a clean, tall silhouette.</p><span class="pc-cta pending">Link coming soon</span></div>
+    <div class="pt"><div class="pc-brand">Boot-cut</div><div class="pc-name" style="font-size:17px">Boot-Cut Flare Pants</div><div class="pc-meta"><span class="stars">★★★★☆</span> 1,800+ reviews</div><div class="pc-price" style="font-size:22px">$32<small>.99</small></div><p class="pc-why">The flare hides the shoe, extending the leg line. Pairs perfectly with elevator shoes.</p><span class="pc-cta pending">Link coming soon</span></div>
   </div>
-  <div class="pg">
-    <div class="pc">
-      <div class="vis v-stretch">🧘</div>
-      <div class="bd">
-        <div class="brand">Yoga</div>
-        <div class="pname">TPE Yoga Mat 6mm</div>
-        <div class="stars"><span class="s">★★★★☆</span> 5,200+ reviews</div>
-        <div class="price">$19<small>.99</small></div>
-        <p class="why">Non-slip surface for stretching and core exercises. The foundation for any flexibility routine.</p>
-        <span class="cta soon-cta">Link coming soon</span>
-        <div class="aff">Product verification in progress</div>
-      </div>
-    </div>
-    <div class="pc">
-      <div class="vis v-stretch">🟡</div>
-      <div class="bd">
-        <div class="brand">Recovery</div>
-        <div class="pname">High-Density Foam Roller 18"</div>
-        <div class="stars"><span class="s">★★★★☆</span> 8,400+ reviews</div>
-        <div class="price">$14<small>.99</small></div>
-        <p class="why">Releases tight back and hip muscles. A relaxed spine can improve hunched posture. Not a height increase tool.</p>
-        <span class="cta soon-cta">Link coming soon</span>
-        <div class="aff">Product verification in progress</div>
-      </div>
-    </div>
-    <div class="pc">
-      <div class="vis v-stretch">🏋️</div>
-      <div class="bd">
-        <div class="brand">Resistance</div>
-        <div class="pname">Resistance Band Set (5 levels)</div>
-        <div class="stars"><span class="s">★★★★☆</span> 12,000+ reviews</div>
-        <div class="price">$11<small>.99</small></div>
-        <p class="why">Five resistance levels for stretching and strength work. Compact and portable for any age.</p>
-        <span class="cta soon-cta">Link coming soon</span>
-        <div class="aff">Product verification in progress</div>
-      </div>
-    </div>
-  </div>
-</div>
-</section>
+</div></section>
 
-<section id="sleep" class="sec">
-<div class="w">
-  <div class="sec-hd">
-    <div class="ic sleep">😴</div>
-    <h2>Sleep Environment</h2>
-    <p>Adequate sleep is a basic condition for healthy growth. A better sleep environment does not make a child taller, but insufficient sleep can affect development.</p>
-  </div>
-  <div class="pg">
-    <div class="pc">
-      <div class="vis v-sleep"><span class="pbadge best">TOP PICK</span>🌑</div>
-      <div class="bd">
-        <div class="brand">Blackout</div>
-        <div class="pname">100% Blackout Curtains</div>
-        <div class="stars"><span class="s">★★★★★</span> 14,000+ reviews</div>
-        <div class="price">$29<small>.99</small></div>
-        <p class="why">Melatonin production is light-sensitive. Full blackout curtains eliminate ambient light for deeper sleep.</p>
-        <span class="cta soon-cta">Link coming soon</span>
-        <div class="aff">Product verification in progress</div>
-      </div>
-    </div>
-    <div class="pc">
-      <div class="vis v-sleep">🔊</div>
-      <div class="bd">
-        <div class="brand">Sound</div>
-        <div class="pname">White Noise Machine</div>
-        <div class="stars"><span class="s">★★★★☆</span> 9,200+ reviews</div>
-        <div class="price">$27<small>.99</small></div>
-        <p class="why">Masks ambient noise with consistent background sound. Especially effective for noise-sensitive sleepers.</p>
-        <span class="cta soon-cta">Link coming soon</span>
-        <div class="aff">Product verification in progress</div>
-      </div>
-    </div>
-  </div>
-</div>
-</section>
+<div class="ct"><div class="trust"><h2>How HeightCue works</h2><div class="trust-g">
+  <div class="trust-c"><h3>We never sell directly</h3><p>Purchase, shipping, returns handled by the retailer. HeightCue only recommends.</p></div>
+  <div class="trust-c"><h3>Affiliate relationships disclosed</h3><p>Some links are affiliate links. Purchases may earn HeightCue a small commission at no extra cost.</p></div>
+  <div class="trust-c"><h3>No medical claims</h3><p>Nothing here claims to make anyone taller. Measurement tools record. Styling adjusts appearance.</p></div>
+</div></div></div>
 
-<!-- LOOK LANE -->
-<div class="w">
-<div class="lane">
-  <h2><span class="dot look"></span> Height Styling</h2>
-  <p>You won't actually grow taller. But proportions and silhouette can make a visible difference.</p>
-</div>
-</div>
+<div class="ct"><div class="disc">
+  <p><b>Affiliate disclosure</b> This page contains or may contain affiliate links from Amazon Associates. Purchases through these links may earn HeightCue a commission at no additional cost to you.</p>
+  <p><b>Medical disclaimer</b> HeightCue content is general education for adult caregivers. It does not replace medical advice. Consult a pediatric endocrinologist if concerned about growth.</p>
+</div></div>
+</main>
 
-<section id="insole" class="sec">
-<div class="w">
-  <div class="sec-hd">
-    <div class="ic insole">👟</div>
-    <h2>Height-Increasing Insoles</h2>
-    <p>Shoe inserts that add height inside your shoes. Cosmetic purpose only. Not medical orthotics.</p>
-  </div>
-  <div class="tips">
-    <div class="tip"><b>✓ Start low</b>Begin with 1-1.5 inches. Over 3 inches may affect walking comfort.</div>
-    <div class="tip"><b>✓ Full vs half</b>Full-length insoles are more stable. Half insoles fit narrow shoes.</div>
-  </div>
-  <div class="pg">
-    <div class="pc pick">
-      <div class="vis v-insole"><span class="pbadge best">BEST PICK</span>👟</div>
-      <div class="bd">
-        <div class="brand">Air Cushion</div>
-        <div class="pname">3-Layer Adjustable Height Insole</div>
-        <div class="stars"><span class="s">★★★★☆</span> 4,200+ reviews</div>
-        <div class="price">$12<small>.99</small></div>
-        <p class="why">Adjust from 1 to 2.8 inches with removable layers. Air cushion absorbs impact. Works with sneakers and dress shoes.</p>
-        <span class="cta soon-cta">Link coming soon</span>
-        <div class="aff">Product verification in progress</div>
-      </div>
-    </div>
-    <div class="pc">
-      <div class="vis v-insole"><span class="pbadge value">BUDGET</span>🦶</div>
-      <div class="bd">
-        <div class="brand">Silicone</div>
-        <div class="pname">Silicone Gel Half Insole 1.4"</div>
-        <div class="stars"><span class="s">★★★★☆</span> 2,800+ reviews</div>
-        <div class="price">$8<small>.99</small></div>
-        <p class="why">Fits inside dress shoes and loafers. Silicone gel cushions the heel. Easy to wash and reuse.</p>
-        <span class="cta soon-cta">Link coming soon</span>
-        <div class="aff">Product verification in progress</div>
-      </div>
-    </div>
-    <div class="pc">
-      <div class="vis v-insole">🏃</div>
-      <div class="bd">
-        <div class="brand">Memory Foam</div>
-        <div class="pname">Full-Length Memory Foam Insole 1.2"</div>
-        <div class="stars"><span class="s">★★★★☆</span> 1,600+ reviews</div>
-        <div class="price">$16<small>.99</small></div>
-        <p class="why">Memory foam molds to your foot shape for all-day comfort. Full-length replacement gives better stability.</p>
-        <span class="cta soon-cta">Link coming soon</span>
-        <div class="aff">Product verification in progress</div>
-      </div>
-    </div>
-  </div>
-</div>
-</section>
-
-<section id="shoes" class="sec">
-<div class="w">
-  <div class="sec-hd">
-    <div class="ic shoes">👞</div>
-    <h2>Elevator Shoes</h2>
-    <p>Shoes with built-in height increase that looks like a regular shoe from the outside.</p>
-  </div>
-  <div class="tips">
-    <div class="tip"><b>✓ Natural range</b>2-3 inches looks natural. Over 4 inches may affect gait.</div>
-    <div class="tip"><b>✓ Choosing</b>Look for breathable materials and cushioned insoles for all-day wear.</div>
-  </div>
-  <div class="pg">
-    <div class="pc">
-      <div class="vis v-shoes"><span class="pbadge best">EVERYDAY</span>👟</div>
-      <div class="bd">
-        <div class="brand">Elevator Sneaker</div>
-        <div class="pname">Height-Increasing Sneakers 2.4"</div>
-        <div class="stars"><span class="s">★★★★☆</span> 1,200+ reviews</div>
-        <div class="price">$49<small>.99</small></div>
-        <p class="why">Looks like a regular athletic shoe. Internal lift adds 2.4 inches without visible platform. Comfortable for daily wear.</p>
-        <span class="cta soon-cta">Link coming soon</span>
-        <div class="aff">Product verification in progress</div>
-      </div>
-    </div>
-    <div class="pc">
-      <div class="vis v-shoes">👞</div>
-      <div class="bd">
-        <div class="brand">Elevator Dress</div>
-        <div class="pname">Height-Increasing Oxford Shoes 2.8"</div>
-        <div class="stars"><span class="s">★★★★☆</span> 680+ reviews</div>
-        <div class="price">$69<small>.99</small></div>
-        <p class="why">Professional look for office and events. Internal lift is invisible. Leather upper with cushioned insole.</p>
-        <span class="cta soon-cta">Link coming soon</span>
-        <div class="aff">Product verification in progress</div>
-      </div>
-    </div>
-  </div>
-</div>
-</section>
-
-<section id="pants" class="sec">
-<div class="w">
-  <div class="sec-hd">
-    <div class="ic pants">👖</div>
-    <h2>Pants That Make Legs Look Longer</h2>
-    <p>High waist, vertical lines, and the right break point adjust proportions. The safest and easiest way to look taller.</p>
-  </div>
-  <div class="tips">
-    <div class="tip"><b>✓ Core rule</b>A higher waistline elongates the leg line. High-rise is the baseline.</div>
-    <div class="tip"><b>✓ Fit</b>Straight or boot-cut creates the longest visual line.</div>
-    <div class="tip"><b>✓ Length</b>A slight break at the shoe. Rolling up shortens the visual leg.</div>
-  </div>
-  <div class="pg">
-    <div class="pc">
-      <div class="vis v-pants"><span class="pbadge best">ESSENTIAL</span>👖</div>
-      <div class="bd">
-        <div class="brand">High-Rise</div>
-        <div class="pname">High-Waisted Wide Leg Trousers</div>
-        <div class="stars"><span class="s">★★★★☆</span> 3,200+ reviews</div>
-        <div class="price">$34<small>.99</small></div>
-        <p class="why">High waistline and wide leg create a long, clean silhouette. Works for both men and women.</p>
-        <span class="cta soon-cta">Link coming soon</span>
-        <div class="aff">Product verification in progress</div>
-      </div>
-    </div>
-    <div class="pc">
-      <div class="vis v-pants">👢</div>
-      <div class="bd">
-        <div class="brand">Boot-cut</div>
-        <div class="pname">Boot-Cut Flare Pants</div>
-        <div class="stars"><span class="s">★★★★☆</span> 1,800+ reviews</div>
-        <div class="price">$32<small>.99</small></div>
-        <p class="why">The flare at the hem covers the shoe and extends the leg line. Pairs especially well with elevator shoes.</p>
-        <span class="cta soon-cta">Link coming soon</span>
-        <div class="aff">Product verification in progress</div>
-      </div>
-    </div>
-  </div>
-</div>
-</section>
-
-<!-- Trust -->
-<div class="trust">
-  <h2>How HeightCue Works</h2>
-  <div class="trust-grid">
-    <div class="trust-card">
-      <h3>We never sell directly</h3>
-      <p>HeightCue does not sell, ship, or handle returns. We recommend products from verified retailers. Purchase, shipping, exchange, and refunds are handled by the retailer.</p>
-    </div>
-    <div class="trust-card">
-      <h3>Affiliate relationships disclosed</h3>
-      <p>Some product links on this page are affiliate links. If you purchase through these links, HeightCue may receive a small commission at no extra cost to you.</p>
-    </div>
-    <div class="trust-card">
-      <h3>No medical claims</h3>
-      <p>No product listed here claims to make anyone taller or stimulate growth. Measurement tools are recording devices. Styling products are visual adjustments.</p>
-    </div>
-  </div>
-</div>
-
-<div class="disc">
-<div class="disc-box">
-  <h3>⚖️ Affiliate & Medical Disclosure</h3>
-  <p><b>Affiliate disclosure:</b> This page contains or may contain affiliate marketing links from programs including Amazon Associates. If you purchase through these links, HeightCue may receive a commission at no additional cost to you.</p>
-  <p><b>Medical disclaimer:</b> HeightCue content is general educational information for adult caregivers. It does not replace medical diagnosis or treatment. If you are concerned about your child's growth, consult a pediatric endocrinologist.</p>
-  <p><b>Product verification:</b> Recommendations are based on publicly available specifications, reviews, and retailer information. HeightCue does not guarantee medical efficacy. Final purchase decisions are the buyer's responsibility.</p>
-</div>
-</div>
-
-<footer class="ft">
-<div class="w">
-  <div>
-    <div class="brand-f">HeightCue</div>
-    <div class="copy">We compare. Only the evidence stays.<br>&copy; 2026 HeightCue</div>
-  </div>
-  <div>
-    <nav>
-      <a href="/heightcue/">Home</a>
-      <a href="/heightcue/disclosure.html">Disclosures</a>
-      <a href="/heightcue/privacy.html">Privacy</a>
-    </nav>
-    <div class="social" style="margin-top:12px">
-      <a href="https://www.youtube.com/@heightcue" target="_blank" rel="noopener" aria-label="YouTube">▶</a>
-      <a href="https://www.threads.com/@heightcue" target="_blank" rel="noopener" aria-label="Threads">🧵</a>
-      <a href="https://www.instagram.com/heightcue/" target="_blank" rel="noopener" aria-label="Instagram">📷</a>
-    </div>
-  </div>
-</div>
-</footer>
-
-<script>
-(function(){
-  var nav=document.querySelector('.cn');
-  var links=nav.querySelectorAll('a[href^="#"]');
-  var sections=[];
-  links.forEach(function(a){
-    var id=a.getAttribute('href').slice(1);
-    var el=document.getElementById(id);
-    if(el) sections.push({link:a,el:el});
-  });
-  function update(){
-    var top=window.scrollY+160;
-    var active=sections[0];
-    sections.forEach(function(s){if(s.el.offsetTop<=top)active=s});
-    links.forEach(function(a){a.classList.remove('on')});
-    if(active)active.link.classList.add('on');
-  }
-  window.addEventListener('scroll',update,{passive:true});
-  update();
-})();
-</script>
+<footer><div class="ct">
+  <div><strong>HeightCue</strong><div style="margin-top:4px">&copy; 2026 HeightCue</div><div class="soc"><a href="https://www.youtube.com/@heightcue" target="_blank" rel="noopener">▶</a><a href="https://www.threads.com/@heightcue" target="_blank" rel="noopener">🧵</a><a href="https://www.instagram.com/heightcue/" target="_blank" rel="noopener">📷</a></div></div>
+  <nav><a href="/heightcue/">Home</a><a href="/heightcue/disclosure.html">Disclosures</a><a href="/heightcue/privacy.html">Privacy</a></nav>
+</div></footer>
 </body>
 </html>
