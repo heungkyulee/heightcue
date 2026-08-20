@@ -1,6 +1,6 @@
 {
   "brand": "HeightCue",
-  "updatedAt": "2026-08-20T02:51:47+09:00",
+  "updatedAt": "2026-08-20T13:20:00+09:00",
   "channel": "https://www.youtube.com/@heightcue",
   "items": [
     {
@@ -112,6 +112,24 @@
         "https://pedsendo.org/clinical-resource/child-with-suspected-short-stature/"
       ],
       "claimClass": "consultation-signals"
+    },
+    {
+      "id": "hc-20260820-07",
+      "slug": "07-label-reading",
+      "title": "'키 크는 영양제', 믿어도 될까?",
+      "platform": "youtube_shorts",
+      "videoId": "-NIH-4ssQFM",
+      "url": "https://youtube.com/shorts/-NIH-4ssQFM",
+      "status": "public",
+      "language": "ko",
+      "aiDisclosure": true,
+      "captions": "ko",
+      "article": "https://heungkyulee.github.io/heightcue/articles/label-reading-and-exaggerated-ads.html",
+      "sources": [
+        "https://www.foodsafetykorea.go.kr/portal/board/boardDetail.do?bbs_no=bbs001&menu_grp=MENU_NEW01&menu_no=3120&ntctxt_no=21776",
+        "https://www.mfds.go.kr/brd/m_99/view.do?seq=48096"
+      ],
+      "claimClass": "label-reading"
     }
   ]
 }
