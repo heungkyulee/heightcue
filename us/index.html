@@ -35,6 +35,9 @@ header .ct{display:flex;align-items:center;justify-content:space-between;height:
 .pc-main{display:grid;grid-template-columns:280px 1fr;gap:0}
 .pc-img{background:var(--bg2);display:flex;align-items:center;justify-content:center;min-height:240px;position:relative;overflow:hidden}
 .pc-img img{width:100%;height:100%;object-fit:contain;padding:16px}
+.tool-visual{width:180px;min-height:180px;border:1px solid var(--bd);border-radius:18px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;text-align:center;padding:24px;box-shadow:0 8px 24px rgba(0,0,0,.05)}
+.tool-visual:before{content:"";width:20px;height:88px;border:2px solid var(--tx);border-top-width:9px;background:repeating-linear-gradient(to bottom,transparent 0 8px,var(--tx3) 8px 9px)}
+.tool-visual b{font-size:15px}.tool-visual small{font-size:9px;letter-spacing:.11em;color:var(--tx3);font-weight:800}
 .pc-badge{position:absolute;top:12px;left:12px;padding:5px 12px;border-radius:8px;font-size:11px;font-weight:800;color:#fff;letter-spacing:.03em}
 .pc-badge.best{background:var(--ac)}.pc-badge.budget{background:#6366F1}
 .pc-bd{padding:24px;display:flex;flex-direction:column}
@@ -70,6 +73,7 @@ footer nav{display:flex;gap:14px}footer .soc{display:flex;gap:8px;margin-top:8px
 footer .soc a{width:32px;height:32px;border-radius:8px;background:var(--bg2);display:flex;align-items:center;justify-content:center;font-size:14px}
 @media(max-width:700px){.pc-main{grid-template-columns:1fr}.pc-img{min-height:200px}.hero{padding:36px 0 28px}.sec{padding:36px 0}.trust{padding:24px;border-radius:20px;margin:32px 0}.trust-g,.pt-grid,.sec-guide{grid-template-columns:1fr}footer .ct{flex-direction:column}}
 </style>
+<script defer src="/heightcue/app.js?v=20260821v5"></script>
 </head>
 <body>
 <header><div class="ct"><a class="logo" href="/heightcue/">HeightCue</a><div class="lsw"><a href="/heightcue/kr/">🇰🇷 한국</a><a class="on">🇺🇸 US</a><a href="/heightcue/cn/">🇨🇳 中文</a></div></div></header>
@@ -77,7 +81,7 @@ footer .soc a{width:32px;height:32px;border-radius:8px;background:var(--bg2);dis
 <section class="hero"><div class="ct">
   <h1>Height concerns<br><em>end here.</em></h1>
   <p class="sub">Portable stadiometers, consistent measuring routines, and evidence-first comparisons. HeightCue never sells directly.</p>
-  <div class="tags"><span class="tag">Hands-on comparison</span><span class="tag">Affiliate disclosure</span><span class="tag">No medical claims</span></div>
+  <div class="tags"><span class="tag">Evidence-checked comparison</span><span class="tag">Affiliate disclosure</span><span class="tag">No medical claims</span></div>
 </div></section>
 
 <div class="ct"><div class="lane"><div class="lane-t"><span class="lane-d grow"></span> Growth Tracking</div><p>Tools for measuring your child's growth accurately and building a healthy environment.</p></div></div>
@@ -92,26 +96,26 @@ footer .soc a{width:32px;height:32px;border-radius:8px;background:var(--bg2);dis
     <li><b>Note</b>A measurement tool records height. No tool increases it.</li>
   </ul>
   <div class="pc"><div class="pc-main">
-    <div class="pc-img"><span class="pc-badge best">BEST PICK</span><img src="https://m.media-amazon.com/images/I/51c88JdaSZL._AC_SL1500_.jpg" alt="seca 213 Portable Stadiometer" width="280" height="280" loading="lazy"></div>
+    <div class="pc-img"><span class="pc-badge best">BEST PICK</span><div class="tool-visual" role="img" aria-label="Generic stadiometer illustration"><b>seca 213</b><small>PORTABLE STADIOMETER</small></div></div>
     <div class="pc-bd">
       <div class="pc-brand">seca</div>
       <div class="pc-name">213 Portable Stadiometer</div>
       <div class="pc-meta"><span class="stars">★★★★★</span> 4.6 · 109 reviews</div>
       <div class="pc-price">$189<small>.99</small></div>
-      <p class="pc-why">The same stadiometer pediatricians use. Medical-grade accuracy across a 20-205 cm range. Folds flat for travel. When your doctor measures your child, this is what they reach for.</p>
-      <a class="pc-cta" href="https://www.amazon.com/dp/B00311ERYU?&linkCode=ll2&tag=heightcue-20&linkId=cd77130340f50280f2e0ad9d783cfa26&language=en_US&gaOptInStatus=true&ref_=as_li_ss_tl" target="_blank" rel="sponsored nofollow noopener noreferrer">Check price on Amazon →</a>
+      <p class="pc-why">A portable stadiometer with a rigid base and headpiece. Manufacturer and retailer specifications list a 20-205 cm measuring range. HeightCue has not performed independent laboratory accuracy testing.</p>
+      <a class="pc-cta" data-track="amazon-us-seca-213" data-market="US" data-product-key="us-seca-213" href="https://www.amazon.com/dp/B00311ERYU?&linkCode=ll2&tag=heightcue-20&linkId=cd77130340f50280f2e0ad9d783cfa26&language=en_US&gaOptInStatus=true&ref_=as_li_ss_tl" target="_blank" rel="sponsored nofollow noopener noreferrer">Check price on Amazon →</a>
       <div class="pc-aff">As an Amazon Associate, HeightCue earns from qualifying purchases. Your price stays the same.</div>
     </div>
   </div></div>
   <div class="pc" style="margin-top:16px"><div class="pc-main">
-    <div class="pc-img"><span class="pc-badge budget">BUDGET PICK</span><img src="https://m.media-amazon.com/images/I/71xbKQ6qn8L._SL1500_.jpg" alt="Tetuga Portable Stadiometer" width="280" height="280" loading="lazy"></div>
+    <div class="pc-img"><span class="pc-badge budget">BUDGET PICK</span><div class="tool-visual" role="img" aria-label="Generic wall-mounted height rod illustration"><b>Tetuga</b><small>WALL HEIGHT ROD</small></div></div>
     <div class="pc-bd">
       <div class="pc-brand">Tetuga</div>
       <div class="pc-name">Portable Stadiometer Chart Rod</div>
       <div class="pc-meta"><span class="stars">★★★★☆</span> 4.0 · 73 reviews</div>
       <div class="pc-price">$86<small>.91</small></div>
-      <p class="pc-why">A solid wall-mounted height rod for everyday home tracking. Less than half the price of the seca. Easy install, no batteries. More than enough when you measure at the same spot under the same conditions.</p>
-      <a class="pc-cta" href="https://www.amazon.com/dp/B0BYZD5F15?th=1&linkCode=ll2&tag=heightcue-20&linkId=3f9b2d43a0839014450c6b7bf7dffda0&language=en_US&gaOptInStatus=true&ref_=as_li_ss_tl" target="_blank" rel="sponsored nofollow noopener noreferrer">Check price on Amazon →</a>
+      <p class="pc-why">A wall-mounted height rod for repeat measurements at home. Stable vertical installation and consistent posture matter more than taking frequent readings. HeightCue has not performed independent laboratory accuracy testing.</p>
+      <a class="pc-cta" data-track="amazon-us-tetuga-height-rod" data-market="US" data-product-key="us-tetuga-height-rod" href="https://www.amazon.com/dp/B0BYZD5F15?th=1&linkCode=ll2&tag=heightcue-20&linkId=3f9b2d43a0839014450c6b7bf7dffda0&language=en_US&gaOptInStatus=true&ref_=as_li_ss_tl" target="_blank" rel="sponsored nofollow noopener noreferrer">Check price on Amazon →</a>
       <div class="pc-aff">As an Amazon Associate, HeightCue earns from qualifying purchases. Your price stays the same.</div>
     </div>
   </div></div>
