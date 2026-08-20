@@ -1,43 +1,33 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-08-20T04:02:00+09:00",
-  "operator": "이흥규 개인",
+  "updatedAt": "2026-08-20T22:39:18+09:00",
+  "operator": "주식회사 라이폴리 (LiFoli Corp.)",
   "brand": "HeightCue",
   "businessModel": "affiliate-only intermediary; HeightCue is never merchant of record",
-  "revenueEnabled": false,
-  "status": "blocked_pending_human_identity_and_contract_steps",
+  "revenueEnabled": true,
+  "status": "amazon_active_coupang_existing_registration_blocked",
   "programs": [
     {
       "id": "coupang-partners-kr",
       "market": "KR",
-      "status": "signup_blocked",
+      "status": "blocked_existing_business_registration",
       "merchantOfRecord": "Coupang or named marketplace seller",
       "blockers": [
-        "No usable Coupang login credential",
-        "Coupang membership and Partners terms require user acceptance",
-        "Real-name/phone verification required",
-        "Settlement bank and tax status require user confirmation"
-      ],
-      "automaticActionsAllowed": [
-        "browser research",
-        "candidate verification",
-        "draft link placement plan"
-      ],
-      "automaticActionsForbidden": [
-        "terms acceptance",
-        "identity or phone verification",
-        "bank or tax entry",
-        "self-approval",
-        "publishing unapproved affiliate links"
+        "The LiFoli Corp. business registration number is already enrolled under another Coupang Partners account",
+        "The existing account must be recovered before affiliate links can be generated"
       ]
     },
     {
       "id": "amazon-associates-us",
       "market": "US",
-      "status": "researched_not_enrolled",
+      "status": "active",
+      "associateId": "heightcue-20",
       "merchantOfRecord": "Amazon or marketplace seller",
+      "taxStatus": "W-8BEN-E validated",
+      "withholdingRate": 0,
+      "paymentMethodStatus": "action_needed",
       "blockers": [
-        "Program enrollment and tax/payout forms not completed"
+        "Korean bank accounts are not supported directly; choose an eligible cross-border bank account, check, or gift card payment method"
       ]
     }
   ],
@@ -108,7 +98,7 @@
     ],
     "contentKeyFormat": "hc-YYYYMMDD-NN",
     "outboundKeyFormat": "product-id__content-id",
-    "activationGate": "Program approved and a browser-generated affiliate link is visibly accepted",
+    "activationGate": "Amazon US active; Coupang KR remains blocked until the existing corporate account is recovered",
     "requiredDisclosures": [
       "이 포스팅은 제휴 활동의 일환으로 일정액의 수수료를 제공받을 수 있습니다.",
       "일반 교육 정보이며 진단이나 치료를 대신하지 않습니다."
@@ -127,14 +117,9 @@
     ]
   },
   "humanResumeChecklist": [
-    "Use or create a Coupang account under the operator’s real identity",
-    "Review and accept mandatory Coupang and Coupang Partners terms",
-    "Complete phone/real-name verification",
-    "Confirm tax/business classification without assumption",
-    "Enter settlement bank details personally",
-    "Wait for provider approval",
-    "Generate each product link in the Partners browser UI",
-    "Place disclosure adjacent to every live affiliate link",
-    "Verify link, click report, and merchant-of-record behavior end to end"
+    "Recover the Coupang Partners account that already owns LiFoli Corp.’s business registration number",
+    "Choose an Amazon payout method: eligible cross-border bank account, mailed check, or Amazon gift card",
+    "Verify Amazon click and ordered-item reporting after the first qualifying visit",
+    "Keep the Amazon disclosure adjacent to every live affiliate link"
   ]
 }
