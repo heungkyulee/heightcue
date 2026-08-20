@@ -1,6 +1,6 @@
 {
   "brand": "HeightCue",
-  "updatedAt": "2026-08-20T04:00:00+09:00",
+  "updatedAt": "2026-08-20T02:51:47+09:00",
   "channel": "https://www.youtube.com/@heightcue",
   "items": [
     {
@@ -94,6 +94,24 @@
         "https://emedi.mfds.go.kr/portal"
       ],
       "claimClass": "product-evidence"
+    },
+    {
+      "id": "hc-20260820-06",
+      "slug": "06-consultation-signals",
+      "title": "성장 상담, 언제 가야 할까?",
+      "platform": "youtube_shorts",
+      "videoId": "rPwOy_pI1dY",
+      "url": "https://youtube.com/shorts/rPwOy_pI1dY",
+      "status": "public",
+      "language": "ko",
+      "aiDisclosure": true,
+      "captions": "ko",
+      "article": "https://heungkyulee.github.io/heightcue/articles/growth-consultation-signals.html",
+      "sources": [
+        "https://www.cdc.gov/growthcharts/cdc-growth-charts.htm",
+        "https://pedsendo.org/clinical-resource/child-with-suspected-short-stature/"
+      ],
+      "claimClass": "consultation-signals"
     }
   ]
 }
