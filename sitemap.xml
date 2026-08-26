@@ -1,14 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://heungkyulee.github.io/heightcue/</loc><priority>1.0</priority></url>
-  <url><loc>https://heungkyulee.github.io/heightcue/kr/</loc><priority>0.9</priority></url>
-  <url><loc>https://heungkyulee.github.io/heightcue/us/</loc><priority>0.9</priority></url>
-  <url><loc>https://heungkyulee.github.io/heightcue/cn/</loc><priority>0.9</priority></url>
-  <url><loc>https://heungkyulee.github.io/heightcue/en/</loc><priority>0.8</priority></url>
-  <url><loc>https://heungkyulee.github.io/heightcue/articles/measure-height-correctly.html</loc><priority>0.7</priority></url>
-  <url><loc>https://heungkyulee.github.io/heightcue/articles/growth-curve-signals.html</loc><priority>0.7</priority></url>
-  <url><loc>https://heungkyulee.github.io/heightcue/articles/calcium-vitamin-d-height.html</loc><priority>0.7</priority></url>
-  <url><loc>https://heungkyulee.github.io/heightcue/articles/sleep-and-growth.html</loc><priority>0.7</priority></url>
-  <url><loc>https://heungkyulee.github.io/heightcue/disclosure.html</loc><priority>0.4</priority></url>
-  <url><loc>https://heungkyulee.github.io/heightcue/privacy.html</loc><priority>0.3</priority></url>
+  <url><loc>https://heightcue.lifoli.co.kr/</loc><priority>1.0</priority></url>
+  <url><loc>https://heightcue.lifoli.co.kr/kr/</loc><priority>0.9</priority></url>
+  <url><loc>https://heightcue.lifoli.co.kr/us/</loc><priority>0.9</priority></url>
+  <url><loc>https://heightcue.lifoli.co.kr/articles/measure-height-correctly.html</loc><priority>0.7</priority></url>
+  <url><loc>https://heightcue.lifoli.co.kr/articles/growth-curve-signals.html</loc><priority>0.7</priority></url>
+  <url><loc>https://heightcue.lifoli.co.kr/articles/calcium-vitamin-d-height.html</loc><priority>0.7</priority></url>
+  <url><loc>https://heightcue.lifoli.co.kr/articles/sleep-and-growth.html</loc><priority>0.7</priority></url>
+  <url><loc>https://heightcue.lifoli.co.kr/articles/stretching-posture-height.html</loc><priority>0.7</priority></url>
+  <url><loc>https://heightcue.lifoli.co.kr/articles/growth-consultation-signals.html</loc><priority>0.7</priority></url>
+  <url><loc>https://heightcue.lifoli.co.kr/articles/label-reading-and-exaggerated-ads.html</loc><priority>0.7</priority></url>
+  <url><loc>https://heightcue.lifoli.co.kr/us/vitamin-d-drops.html</loc><priority>0.6</priority></url>
+  <url><loc>https://heightcue.lifoli.co.kr/en/</loc><priority>0.4</priority></url>
+  <url><loc>https://heightcue.lifoli.co.kr/disclosure.html</loc><priority>0.3</priority></url>
+  <url><loc>https://heightcue.lifoli.co.kr/privacy.html</loc><priority>0.2</priority></url>
 </urlset>

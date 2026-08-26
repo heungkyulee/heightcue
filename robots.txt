@@ -1,3 +1,3 @@
 User-agent: *
 Allow: /
-Sitemap: https://heungkyulee.github.io/heightcue/sitemap.xml
+Sitemap: https://heightcue.lifoli.co.kr/sitemap.xml
