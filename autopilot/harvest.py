@@ -27,7 +27,10 @@ import sys
 import evidence
 from common import load_config, log, record_error
 
-ASIDE_TIMEOUT = 900  # 브라우저 조사는 느리다. 15분.
+ASIDE_TIMEOUT = 1800  # 브라우저 조사는 느리다. 30분.
+# 실측(2026-08-28): 단일 주제 2건 ≈ 2분 30초. 주제 2개 × 3건은 15분을 넘겨
+# 타임아웃으로 전량 유실됐다. 배치는 작게, 여러 번 도는 편이 안전하다.
+MAX_TOPICS_PER_BATCH = 1
 
 # 거리별 수집 가이드 — Aside에게 "어디를 뒤질지" 알려준다.
 TOPIC_SOURCES = {
@@ -211,36 +214,59 @@ def run_aside(prompt, account="u0", timeout=ASIDE_TIMEOUT):
 
 
 def harvest_once(cfg, topics=None, count=3, dry_run=False, account="u0"):
-    """1배치 수집 → evidence.jsonl 적재. 승격은 run.py daily가 한다."""
+    """1배치 수집 → evidence.jsonl 적재. 승격은 run.py daily가 한다.
+
+    주제를 여러 개 받으면 **주제당 한 번씩 따로** Aside를 호출한다.
+    한 번에 몰아 넣으면 조사 시간이 곱해져 타임아웃으로 전량 유실된다
+    (2026-08-28: 주제 2개 × 3건 = 15분 초과 유실). 주제별로 나누면
+    하나가 실패해도 나머지는 남는다.
+    """
     import time
-    stamp = time.strftime("%Y%m%d%H%M")
     topics = topics or _stale_topics(cfg)
     if not topics:
         log("수집 대상 주제 없음")
         return {"harvested": 0, "topics": []}
 
-    prompt = build_prompt(topics, count=count, stamp=stamp)
     if dry_run:
-        print(prompt)
+        stamp = time.strftime("%Y%m%d%H%M")
+        print(build_prompt(topics[:MAX_TOPICS_PER_BATCH], count=count, stamp=stamp))
         return {"harvested": 0, "topics": topics, "dry_run": True}
 
-    log(f"증거 수집 시작: {topics} (목표 {count}건)")
-    raw = run_aside(prompt, account=account)
-    items = _extract_json(raw)
-    if not items:
-        log("수집 실패: JSON 파싱 불가")
-        return {"harvested": 0, "topics": topics, "parse_failed": True,
-                "raw_tail": raw[-500:] if raw else ""}
-
-    saved = 0
-    for i, item in enumerate(items, 1):
-        if not isinstance(item, dict):
+    total, failures = 0, []
+    for topic in topics:
+        stamp = time.strftime("%Y%m%d%H%M")
+        prompt = build_prompt([topic], count=count, stamp=stamp)
+        log(f"증거 수집 시작: {topic} (목표 {count}건)")
+        try:
+            raw = run_aside(prompt, account=account)
+        except subprocess.TimeoutExpired:
+            log(f"수집 타임아웃: {topic} — 다음 주제로 계속")
+            failures.append({"topic": topic, "why": "timeout"})
             continue
-        item.setdefault("evidence_id", f"ev-{stamp}-{i:02d}")
-        evidence.record_evidence(cfg, item)
-        saved += 1
-    log(f"증거 수집 완료: {saved}건 적재 → evidence.jsonl")
-    return {"harvested": saved, "topics": topics}
+        except Exception as e:
+            record_error(cfg, "harvest.run_aside", e)
+            failures.append({"topic": topic, "why": str(e)[:200]})
+            continue
+
+        items = _extract_json(raw)
+        if not items:
+            log(f"수집 실패({topic}): JSON 파싱 불가")
+            failures.append({"topic": topic, "why": "parse_failed",
+                             "raw_tail": raw[-300:] if raw else ""})
+            continue
+
+        saved = 0
+        for i, item in enumerate(items, 1):
+            if not isinstance(item, dict):
+                continue
+            item.setdefault("evidence_id", f"ev-{stamp}-{topic[:4]}-{i:02d}")
+            item.setdefault("topic", topic)
+            evidence.record_evidence(cfg, item)
+            saved += 1
+        log(f"수집 완료({topic}): {saved}건 적재")
+        total += saved
+
+    return {"harvested": total, "topics": topics, "failures": failures}
 
 
 def main():

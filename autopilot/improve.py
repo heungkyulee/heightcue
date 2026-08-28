@@ -122,6 +122,45 @@ def _north_star_lines(cfg, summary):
     return lines
 
 
+def _evidence_lines(cfg):
+    """증거 원장 재고 — 마르면 가치글이 story 폴백으로 축소되므로 조기 경보한다."""
+    try:
+        import evidence
+        inv = evidence.inventory(cfg)
+        rejects = read_jsonl(state_path(cfg, "evidence_rejects.jsonl"))[-50:]
+    except Exception as e:
+        record_error(cfg, "evidence_inventory", e)
+        return []
+
+    dist = inv.get("by_distance", {})
+    unused = inv.get("unused_by_channel", {})
+    lines = ["## 증거 원장 (가치글 입력)", "",
+             f"- 원자 총 {inv.get('total', 0)}건 — "
+             + " / ".join(f"D{d} {dist.get(d, 0)}건" for d in (0, 1, 2, 3))]
+    if unused:
+        lines.append("- 채널별 미사용 재고: "
+                     + ", ".join(f"{k} {v}건" for k, v in sorted(unused.items())))
+    for ckey, left in sorted(unused.items()):
+        if left == 0:
+            lines.append(f"- ⚠️ {ckey} 재고 소진 — 가치글이 story 폴백으로 돌아감. "
+                         f"`harvest.py` 실행 확인 필요")
+        elif left <= 2:
+            lines.append(f"- ⚠️ {ckey} 재고 {left}건 — 수집 워커 점검 권장")
+    if rejects:
+        reasons = {}
+        for r in rejects:
+            for reason in (r.get("reasons") or []):
+                key = reason.split(":")[0]
+                reasons[key] = reasons.get(key, 0) + 1
+        top = sorted(reasons.items(), key=lambda kv: -kv[1])[:3]
+        lines.append("- 최근 게이트 반려 사유 상위: "
+                     + ", ".join(f"{k} {v}건" for k, v in top))
+        if len(rejects) >= 20:
+            lines.append("- ⚠️ 반려 누적 20건 이상 — 수집 기준이 아니라 "
+                         "워커 프롬프트(`aside-evidence-routine.md`)를 고칠 신호")
+    return lines
+
+
 def _ux_audit_lines(audit):
     lines = ["## UX 발굴 감사 (자동)", "",
              f"- 폼팩터: 총 {audit['formfactors_total']} — 활성 proven {audit['proven_active']} / 활성 novel {audit['novel_active']} / 후보 {audit['candidates']}"]
@@ -170,6 +209,7 @@ def run(cfg, dry_run=False):
     for h in holds:
         report.append(f"- [{h.get('why')}] {str(h.get('comment') or h.get('text') or '')[:80]}")
     report += [""] + _north_star_lines(cfg, summary)
+    report += [""] + _evidence_lines(cfg)
     if ux_audit:
         report += [""] + _ux_audit_lines(ux_audit)
     report += ["", "## 이번 주 플레이북 분석", "", report_playbook]

@@ -80,6 +80,20 @@ MIN_SAFE_AREA_MARGIN_PX = 48
 #: 캡션의 유일한 출처. 합성 단계에서 다시 쓰지 않는다.
 CAPTION_SOURCE = "storyboard.cuts[].voice_line"
 
+#: CTA 의 유일한 출처. 호출자가 넘기는 자유 문자열이 아니다 — 캡션과 똑같이
+#: 승인된 스토리보드에서만 온다. 자유 입력이면 CaptionDriftError 가 영원히
+#: 발동하지 않는 사각지대가 생긴다 (승인 집합에 스스로를 넣어버리므로).
+CTA_SOURCE = "storyboard.cta.text"
+
+#: 고지가 **픽셀에** 남았는지 확인하는 단계의 이름. 지금은 오프라인이라
+#: 프레임을 샘플링하거나 OCR 할 수 없으므로, 이 파이프라인은 고지 생존을
+#: '렌더러 보고'로만 안다. 실제 게이팅된 렌더 태스크에서 프레임 샘플/OCR
+#: 또는 Remotion 렌더타임 assertion 을 이 이름으로 붙인다. 그때까지
+#: 매니페스트는 `disclosure_pixel_verified: False` 를 정직하게 들고 간다.
+DISCLOSURE_PIXEL_VERIFICATION_HOOK = (
+    "TODO(gated-real-render): frame-sample OCR 또는 Remotion 렌더타임 "
+    "assertion 으로 고지 픽셀 생존을 확인한다")
+
 PROBE_TIMEOUT = 60
 
 
@@ -137,11 +151,21 @@ def sha256_file(path: str) -> str:
     return digest.hexdigest()
 
 
-def _discard(path: str) -> None:
-    try:
-        os.unlink(path)
-    except OSError:
-        pass
+def _discard(*paths: str) -> None:
+    """거부된 산출물을 지운다.
+
+    렌더러가 자기 경로를 보고하면 검증 대상 경로와 우리가 요청한 경로가
+    **다를 수 있다.** 둘 다 지워야 거부된 파일이 디스크에 살아남지 않는다.
+    """
+    seen = set()
+    for path in paths:
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +173,37 @@ def _discard(path: str) -> None:
 # ---------------------------------------------------------------------------
 
 _CONTAINER_BOXES = {b"moov", b"trak", b"mdia", b"minf", b"stbl"}
+
+#: 미디어 페이로드 하한 (bytes/초). 실제 768x1360 30fps H.264+AAC 는 초당
+#: 100KB 이상이다 — 이 값은 '진짜 인코딩이면 무조건 넘는' 바닥이며,
+#: 헤더만 있는 스텁이나 잘린 mdat 을 걸러내는 용도다.
+MIN_MEDIA_BYTES_PER_SECOND = 8000
+
+#: 선언 길이(mvhd)와 코딩된 샘플 길이(stts/mdhd)의 허용 괴리.
+CODED_DURATION_TOLERANCE_RATIO = 0.05
+CODED_DURATION_TOLERANCE_FLOOR = 0.25
+
+
+def _field(data: bytes, off: int, size: int, stop: int, what: str) -> bytes:
+    """박스 **자기 경계** 안에서만 필드를 읽는다.
+
+    파일 끝이 아니라 박스의 ``stop`` 으로 경계를 잡는 것이 핵심이다 — 짧은
+    박스에서 파일 경계만 보면 **다음 박스의 바이트를 자기 필드로 오독**한다
+    (리뷰어가 재현: 짧은 mvhd 가 인접 0 을 읽어 duration 0 을 보고했다).
+    """
+    if off < 0 or off + size > stop or off + size > len(data):
+        raise ComposeFormatError(
+            f"mp4 {what} 가 박스 경계를 넘어간다 (offset {off}, {size}바이트 "
+            f"요구, 박스 끝 {stop}) — 잘린 박스를 추측으로 메우지 않는다")
+    return data[off:off + size]
+
+
+def _u32(data: bytes, off: int, stop: int, what: str) -> int:
+    return struct.unpack(">I", _field(data, off, 4, stop, what))[0]
+
+
+def _u64(data: bytes, off: int, stop: int, what: str) -> int:
+    return struct.unpack(">Q", _field(data, off, 8, stop, what))[0]
 
 
 def _iter_boxes(data: bytes, start: int, end: int):
@@ -169,44 +224,92 @@ def _iter_boxes(data: bytes, start: int, end: int):
 def _collect(data: bytes, start: int, end: int, found: Dict[str, Any],
              trak: Optional[Dict[str, Any]] = None) -> None:
     for tag, body, stop in _iter_boxes(data, start, end):
-        if tag == b"mvhd":
-            version = data[body]
+        if tag == b"mdat":
+            found["mdat_bytes"] = found.get("mdat_bytes", 0) + (stop - body)
+            found["mdat_boxes"] = found.get("mdat_boxes", 0) + 1
+        elif tag == b"mvhd":
+            version = _field(data, body, 1, stop, "mvhd.version")[0]
             base = body + 4 + (16 if version == 1 else 8)
-            if version == 1:
-                timescale = struct.unpack(">I", data[base:base + 4])[0]
-                duration = struct.unpack(">Q", data[base + 4:base + 12])[0]
-            else:
-                timescale = struct.unpack(">I", data[base:base + 4])[0]
-                duration = struct.unpack(">I", data[base + 4:base + 8])[0]
-            found["timescale"] = timescale
-            found["duration_units"] = duration
+            found["timescale"] = _u32(data, base, stop, "mvhd.timescale")
+            found["duration_units"] = (
+                _u64(data, base + 4, stop, "mvhd.duration") if version == 1
+                else _u32(data, base + 4, stop, "mvhd.duration"))
         elif tag == b"trak":
             current: Dict[str, Any] = {}
             found.setdefault("traks", []).append(current)
             _collect(data, body, stop, found, current)
         elif tag == b"tkhd" and trak is not None:
-            version = data[body]
+            version = _field(data, body, 1, stop, "tkhd.version")[0]
             width_off = body + (96 if version == 1 else 84) - 8
-            trak["width"] = struct.unpack(
-                ">I", data[width_off:width_off + 4])[0] >> 16
-            trak["height"] = struct.unpack(
-                ">I", data[width_off + 4:width_off + 8])[0] >> 16
+            trak["width"] = _u32(data, width_off, stop, "tkhd.width") >> 16
+            trak["height"] = _u32(data, width_off + 4, stop,
+                                  "tkhd.height") >> 16
+        elif tag == b"mdhd" and trak is not None:
+            version = _field(data, body, 1, stop, "mdhd.version")[0]
+            base = body + 4 + (16 if version == 1 else 8)
+            trak["media_timescale"] = _u32(data, base, stop, "mdhd.timescale")
+            trak["media_duration_units"] = (
+                _u64(data, base + 4, stop, "mdhd.duration") if version == 1
+                else _u32(data, base + 4, stop, "mdhd.duration"))
         elif tag == b"hdlr" and trak is not None:
-            trak["handler"] = data[body + 8:body + 12].decode("latin-1")
+            trak["handler"] = _field(data, body + 8, 4, stop,
+                                     "hdlr.handler_type").decode("latin-1")
         elif tag == b"stsd" and trak is not None:
-            entry = body + 8
-            if entry + 8 <= stop:
-                trak["fourcc"] = data[entry + 4:entry + 8].decode(
-                    "latin-1").strip()
+            count = _u32(data, body + 4, stop, "stsd.entry_count")
+            trak["stsd_entries"] = count
+            if count == 1:
+                entry = body + 8
+                trak["fourcc"] = _field(data, entry + 4, 4, stop,
+                                        "stsd.entry.format").decode(
+                                            "latin-1").strip()
+        elif tag == b"stts" and trak is not None:
+            count = _u32(data, body + 4, stop, "stts.entry_count")
+            total = 0
+            samples_total = 0
+            for i in range(count):
+                off = body + 8 + i * 8
+                samples = _u32(data, off, stop, "stts.sample_count")
+                delta = _u32(data, off + 4, stop, "stts.sample_delta")
+                samples_total += samples
+                total += samples * delta
+            trak["stts_sample_count"] = samples_total
+            trak["stts_duration_units"] = total
+        elif tag == b"stsz" and trak is not None:
+            sample_size = _u32(data, body + 4, stop, "stsz.sample_size")
+            sample_count = _u32(data, body + 8, stop, "stsz.sample_count")
+            if sample_size:
+                total = sample_size * sample_count
+            else:
+                total = sum(_u32(data, body + 12 + i * 4, stop, "stsz.entry")
+                            for i in range(sample_count))
+            trak["stsz_sample_count"] = sample_count
+            trak["stsz_total_bytes"] = total
         elif tag in _CONTAINER_BOXES:
             _collect(data, body, stop, found, trak)
 
 
-def measure_mp4(path: str) -> Dict[str, Any]:
-    """출력 mp4 를 **바이트로 직접 재서** 길이·크기·코덱을 돌려준다.
+def _coded_seconds(trak: Dict[str, Any]) -> Optional[float]:
+    """샘플 테이블이 실제로 담고 있는 길이 (초). 없으면 None."""
+    timescale = int(trak.get("media_timescale") or 0)
+    units = trak.get("stts_duration_units")
+    if timescale > 0 and units:
+        return float(units) / timescale
+    units = trak.get("media_duration_units")
+    if timescale > 0 and units:
+        return float(units) / timescale
+    return None
 
-    렌더러가 에코한 값은 우리가 보낸 요청의 메아리일 뿐 아무것도 증명하지
-    못한다. 여기서 나온 값만 매니페스트에 ``measured_*`` 로 기록된다.
+
+def measure_mp4(path: str) -> Dict[str, Any]:
+    """출력 mp4 를 **바이트로 직접 읽어** 길이·크기·코덱을 돌려준다.
+
+    이 계열에서 세 번 반복된 결함 — '선언을 검증하고 페이로드를 검증하지
+    않는 것' — 을 여기서 끊는다. ``mvhd.duration``/``tkhd.width`` /
+    ``stsd`` fourcc 는 전부 **헤더 선언**이므로 그것만으로는 통과시키지
+    않는다. 실제 미디어(``mdat``)가 존재하고, 선언 길이에 걸맞은 크기이며,
+    샘플 테이블(``stts``/``stsz``)·``mdhd`` 가 ``mvhd`` 와 서로 맞는지까지
+    본 뒤에야 값을 돌려준다. 돌려주는 값에는 그 값이 관측인지 선언인지
+    ``*_basis`` 로 이름을 붙인다 — 선언에 ``measured_`` 딱지를 붙이지 않는다.
     """
     try:
         with open(path, "rb") as fh:
@@ -220,14 +323,21 @@ def measure_mp4(path: str) -> Dict[str, Any]:
             "확장자나 렌더러 보고가 아니라 실제 바이트로 판정한다")
 
     found: Dict[str, Any] = {}
-    _collect(data, 0, len(data), found)
+    try:
+        _collect(data, 0, len(data), found)
+    except ComposeFormatError:
+        raise
+    except (struct.error, IndexError, UnicodeDecodeError, ValueError) as exc:
+        raise ComposeFormatError(
+            f"mp4 박스를 해석할 수 없다: {path} ({type(exc).__name__}: {exc}) — "
+            "깨진 산출물은 통과시키지 않는다") from exc
 
     if "timescale" not in found:
         raise ComposeFormatError(f"mp4 에 moov/mvhd 가 없다: {path}")
     timescale = int(found["timescale"]) or 1
-    duration = float(found["duration_units"]) / timescale
-    if duration <= 0:
-        raise ComposeFormatError(f"실측 길이가 0 이다: {path} — 빈 렌더다")
+    declared_duration = float(found["duration_units"]) / timescale
+    if declared_duration <= 0:
+        raise ComposeFormatError(f"선언 길이가 0 이다: {path} — 빈 렌더다")
 
     traks = found.get("traks") or []
     video = next((t for t in traks if t.get("handler") == "vide"), None)
@@ -235,14 +345,75 @@ def measure_mp4(path: str) -> Dict[str, Any]:
     if video is None:
         raise ComposeFormatError(f"mp4 에 비디오 트랙이 없다: {path}")
 
+    for name, trak in (("비디오", video), ("오디오", audio)):
+        if trak is None:
+            continue
+        entries = trak.get("stsd_entries")
+        if entries is None:
+            raise ComposeFormatError(
+                f"{name} 트랙에 stsd 가 없다: {path} — 코덱을 확인할 수 없다")
+        if entries != 1:
+            raise ComposeFormatError(
+                f"{name} 트랙 stsd 항목이 {entries} 개다: {path} — 다중 샘플 "
+                "기술자 레이아웃은 단일 코덱으로 요약할 수 없으므로, 엉뚱한 "
+                "코덱을 그럴듯하게 보고하느니 거부한다")
+
+    # --- 페이로드 존재 -----------------------------------------------------
+    mdat_bytes = int(found.get("mdat_bytes") or 0)
+    if not found.get("mdat_boxes"):
+        raise ComposeFormatError(
+            f"mp4 에 mdat 박스가 없다: {path} — moov 는 "
+            f"{declared_duration:.3f}초를 선언하지만 미디어 페이로드가 0 "
+            "바이트다. 헤더만 있는 스텁은 렌더 결과가 아니다")
+
+    # --- 페이로드 크기가 선언 길이에 걸맞은가 ------------------------------
+    floor_bytes = int(declared_duration * MIN_MEDIA_BYTES_PER_SECOND)
+    if mdat_bytes < floor_bytes:
+        raise ComposeFormatError(
+            f"mdat 이 {mdat_bytes} 바이트뿐인데 moov 는 "
+            f"{declared_duration:.3f}초를 선언한다 (최소 {floor_bytes} 바이트 "
+            f"기대): {path} — 선언과 실제 페이로드가 어긋난다")
+
+    # --- 샘플 테이블 교차검증 ---------------------------------------------
+    coded = _coded_seconds(video)
+    if coded is None:
+        raise ComposeFormatError(
+            f"비디오 트랙에 mdhd/stts 가 없다: {path} — mvhd 선언만으로는 "
+            "길이를 확인할 수 없다")
+    if coded <= 0:
+        raise ComposeFormatError(
+            f"비디오 샘플 테이블 길이가 0 이다: {path} — 프레임이 없다")
+    tolerance = max(CODED_DURATION_TOLERANCE_FLOOR,
+                    declared_duration * CODED_DURATION_TOLERANCE_RATIO)
+    if abs(coded - declared_duration) > tolerance:
+        raise ComposeFormatError(
+            f"선언 길이 {declared_duration:.3f}초와 코딩된 샘플 길이 "
+            f"{coded:.3f}초가 다르다 (허용 {tolerance:.3f}초): {path} — "
+            "헤더가 주장하는 길이만큼의 미디어가 실제로 들어있지 않다")
+
+    stsz_total = video.get("stsz_total_bytes")
+    if stsz_total is not None and stsz_total > mdat_bytes:
+        raise ComposeFormatError(
+            f"stsz 샘플 총합 {stsz_total} 바이트가 mdat {mdat_bytes} 바이트를 "
+            f"넘는다: {path} — 샘플 테이블이 없는 데이터를 가리킨다")
+
     return {
-        "duration_seconds": round(duration, 6),
+        # mvhd 선언이되, mdhd/stts 및 mdat 크기와 교차검증을 통과한 값.
+        "duration_seconds": round(declared_duration, 6),
+        "duration_basis": "mvhd_corroborated_by_mdhd_and_sample_tables",
+        "coded_duration_seconds": round(coded, 6),
+        # tkhd 는 선언이다 — 코딩된 데이터가 존재함을 확인했을 뿐,
+        # 픽셀을 디코드해 잰 값이 아니다. 이름으로 그렇게 밝힌다.
         "width": int(video.get("width") or 0),
         "height": int(video.get("height") or 0),
+        "dimension_basis": "header_declared_tkhd_corroborated_by_coded_data",
         "video_codec_fourcc": video.get("fourcc") or "",
         "audio_codec_fourcc": (audio or {}).get("fourcc") or "",
+        "codec_basis": "header_declared_stsd_single_entry",
+        "mdat_bytes": mdat_bytes,
         "bytes": len(data),
-        "measured_by": "video_compose.measure_mp4 (moov 박스 직접 판독)",
+        "measured_by": "video_compose.measure_mp4 "
+                       "(moov 박스 판독 + mdat/샘플테이블 교차검증)",
     }
 
 
@@ -274,13 +445,13 @@ def assert_measured_output(path: str, expected_seconds: int) -> Dict[str, Any]:
         raise ComposeFormatError(
             f"오디오 코덱이 AAC 가 아니다: {m['audio_codec_fourcc']!r} ({path})")
 
+    if expected_seconds not in ALLOWED_TOTAL_DURATIONS:
+        raise ComposeDurationError(
+            f"총 길이는 {ALLOWED_TOTAL_DURATIONS} 중 하나여야 한다: {expected_seconds}")
     if abs(m["duration_seconds"] - expected_seconds) > DURATION_TOLERANCE_SECONDS:
         raise ComposeDurationError(
             f"실측 길이 {m['duration_seconds']}초가 계획 {expected_seconds}초와 "
             f"다르다 (허용 오차 {DURATION_TOLERANCE_SECONDS}초): {path}")
-    if expected_seconds not in ALLOWED_TOTAL_DURATIONS:
-        raise ComposeDurationError(
-            f"총 길이는 {ALLOWED_TOTAL_DURATIONS} 중 하나여야 한다: {expected_seconds}")
     return m
 
 
@@ -302,9 +473,16 @@ def _subprocess_probe() -> Dict[str, Any]:
     if proc.returncode != 0:
         return {"available": False, "version": "",
                 "detail": (proc.stderr or "")[-500:]}
+    # 라벨이 붙은 줄에서만 버전을 읽는다. 아무 dotted 토큰이나 집으면 Node·
+    # Chrome·FFmpeg 버전을 Remotion 버전으로 계보에 남길 수 있다 —
+    # '틀렸지만 그럴듯한' 버전은 없느니만 못하다.
     version = ""
     for line in (proc.stdout or "").splitlines():
-        for token in line.replace(":", " ").split():
+        low = line.lower()
+        if "remotion" not in low:
+            continue
+        for token in line.replace(":", " ").replace(",", " ").split():
+            token = token.strip("v()[]")
             if token and token[0].isdigit() and "." in token:
                 version = token
                 break
@@ -394,6 +572,24 @@ def extract_disclosure(storyboard: Dict[str, Any], market: str) -> str:
     return text
 
 
+def extract_cta(storyboard: Dict[str, Any]) -> str:
+    """승인된 CTA 를 **스토리보드에서** 축자 회수한다.
+
+    합성 단계는 CTA 를 지어내지도, 호출자에게서 받지도 않는다. 화면에 박히는
+    모든 글자는 승인본에 존재해야 한다 (SSOT: 카피는 승인본 그대로).
+    """
+    block = storyboard.get("cta")
+    if isinstance(block, dict):
+        text = str(block.get("text") or "").strip()
+    else:
+        text = str(block or "").strip()
+    if not text:
+        raise CaptionDriftError(
+            "스토리보드에 승인된 cta.text 가 없다 — CTA 는 호출자 자유 입력이 "
+            "아니라 승인본에서만 온다. CTA 없는 발행본은 만들지 않는다")
+    return text
+
+
 def extract_captions(storyboard: Dict[str, Any]) -> List[str]:
     """승인된 컷 카피(`voice_line`)를 **축자** 회수한다. 재작성 금지."""
     captions: List[str] = []
@@ -407,13 +603,17 @@ def extract_captions(storyboard: Dict[str, Any]) -> List[str]:
     return captions
 
 
-def build_overlay_plan(*, captions: List[str], cta_text: str,
+def build_overlay_plan(*, captions: List[str], cta: str,
                        disclosure_text: str,
                        total_seconds: int) -> Dict[str, Any]:
-    """결정론적 오버레이 계획. 텍스트는 전부 승인본에서 그대로 온다."""
-    cta = str(cta_text or "").strip()
+    """결정론적 오버레이 계획. 텍스트는 전부 승인본에서 그대로 온다.
+
+    ``cta`` 는 반드시 :func:`extract_cta` 가 스토리보드에서 꺼낸 값이다.
+    """
+    cta = str(cta or "").strip()
     if not cta:
-        raise CaptionDriftError("cta_text 가 비어 있다 — CTA 없는 발행본은 만들지 않는다")
+        raise CaptionDriftError(
+            "승인된 CTA 가 비어 있다 — CTA 없는 발행본은 만들지 않는다")
 
     layers: List[Dict[str, Any]] = []
     for i, text in enumerate(captions):
@@ -431,7 +631,7 @@ def build_overlay_plan(*, captions: List[str], cta_text: str,
         "role": "cta",
         "cut_index": len(captions),
         "text": cta,
-        "verbatim_from": "caller.cta_text",
+        "verbatim_from": CTA_SOURCE,
         "start_seconds": max(0, total_seconds - CUT_DURATION_SECONDS),
         "end_seconds": total_seconds,
         "style": {"font_size_px": 40, "safe_area_margin_px": 96,
@@ -457,12 +657,24 @@ def build_overlay_plan(*, captions: List[str], cta_text: str,
 
 def assert_rendered_text(rendered: Any, *, approved: List[str],
                          disclosure_text: str) -> List[str]:
-    """렌더러가 실제로 얹은 텍스트가 승인 집합과 **정확히** 같은지 본다."""
+    """렌더러가 **보고한** 텍스트 레이어가 승인 집합과 정확히 같은지 본다.
+
+    .. warning::
+       이것은 **픽셀 검증이 아니다.** ``rendered`` 는 렌더러의 자기보고이므로,
+       오버레이를 떨어뜨리고 문자열만 되돌려주는 렌더러는 여기를 통과한다.
+       그래서 결과 매니페스트는 이 통과를 ``disclosure_included: True`` 라는
+       관측 사실이 아니라 ``disclosure_verification_basis=
+       "renderer_reported_text_layers"`` 라는 **근거의 출처**로 기록한다.
+       실제 화면 확인은 :data:`DISCLOSURE_PIXEL_VERIFICATION_HOOK` 참고.
+
+    공백은 **자르지 않는다.** 앞뒤 공백 드리프트도 승인본과 화면이 달라진
+    것이며, 고지 문구는 축자 일치가 요구된다.
+    """
     if not isinstance(rendered, (list, tuple)):
         raise CaptionDriftError(
             f"렌더 결과에 text_layers 가 없다 ({type(rendered)}) — 오버레이가 "
             "실제로 얹혔는지 확인할 수 없으면 발행하지 않는다")
-    actual = [str(t).strip() for t in rendered]
+    actual = [str(t) for t in rendered]
 
     if disclosure_text not in actual:
         raise DisclosureError(
@@ -535,7 +747,7 @@ def verify_input_cuts(cut_lineage: Any, expected_count: int) -> List[Dict[str, A
 
 def compose_video(*, storyboard: Dict[str, Any], cut_lineage: Any,
                   edit_decisions: Dict[str, Any], job_id: str,
-                  output_path: str, cta_text: str,
+                  output_path: str,
                   renderer: Callable,
                   runtime_probe: Optional[Callable] = None,
                   ) -> Dict[str, Any]:
@@ -588,7 +800,8 @@ def compose_video(*, storyboard: Dict[str, Any], cut_lineage: Any,
 
     # 5) 승인 카피 — 축자 회수 + CTA.
     captions = extract_captions(storyboard)
-    overlay_plan = build_overlay_plan(captions=captions, cta_text=cta_text,
+    cta = extract_cta(storyboard)
+    overlay_plan = build_overlay_plan(captions=captions, cta=cta,
                                       disclosure_text=disclosure_text,
                                       total_seconds=expected_seconds)
     approved_texts = [layer["text"] for layer in overlay_plan["text_layers"]
@@ -616,7 +829,7 @@ def compose_video(*, storyboard: Dict[str, Any], cut_lineage: Any,
                   for c in inputs],
         "captions": list(captions),
         "caption_source": CAPTION_SOURCE,
-        "cta": str(cta_text).strip(),
+        "cta": cta, "cta_source": CTA_SOURCE,
         "disclosure": dict(overlay_plan["disclosure"]),
         "overlay_plan": overlay_plan,
     }
@@ -647,6 +860,7 @@ def compose_video(*, storyboard: Dict[str, Any], cut_lineage: Any,
         "disclosure_required": True, "fallback_runtime_available": False,
     })
 
+    rendered_path = ""
     try:
         response = renderer(request)
         if not isinstance(response, dict):
@@ -665,15 +879,18 @@ def compose_video(*, storyboard: Dict[str, Any], cut_lineage: Any,
         if not os.path.isfile(rendered_path):
             raise ComposeFormatError(f"렌더 산출물이 없다: {rendered_path}")
 
-        # 9) 고지·카피가 실제로 화면에 남았는지.
+        # 9) 고지·카피가 렌더러 보고상 남아 있는지. **자기보고**이며 픽셀
+        #    검증이 아니다 — 매니페스트에도 그 한계를 그대로 적는다.
         rendered_texts = assert_rendered_text(
             response.get("text_layers"), approved=approved_texts,
             disclosure_text=disclosure_text)
 
         # 10) 길이·크기·코덱을 **파일에서** 잰다.
         measured = assert_measured_output(rendered_path, expected_seconds)
-    except BaseException:
-        _discard(output_path)
+    except Exception:
+        # 검증은 rendered_path 에 걸렸다 — 우리가 요청한 경로와 다를 수 있으니
+        # 둘 다 지운다. 거부된 산출물이 발행 단계로 새어 나가면 안 된다.
+        _discard(rendered_path, output_path)
         append_event(events, {
             "event": "compose_rejected", "job_id": job, "run_id": run_id,
             "render_runtime": RENDER_RUNTIME, "output_discarded": True,
@@ -705,12 +922,24 @@ def compose_video(*, storyboard: Dict[str, Any], cut_lineage: Any,
         "measured_width": measured["width"],
         "measured_height": measured["height"],
         "measured_by": measured["measured_by"],
+        "duration_basis": measured["duration_basis"],
+        "coded_duration_seconds": measured["coded_duration_seconds"],
+        "dimension_basis": measured["dimension_basis"],
+        "codec_basis": measured["codec_basis"],
+        "mdat_bytes": measured["mdat_bytes"],
         "video_codec_fourcc": measured["video_codec_fourcc"],
         "audio_codec_fourcc": measured["audio_codec_fourcc"],
         "captions": list(captions),
         "caption_source": CAPTION_SOURCE,
         "rendered_text_layers": rendered_texts,
-        "disclosure_included": True,
+        # 렌더러 자기보고다. 관측이 아니므로 `disclosure_included: True` 라고
+        # 단정하지 않는다 — 오버레이를 떨어뜨리고 문자열만 에코하는 렌더러는
+        # 이 검사를 통과한다. 실제 화면 확인은 아래 훅에서 이뤄져야 한다.
+        "disclosure_reported_by_renderer": True,
+        "disclosure_verification_basis": "renderer_reported_text_layers",
+        "disclosure_pixel_verified": False,
+        "disclosure_pixel_verification_hook":
+            DISCLOSURE_PIXEL_VERIFICATION_HOOK,
         "disclosure_text": disclosure_text,
         "overlay_plan": overlay_plan,
         "created_at": _now(),
@@ -723,6 +952,8 @@ def compose_video(*, storyboard: Dict[str, Any], cut_lineage: Any,
         "output_sha256": result["output_sha256"],
         "measured_duration_seconds": measured["duration_seconds"],
         "measured_size": f"{measured['width']}x{measured['height']}",
-        "disclosure_included": True, "fallback_taken": False,
+        "disclosure_reported_by_renderer": True,
+        "disclosure_pixel_verified": False,
+        "fallback_taken": False,
     })
     return result

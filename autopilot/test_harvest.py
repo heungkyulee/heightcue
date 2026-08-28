@@ -110,6 +110,29 @@ def main():
         res2 = harvest.harvest_once(cfg, topics=["sleep"], count=2, dry_run=True)
         check("dry_run 플래그 반환", res2.get("dry_run") is True)
         check("적재 없음", res2["harvested"] == 0)
+
+        print("\n[7] 주제별 격리 — 하나가 실패해도 나머지는 남는다")
+        import subprocess as sp
+        calls = []
+
+        def flaky(prompt, account="u0", timeout=None):
+            calls.append(prompt)
+            if "discipline" in prompt:
+                raise sp.TimeoutExpired("aside", 1800)
+            return ('[{"topic":"sleep","claim":"c","counter_claim":"cc",'
+                    '"confidence":"weak","sources":[]}]')
+
+        orig = harvest.run_aside
+        harvest.run_aside = flaky
+        try:
+            res3 = harvest.harvest_once(cfg, topics=["discipline", "sleep"], count=1)
+        finally:
+            harvest.run_aside = orig
+        check("주제 수만큼 개별 호출(한 번에 몰지 않음)", len(calls) == 2)
+        check("타임아웃 주제를 건너뛰고 계속", res3["harvested"] == 1)
+        check("실패가 기록됨",
+              len(res3["failures"]) == 1
+              and res3["failures"][0]["why"] == "timeout")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

@@ -51,17 +51,57 @@ def _tkhd(track_id: int, width: int, height: int) -> bytes:
     return _box(b"tkhd", bytes(payload))
 
 
-def _stsd(fourcc: bytes) -> bytes:
-    entry = _box(fourcc, b"\x00" * 70)
-    return _box(b"stsd", b"\x00\x00\x00\x00" + struct.pack(">I", 1) + entry)
+def _stsd(fourcc: bytes, entries: int = 1) -> bytes:
+    body = b""
+    for _ in range(entries):
+        body += _box(fourcc, b"\x00" * 70)
+    return _box(b"stsd",
+                b"\x00\x00\x00\x00" + struct.pack(">I", entries) + body)
+
+
+def _mdhd(timescale: int, duration_units: int) -> bytes:
+    payload = (b"\x00\x00\x00\x00"                     # version 0 + flags
+               + struct.pack(">I", 0)                  # creation
+               + struct.pack(">I", 0)                  # modification
+               + struct.pack(">I", timescale)
+               + struct.pack(">I", duration_units)
+               + b"\x55\xc4" + b"\x00\x00")            # language + quality
+    return _box(b"mdhd", payload)
+
+
+def _stts(sample_count: int, sample_delta: int) -> bytes:
+    return _box(b"stts", b"\x00\x00\x00\x00" + struct.pack(">I", 1)
+                + struct.pack(">II", sample_count, sample_delta))
+
+
+def _stsz(sample_size: int, sample_count: int) -> bytes:
+    return _box(b"stsz", b"\x00\x00\x00\x00"
+                + struct.pack(">II", sample_size, sample_count))
 
 
 def _trak(track_id: int, width: int, height: int, fourcc: bytes,
-          handler: bytes) -> bytes:
+          handler: bytes, *, media_timescale: int = 30000,
+          media_duration_seconds: float = 10.0,
+          coded_duration_seconds: float | None = None,
+          samples: int = 300, sample_size: int = 512,
+          include_mdhd: bool = True, include_stts: bool = True,
+          include_stsz: bool = True, stsd_entries: int = 1) -> bytes:
+    coded = (media_duration_seconds if coded_duration_seconds is None
+             else coded_duration_seconds)
+    samples = max(1, samples)
+    delta = max(1, int(round(coded * media_timescale / samples)))
     hdlr = _box(b"hdlr", b"\x00" * 8 + handler + b"\x00" * 12)
-    stbl = _box(b"stbl", _stsd(fourcc))
-    minf = _box(b"minf", stbl)
-    mdia = _box(b"mdia", hdlr + minf)
+    stbl = _stsd(fourcc, stsd_entries)
+    if include_stts:
+        stbl += _stts(samples, delta)
+    if include_stsz:
+        stbl += _stsz(sample_size, samples)
+    minf = _box(b"minf", _box(b"stbl", stbl))
+    mdia = b""
+    if include_mdhd:
+        mdia += _mdhd(media_timescale,
+                      int(round(media_duration_seconds * media_timescale)))
+    mdia = _box(b"mdia", mdia + hdlr + minf)
     return _box(b"trak", _tkhd(track_id, width, height) + mdia)
 
 
@@ -70,15 +110,46 @@ def build_mp4(width: int = vcm.COMPOSITION_WIDTH,
               duration_seconds: float = 10.0,
               video_codec: bytes = b"avc1",
               audio_codec: bytes | None = b"mp4a",
-              timescale: int = 1000) -> bytes:
-    """진짜 moov/mvhd/tkhd/stsd 를 가진 최소 mp4 바이트."""
-    traks = _trak(1, width, height, video_codec, b"vide")
+              timescale: int = 1000,
+              *,
+              coded_duration_seconds: float | None = None,
+              mdat_bytes: int | None = None,
+              include_mdat: bool = True,
+              include_mdhd: bool = True,
+              include_stts: bool = True,
+              include_stsz: bool = True,
+              stsd_entries: int = 1) -> bytes:
+    """실제 페이로드(mdat)와 샘플 테이블까지 갖춘 최소 mp4 바이트.
+
+    헤더 선언만 있고 미디어가 없는 파일은 **conforming 이 아니다** — 픽스처도
+    그 사실을 반영해야 파서를 정직하게 시험할 수 있다.
+    """
+    coded = duration_seconds if coded_duration_seconds is None else coded_duration_seconds
+    fps = 30
+    samples = max(1, int(round(max(coded, 1.0 / fps) * fps)))
+    if mdat_bytes is None:
+        mdat_bytes = max(4096, int(round(max(coded, duration_seconds)
+                                        * vcm.MIN_MEDIA_BYTES_PER_SECOND * 1.5)))
+    sample_size = max(1, mdat_bytes // (samples * 2))
+    traks = _trak(1, width, height, video_codec, b"vide",
+                  media_duration_seconds=duration_seconds,
+                  coded_duration_seconds=coded,
+                  samples=samples, sample_size=sample_size,
+                  include_mdhd=include_mdhd, include_stts=include_stts,
+                  include_stsz=include_stsz, stsd_entries=stsd_entries)
     if audio_codec is not None:
-        traks += _trak(2, 0, 0, audio_codec, b"soun")
+        traks += _trak(2, 0, 0, audio_codec, b"soun",
+                       media_duration_seconds=duration_seconds,
+                       coded_duration_seconds=coded,
+                       samples=samples, sample_size=sample_size,
+                       include_mdhd=include_mdhd, include_stts=include_stts,
+                       include_stsz=include_stsz)
     moov = _box(b"moov", _mvhd(timescale, int(round(duration_seconds * timescale))) + traks)
     ftyp = _box(b"ftyp", b"isom" + struct.pack(">I", 512) + b"isomiso2avc1mp41")
-    mdat = _box(b"mdat", b"\x00" * 64)
-    return ftyp + moov + mdat
+    out = ftyp + moov
+    if include_mdat:
+        out += _box(b"mdat", b"\x00" * mdat_bytes)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -148,9 +219,11 @@ CAPTIONS = ["아이 저녁 루틴에 한 스푼 더하는 법",
 CTA = "프로필 링크에서 성분표 확인하세요"
 
 
-def make_storyboard(n_cuts: int = 2, *, disclosure=None, captions=None):
+def make_storyboard(n_cuts: int = 2, *, disclosure=None, captions=None,
+                    cta=None):
     caps = captions if captions is not None else CAPTIONS
     return {
+        "cta": {"text": CTA} if cta is None else cta,
         "storyboard_id": SB_ID, "run_id": RUN_ID, "product_id": PRODUCT_ID,
         "market": MARKET, "content_draft_id": DRAFT_ID,
         "viral_pattern_ids": ["vp-1"], "complexity": "standard",
@@ -207,7 +280,6 @@ class ComposeTestBase(unittest.TestCase):
             edit_decisions=edit_decisions if edit_decisions is not None else dict(EDIT_DECISIONS),
             job_id=kw.pop("job_id", JOB_ID),
             output_path=kw.pop("output_path", self.out),
-            cta_text=kw.pop("cta_text", CTA),
             renderer=renderer if renderer is not None else RendererSpy(),
             runtime_probe=probe if probe is not None else ProbeSpy(),
             **kw)
@@ -261,7 +333,7 @@ class TestHappyPath(ComposeTestBase):
         for cap in CAPTIONS:
             self.assertIn(cap, texts)
         self.assertIn(CTA, texts)
-        self.assertTrue(result["disclosure_included"])
+        self.assertTrue(result["disclosure_reported_by_renderer"])
         self.assertEqual(result["captions"], CAPTIONS)
 
     def test_props_written_to_disk_carry_the_disclosure(self):
@@ -448,8 +520,39 @@ class TestApprovedCaptions(ComposeTestBase):
         self.assertEqual(result["caption_source"], "storyboard.cuts[].voice_line")
 
     def test_empty_cta_is_rejected(self):
+        sb = make_storyboard(2, cta={"text": "   "})
         with self.assertRaises(vcm.CaptionDriftError):
-            self.compose(cta_text="   ", renderer=RendererSpy())
+            self.compose(storyboard=sb, renderer=RendererSpy())
+
+    def test_cta_must_come_from_the_approved_storyboard(self):
+        """CTA 는 호출자 자유 입력이 아니다 — 승인본에만 존재한다."""
+        sb = make_storyboard(2)
+        sb.pop("cta")
+        with self.assertRaises(vcm.CaptionDriftError):
+            self.compose(storyboard=sb, renderer=RendererSpy())
+
+    def test_cta_provenance_points_at_the_storyboard(self):
+        result = self.compose(renderer=RendererSpy())
+        cta_layer = [l for l in result["overlay_plan"]["text_layers"]
+                     if l["role"] == "cta"][0]
+        self.assertEqual(cta_layer["verbatim_from"], vcm.CTA_SOURCE)
+        self.assertEqual(cta_layer["verbatim_from"], "storyboard.cta.text")
+        self.assertEqual(cta_layer["text"], CTA)
+
+    def test_compose_video_takes_no_cta_text_argument(self):
+        """자유 입력 CTA 통로가 애초에 존재하지 않아야 한다."""
+        import inspect
+        params = inspect.signature(vcm.compose_video).parameters
+        self.assertNotIn("cta_text", params)
+
+    def test_disclosure_survival_is_recorded_as_renderer_reported(self):
+        """렌더러 자기보고를 관측으로 승격하지 않는다."""
+        result = self.compose(renderer=RendererSpy())
+        self.assertEqual(result["disclosure_verification_basis"],
+                         "renderer_reported_text_layers")
+        self.assertTrue(result["disclosure_reported_by_renderer"])
+        self.assertNotIn("disclosure_included", result)
+        self.assertFalse(result["disclosure_pixel_verified"])
 
 
 # ---------------------------------------------------------------------------
@@ -474,6 +577,25 @@ class TestDurationAndFormat(ComposeTestBase):
         renderer = RendererSpy(mp4=build_mp4(duration_seconds=12.0))
         with self.assertRaises(vcm.ComposeDurationError):
             self.compose(renderer=renderer)
+        self.assertFalse(os.path.exists(self.out))
+
+    def test_rejected_artifact_is_deleted_even_when_renderer_moved_it(self):
+        """검증은 rendered_path 에 걸렸다 — 폐기도 그 경로여야 한다."""
+        elsewhere = os.path.join(self.tmp, "renderer_own", "moved.mp4")
+
+        class MovingRenderer(RendererSpy):
+            def __call__(self, request):
+                out = super().__call__(request)
+                os.makedirs(os.path.dirname(elsewhere), exist_ok=True)
+                os.replace(out["output_path"], elsewhere)
+                out["output_path"] = elsewhere
+                return out
+
+        renderer = MovingRenderer(mp4=build_mp4(duration_seconds=12.0))
+        with self.assertRaises(vcm.ComposeDurationError):
+            self.compose(renderer=renderer)
+        self.assertFalse(os.path.exists(elsewhere),
+                         "거부된 산출물이 렌더러 경로에 살아남았다")
         self.assertFalse(os.path.exists(self.out))
 
     def test_landscape_output_is_rejected(self):
@@ -543,6 +665,83 @@ class TestMeasureMp4(ComposeTestBase):
     def test_zero_duration_is_rejected(self):
         with self.assertRaises(vcm.ComposeFormatError):
             vcm.measure_mp4(self._write(build_mp4(duration_seconds=0.0)))
+
+    # -- 리뷰어 위조본: 헤더만 있고 미디어가 없는 mp4 ---------------------
+
+    def test_header_only_forgery_without_mdat_is_rejected(self):
+        data = _header_only_bytes()
+        self.assertNotIn(b"mdat", data)
+        self.assertLess(len(data), 1200)
+        with self.assertRaises(vcm.ComposeFormatError):
+            vcm.measure_mp4(self._write(data))
+
+    def test_mdat_too_small_for_declared_duration_is_rejected(self):
+        """moov 는 10초라 하는데 mdat 은 64바이트 — 선언과 페이로드가 어긋난다."""
+        with self.assertRaises(vcm.ComposeFormatError):
+            vcm.measure_mp4(self._write(
+                build_mp4(duration_seconds=10.0, mdat_bytes=64)))
+
+    def test_sample_table_duration_contradicting_mvhd_is_rejected(self):
+        """moov 는 10초, stts 샘플 테이블은 2초 — 선언을 믿지 않는다."""
+        with self.assertRaises(vcm.ComposeFormatError):
+            vcm.measure_mp4(self._write(
+                build_mp4(duration_seconds=10.0, coded_duration_seconds=2.0)))
+
+    def test_truncated_tkhd_raises_typed_error_not_struct_error(self):
+        """빈 몸통 tkhd — raw struct.error 가 새어 나오면 안 된다."""
+        data = _empty_tkhd_bytes()
+        with self.assertRaises(vcm.ComposeFormatError):
+            vcm.measure_mp4(self._write(data))
+
+    def test_truncated_mvhd_does_not_read_the_next_box(self):
+        data = _short_mvhd_bytes()
+        with self.assertRaises(vcm.ComposeFormatError):
+            vcm.measure_mp4(self._write(data))
+
+    def test_declared_values_are_named_as_declarations(self):
+        m = vcm.measure_mp4(self._write(build_mp4(duration_seconds=10.0)))
+        self.assertEqual(m["dimension_basis"],
+                         "header_declared_tkhd_corroborated_by_coded_data")
+        self.assertEqual(m["duration_basis"],
+                         "mvhd_corroborated_by_mdhd_and_sample_tables")
+        self.assertGreater(m["mdat_bytes"], 0)
+        self.assertAlmostEqual(m["coded_duration_seconds"], 10.0, places=1)
+
+    def test_multi_entry_stsd_is_rejected_rather_than_misreported(self):
+        with self.assertRaises(vcm.ComposeFormatError):
+            vcm.measure_mp4(self._write(build_mp4(stsd_entries=2)))
+
+
+def _header_only_bytes() -> bytes:
+    """리뷰어의 위조본과 동형: ftyp + moov 만, mdat 없음."""
+    hdlr_v = _box(b"hdlr", b"\x00" * 8 + b"vide" + b"\x00" * 12)
+    stbl_v = _box(b"stbl", _stsd(b"avc1"))
+    mdia_v = _box(b"mdia", _mdhd(30000, 300000) + hdlr_v
+                  + _box(b"minf", stbl_v))
+    trak_v = _box(b"trak", _tkhd(1, 768, 1360) + mdia_v)
+    hdlr_a = _box(b"hdlr", b"\x00" * 8 + b"soun" + b"\x00" * 12)
+    mdia_a = _box(b"mdia", _mdhd(30000, 300000) + hdlr_a
+                  + _box(b"minf", _box(b"stbl", _stsd(b"mp4a"))))
+    trak_a = _box(b"trak", _tkhd(2, 0, 0) + mdia_a)
+    moov = _box(b"moov", _mvhd(1000, 10000) + trak_v + trak_a)
+    ftyp = _box(b"ftyp", b"isom" + struct.pack(">I", 512) + b"isom")
+    return ftyp + moov
+
+
+def _empty_tkhd_bytes() -> bytes:
+    """몸통 0바이트 tkhd 를 담은 trak — 필드 읽기가 박스를 넘어간다."""
+    trak = _box(b"trak", _box(b"tkhd", b""))
+    moov = _box(b"moov", _mvhd(1000, 10000) + trak)
+    ftyp = _box(b"ftyp", b"isom" + struct.pack(">I", 512) + b"isom")
+    return ftyp + moov + _box(b"mdat", b"\x00" * 4096)
+
+
+def _short_mvhd_bytes() -> bytes:
+    """4바이트 몸통 mvhd — 다음 박스 바이트를 duration 으로 오독하면 안 된다."""
+    moov = _box(b"moov", _box(b"mvhd", b"\x00\x00\x00\x00")
+                + _box(b"free", b"\x00" * 32))
+    ftyp = _box(b"ftyp", b"isom" + struct.pack(">I", 512) + b"isom")
+    return ftyp + moov + _box(b"mdat", b"\x00" * 4096)
 
 
 # ---------------------------------------------------------------------------
