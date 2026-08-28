@@ -179,9 +179,22 @@ class TestExistingCommandsUnchanged(unittest.TestCase):
         d.assert_called_once()
 
     def test_video_command_does_not_shadow_existing(self):
-        """'video' 는 신규 명령이어야 하고 기존 4개와 겹치지 않는다."""
-        self.assertNotIn("video", ("daily", "post", "comments", "weekly"))
-        self.assertTrue(hasattr(run, "video_command"))
+        """`run.py video` 는 기존 4개 핸들러를 **한 번도** 부르지 않는다."""
+        called = []
+        with mock.patch.object(run, "video_command", return_value=0) as vid, \
+                mock.patch.object(run, "daily",
+                                  side_effect=lambda *a, **k: called.append("daily")), \
+                mock.patch.object(run, "make_and_publish_value",
+                                  side_effect=lambda *a, **k: called.append("post")), \
+                mock.patch.object(run.comments_mod, "run",
+                                  side_effect=lambda *a, **k: called.append("comments")), \
+                mock.patch.object(run.improve, "run",
+                                  side_effect=lambda *a, **k: called.append("weekly")):
+            with self.assertRaises(SystemExit):
+                self._main(["video", "status"])
+        self.assertEqual(called, [])
+        vid.assert_called_once()
+        self.assertEqual(vid.call_args[0][1], ["status"])
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +219,67 @@ class TestVideoSettings(unittest.TestCase):
                     "max_attempts", "ledger_root", "enabled"):
             self.assertIn(key, s)
         self.assertFalse(s["enabled"])
+
+    def test_money_flag_rejects_every_non_true_value(self):
+        """돈 게이트는 **리터럴 True 만** 연다 — 나머지는 전부 닫힘(fail-closed).
+
+        bool() 강제였을 때 실제로 이랬다: "false"→True, "off"→True, "no"→True,
+        1→True. 사람이 OFF 를 뜻해 쓴 세 문자열이 전부 돈을 열었다.
+        """
+        for value in ("false", "off", "no", 1, "true", "True", "yes",
+                      0, "", None, [], "1"):
+            with self.subTest(value=value):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    s = run.video_settings(
+                        {"paths": {"state_dir": "/tmp"},
+                         "video": {"production_generation_enabled": value}})
+                self.assertIs(s["production_generation_enabled"], False)
+
+    def test_money_flag_opens_only_for_literal_true(self):
+        s = run.video_settings({"paths": {"state_dir": "/tmp"},
+                                "video": {"production_generation_enabled": True}})
+        self.assertIs(s["production_generation_enabled"], True)
+
+    def test_money_flag_refuses_loudly(self):
+        """조용히 False 로 깎지 않는다 — 운영자가 켰다고 믿으면 안 되므로 말한다."""
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            run.video_settings({"paths": {"state_dir": "/tmp"},
+                                "video": {"production_generation_enabled": "true"}})
+        out = buf.getvalue()
+        self.assertIn("production_generation_enabled", out)
+        self.assertIn("true", out)
+
+    def test_other_gates_are_also_strict(self):
+        """enabled 는 애매하면 꺼짐으로, kill_switch 는 애매하면 **걸림**으로 떨어진다.
+
+        방향이 반대인 게 핵심이다 — 둘 다 '안전한 쪽'이 서로 다르다.
+        """
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            s = run.video_settings({"paths": {"state_dir": "/tmp"},
+                                    "video": {"enabled": "false"}})
+        self.assertIs(s["enabled"], False)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            s = run.video_settings({"paths": {"state_dir": "/tmp"},
+                                    "video": {"kill_switch": "false"}})
+        self.assertIs(s["kill_switch"], True)
+        self.assertIn("kill_switch", buf.getvalue())
+
+    def test_bare_string_market_becomes_one_element_list(self):
+        """markets="KR" 이 ['K','R'] 로 쪼개지면 모든 market 게이트가 조용히 막힌다."""
+        s = run.video_settings({"paths": {"state_dir": "/tmp"},
+                                "video": {"markets": "KR"}})
+        self.assertEqual(s["markets"], ["KR"])
+
+    def test_ledger_root_is_always_concrete(self):
+        """paths 가 없어도 원장 경로는 None 이 아니라 실제 경로여야 한다."""
+        s = run.video_settings({})
+        self.assertIsInstance(s["ledger_root"], str)
+        self.assertTrue(s["ledger_root"])
+        self.assertEqual(s["ledger_root"], vq.default_root())
 
     def test_config_example_ships_generation_disabled(self):
         import json
@@ -339,6 +413,15 @@ class TestVideoProcessRefusesByDefault(VideoRunTestCase):
         self.assertEqual(vq.VideoLedger(self.ledger_root).get("job-1")["state"],
                          vc.STATE_QUEUED)
 
+    def test_dry_run_is_blocked_by_kill_switch(self):
+        """README §5-2 는 kill_switch=true 가 enqueue·process 를 '즉시' 막는다고
+        약속한다. --dry-run 도 process 다 — 문서와 코드가 어긋나면 안 된다."""
+        self.cfg["video"]["kill_switch"] = True
+        code, out = self.run_video("process", "--dry-run")
+        self.assertNotEqual(code, 0)
+        self.assertIn("킬스위치", out)
+        self.assertNotIn("job-1", out)
+
 
 # ---------------------------------------------------------------------------
 # 6. video rehearsal — 유료 0 · 발행 0
@@ -348,11 +431,16 @@ class TestVideoProcessRefusesByDefault(VideoRunTestCase):
 class TestVideoRehearsal(VideoRunTestCase):
     """리허설은 전제조건 충족 여부에 따라 종료코드가 갈린다(0=충족, 1=미충족).
 
-    이 머신에 faster-whisper 가 설치돼 있는지에 테스트가 좌우되면 안 되므로,
-    '유료 0/발행 0' 같은 불변식은 _has_module 을 고정해 놓고 검증한다."""
+    이 머신에 OpenMontage 가 있는지에 테스트가 좌우되면 안 되므로,
+    '유료 0/발행 0' 같은 불변식은 프로브를 고정해 놓고 검증한다."""
 
     def _met(self):
-        return mock.patch.object(run, "_has_module", side_effect=lambda n: True)
+        return mock.patch.object(run, "_probe_openmontage_transcriber",
+                                 return_value=(True, "고정: 충족"))
+
+    def _unmet(self):
+        return mock.patch.object(run, "_probe_openmontage_transcriber",
+                                 return_value=(False, "고정: 미충족"))
 
     def test_rehearsal_succeeds_on_empty_ledger(self):
         with self._met():
@@ -371,7 +459,7 @@ class TestVideoRehearsal(VideoRunTestCase):
 
     def test_rehearsal_reports_no_paid_calls_even_when_prereq_missing(self):
         """전제조건이 없어도 리허설 자체는 절대 돈을 쓰지 않는다."""
-        with mock.patch.object(run, "_has_module", side_effect=lambda n: False):
+        with self._unmet():
             code, out = self.run_video("rehearsal")
         self.assertIn("유료 호출 0건", out)
         self.assertIn("발행 0건", out)
@@ -380,7 +468,8 @@ class TestVideoRehearsal(VideoRunTestCase):
     def test_rehearsal_does_not_mutate_ledger_state(self):
         vq.VideoLedger(self.ledger_root).enqueue(make_job())
         before = vq.VideoLedger(self.ledger_root).get("job-1")
-        self.run_video("rehearsal")
+        with self._met():
+            self.run_video("rehearsal")
         after = vq.VideoLedger(self.ledger_root).get("job-1")
         self.assertEqual(before["state"], after["state"])
         self.assertEqual(before["attempts"], after["attempts"])
@@ -388,14 +477,45 @@ class TestVideoRehearsal(VideoRunTestCase):
     def test_rehearsal_reports_transcriber_prerequisite(self):
         """QA 게이트는 fail-closed 다 — 전사기가 없으면 모든 실영상이 QA 실패한다.
         운영자가 유료 실행 중에 발견하면 안 되므로 리허설이 먼저 말해야 한다."""
-        _, out = self.run_video("rehearsal")
-        self.assertIn("faster-whisper", out)
+        with self._met():
+            _, out = self.run_video("rehearsal")
+        self.assertIn("OpenMontage", out)
+        self.assertIn("transcriber", out)
 
     def test_rehearsal_marks_missing_transcriber_as_blocking(self):
-        with mock.patch.object(run, "_has_module", side_effect=lambda n: False):
+        with self._unmet():
             code, out = self.run_video("rehearsal")
         self.assertIn("미충족", out)
         self.assertNotEqual(code, 0)
+
+    def test_prereq_probes_openmontage_not_the_local_venv(self):
+        """전사기는 autopilot venv 가 아니라 OpenMontage 를 통해 돈다.
+
+        로컬 venv 의 faster_whisper 설치 여부로 판정하면 거짓 초록이 난다 —
+        OpenMontage 가 없는데 [충족] 을 찍고 유료 실행을 승인해버린다."""
+        import video_qa
+        with mock.patch.object(video_qa, "DEFAULT_OPENMONTAGE_ROOT",
+                               os.path.join(self.tmp, "no-such-openmontage")):
+            ok, detail = run._probe_openmontage_transcriber()
+        self.assertFalse(ok)
+        self.assertIn("no-such-openmontage", detail)
+
+    def test_prereq_fails_when_transcriber_entrypoint_absent(self):
+        """루트만 있고 transcriber 가 없으면 미충족이다(디렉터리 존재≠실행가능)."""
+        import video_qa
+        fake = os.path.join(self.tmp, "om")
+        os.makedirs(os.path.join(fake, "tools", "analysis"))
+        with mock.patch.object(video_qa, "DEFAULT_OPENMONTAGE_ROOT", fake):
+            ok, detail = run._probe_openmontage_transcriber()
+        self.assertFalse(ok)
+        self.assertIn("transcriber", detail)
+
+    def test_prereq_probe_makes_no_network_call(self):
+        """프로브는 파일시스템 + 로컬 import 만 본다."""
+        import socket
+        with mock.patch.object(socket, "socket",
+                               side_effect=AssertionError("네트워크 호출 발생")):
+            run._probe_openmontage_transcriber()
 
     def test_rehearsal_passes_when_prerequisites_met(self):
         with self._met():

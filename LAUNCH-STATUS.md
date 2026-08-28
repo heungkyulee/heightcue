@@ -60,9 +60,17 @@
 (Task 16). `video.production_generation_enabled` 기본 `false` 이며, 이 플래그가 꺼져
 있는 한 `process` 는 잡을 claim 조차 하지 않는다. 무료 점검은 `run.py video rehearsal`.
 
-**배포 전제조건(미충족 시 실행 금지): `faster-whisper`.** QA 게이트는 fail-closed 라
-전사기가 없으면 **모든 실영상이 QA 실패한다** — 영상은 전량 탈락하고 비용만 나간다.
-`rehearsal` 이 이 사실을 먼저 보고하고 미충족이면 exit 1 로 끝낸다.
+**배포 전제조건(미충족 시 실행 금지): OpenMontage transcriber.** QA 게이트는
+fail-closed 라 전사기가 없으면 **모든 실영상이 QA 실패한다** — 영상은 전량 탈락하고
+비용만 나간다. `rehearsal` 이 이 사실을 먼저 보고하고 미충족이면 exit 1 로 끝낸다.
+
+**리허설의 전제조건 판정은 '실행 가능함'의 증명이 아니다.** 전사는 autopilot venv 가
+아니라 OpenMontage 자기 인터프리터에서 돈다(`video_qa._openmontage_call`). 프로브는
+OpenMontage 루트 도달성과 `tools/analysis/transcriber.py` 존재만 확인하며, 실제로
+전사기를 **돌려보지는 않는다** — OpenMontage 쪽 의존성이 깨져 있거나 모델 가중치가
+없으면 `[충족]` 이 떠도 실행 시 QA 가 전량 실패할 수 있다. 리허설의 초록을 QA 실행
+가능성에 대한 최종 판정으로 읽지 마라. (이전 구현은 autopilot venv 의 `faster_whisper`
+설치 여부를 봤다 — 아예 다른 인터프리터라 거짓 초록이 났다.)
 
 **`process` 는 아직 끝까지 돌지 않는다.** 게이트를 다 통과해도 exit 5 로 멈춘다 —
 종단 오케스트레이터가 미배선이다. 현재는 모듈을 순서대로 사람이 호출한다.

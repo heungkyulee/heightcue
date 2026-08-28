@@ -116,20 +116,32 @@ cd ~/heightcue-autopilot/autopilot
 ../.venv/bin/python run.py video process           # 유료 — 기본은 거부한다
 ```
 
-### 5-1. ⚠️ 배포 전제조건 — faster-whisper (설치 전에는 실행 금지)
+### 5-1. ⚠️ 배포 전제조건 — OpenMontage transcriber (없으면 실행 금지)
 
 QA 게이트(`video_qa.py`)는 **fail-closed** 다. 돌지 못한 검사는 통과가 아니라 **실패**로
-집계된다. 따라서 전사기(`faster-whisper`)가 설치돼 있지 않으면 `spoken_content` 검사가
-돌지 못하고 **모든 실영상이 예외 없이 QA 실패한다.**
+집계된다. 따라서 전사기를 부를 수 없으면 `spoken_content` 검사가 돌지 못하고
+**모든 실영상이 예외 없이 QA 실패한다.**
+
+**어느 인터프리터인지가 중요하다.** `video_qa.default_transcriber` 는 autopilot venv 에서
+`faster_whisper` 를 import 하지 않는다 — OpenMontage 루트로 셸아웃해
+`tools/analysis/transcriber.py` 를 **OpenMontage 자기 인터프리터**로 돌린다. 그래서
+전제조건 프로브는 로컬 venv 의 패키지 목록이 아니라 OpenMontage 루트 도달성과 그
+엔트리포인트 존재를 본다. 루트는 `OPENMONTAGE_ROOT` 로 지정하며 기본은 `~/OpenMontage`.
+
+```bash
+ls ~/OpenMontage/tools/analysis/transcriber.py    # 없으면 리허설이 [미충족] 으로 막는다
+export OPENMONTAGE_ROOT=/path/to/OpenMontage      # 다른 위치에 있다면
+```
+
+**프로브는 '설치돼 있음'까지만 본다 — '실제로 돈다'를 증명하지 않는다.** 전사기를 실행해
+보지는 않으므로(크론에서 수 초가 든다), OpenMontage 쪽 의존성이나 모델 가중치가 깨져
+있으면 `[충족]` 이 떠도 실행 시 QA 가 전량 실패할 수 있다. 리허설의 초록을 최종 판정으로
+읽지 마라.
 
 이건 버그가 아니라 의도된 설계다(검사를 건너뛰고 발행하느니 막는 게 맞다). 다만 그 결과
 **전사기 없이 유료 생성을 돌리면 영상은 전량 탈락하고 비용만 나간다.** 그래서
 `run.py video rehearsal` 이 전제조건 충족 여부를 먼저 보고하고, 미충족이면 **exit 1** 로
 끝난다. 유료 실행 중에 발견하게 두지 않는다.
-
-```bash
-../.venv/bin/python -m pip install faster-whisper   # requirements.txt 에는 넣지 않는다(텍스트 파이프라인은 requests 만 필요)
-```
 
 ### 5-2. 유료 생성은 기본 꺼짐 — 켜는 절차
 
@@ -140,13 +152,18 @@ QA 게이트(`video_qa.py`)는 **fail-closed** 다. 돌지 못한 검사는 통�
 |---|---|---|
 | `video.production_generation_enabled` | `false` | **비용을 여는 유일한 스위치.** 꺼져 있으면 `process` 가 잡을 claim 조차 하지 않는다 |
 | `video.enabled` | `false` | 파이프라인 전체 on/off |
-| `video.kill_switch` | `false` | `true` 면 `enqueue`·`process` 를 즉시 차단(진행 중인 잡은 건드리지 않는다) |
+| `video.kill_switch` | `false` | `true` 면 `enqueue`·`process`(`--dry-run` 포함) 를 즉시 차단(진행 중인 잡은 건드리지 않는다) |
+
+**세 플래그는 JSON 불리언만 받는다.** `"false"`·`"off"`·`"no"`·`1` 같은 문자열/숫자는
+불리언이 아니므로 **안전한 쪽으로 떨어지고 경고를 찍는다** — `production_generation_enabled`
+와 `enabled` 는 꺼짐으로, `kill_switch` 는 **걸림**으로 간다. 예전 `bool()` 강제는
+fail-open 이어서 `"false"` 가 True 로 읽혔다(= 돈 게이트가 열렸다).
 
 거부할 때 잡을 claim 하지 않는 것이 중요하다 — 리스를 잡았다 놓으면 `attempts` 가 축나고
 반복 거부만으로 멀쩡한 잡이 `dead_letter` 로 굴러떨어진다.
 
-순서: ① `rehearsal` 로 전제조건·게이트 확인(무료) → ② `faster-whisper` 설치 →
-③ 라이브 종단 게이트 통과 → ④ 그때 비로소 두 플래그를 켠다.
+순서: ① `rehearsal` 로 전제조건·게이트 확인(무료) → ② OpenMontage transcriber 확보 →
+③ 라이브 종단 게이트 통과 → ④ 그때 비로소 두 플래그를 켠다(리터럴 `true`).
 
 ### 5-3. 현재 한계 — `process` 는 아직 끝까지 돌지 않는다
 

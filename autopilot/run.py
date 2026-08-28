@@ -455,19 +455,66 @@ VIDEO_DEFAULTS = {
 #: QA 게이트(video_qa)는 fail-closed 다. 전사기가 없으면 spoken_content 검사가
 #: 돌지 못하고, 돌지 못한 검사는 실패로 집계된다 → 모든 실영상이 QA 실패한다.
 #: 유료 실행 중에 발견하면 안 되므로 리허설이 먼저 확인한다.
-VIDEO_PREREQUISITES = (
-    ("faster-whisper", "faster_whisper",
-     "QA 전사 검사(spoken_content). 없으면 모든 실영상이 fail-closed 로 QA 실패한다"),
-)
+#:
+#: **어느 인터프리터를 보느냐가 전부다.** `video_qa.default_transcriber` 는
+#: faster_whisper 를 import 하지 않는다 — OpenMontage 루트로 셸아웃해
+#: `tools.analysis.transcriber` 를 **OpenMontage 자기 인터프리터**로 돌린다.
+#: 그래서 autopilot venv 의 패키지 목록을 보면 거짓 초록이 난다:
+#: OpenMontage 가 없어도 [충족] 을 찍고 유료 실행을 승인해버린다 — 이 검사가
+#: 막으려던 바로 그 사고다. 프로브는 실제로 호출되는 것을 본다.
+OPENMONTAGE_TRANSCRIBER_REL = os.path.join("tools", "analysis", "transcriber.py")
 
 
 def _has_module(module_name):
-    """import 하지 않고 설치 여부만 본다 — 무거운 모듈을 크론에서 로드하지 않는다."""
+    """import 하지 않고 설치 여부만 본다 — 무거운 모듈을 크론에서 로드하지 않는다.
+
+    (전제조건 판정에는 쓰지 않는다 — 위 주석 참조. 로컬 venv 만 본다.)
+    """
     import importlib.util
     try:
         return importlib.util.find_spec(module_name) is not None
     except (ImportError, ValueError):
         return False
+
+
+def _probe_openmontage_transcriber():
+    """(충족?, 사람이 읽을 사유) — QA 가 실제로 부르는 전사 시임을 본다.
+
+    네트워크를 쓰지 않고 OpenMontage 도 실행하지 않는다(전사기 로드는 무겁고
+    크론에서 수 초가 든다). 루트 도달성과 transcriber 엔트리포인트 존재만 본다.
+    """
+    try:
+        import video_qa
+        root = video_qa.DEFAULT_OPENMONTAGE_ROOT
+    except Exception as exc:  # video_qa 자체가 못 올라오면 QA 는 못 돈다
+        return False, f"video_qa 를 불러올 수 없다: {type(exc).__name__}: {exc}"
+    if not os.path.isdir(root):
+        return False, (f"OpenMontage 루트가 없다: {root} "
+                       "(OPENMONTAGE_ROOT 로 지정 가능)")
+    entry = os.path.join(root, OPENMONTAGE_TRANSCRIBER_REL)
+    if not os.path.isfile(entry):
+        return False, f"transcriber 엔트리포인트가 없다: {entry}"
+    return True, f"OpenMontage transcriber: {entry}"
+
+
+VIDEO_PREREQUISITES = (
+    ("OpenMontage transcriber (video_qa 셸아웃 대상)",
+     "_probe_openmontage_transcriber",
+     "QA 전사 검사(spoken_content). 없으면 모든 실영상이 fail-closed 로 QA 실패한다"),
+)
+
+
+def _strict_flag(name, value, safe_value):
+    """불리언 게이트를 엄격하게 읽는다 — bool 이 아니면 안전한 쪽으로 떨어뜨린다.
+
+    `bool()` 강제는 fail-open 이었다: config 에 `"false"`/`"off"`/`"no"` 를 쓰면
+    전부 True 가 되어 돈 게이트가 열렸다. 조용히 깎지 않고 반드시 알린다.
+    """
+    if isinstance(value, bool):
+        return value
+    print(f"경고: video.{name} 값 {value!r} 은 불리언이 아니다 — "
+          f"안전한 쪽({safe_value})으로 처리한다. true/false 로 적어라.")
+    return safe_value
 
 
 def video_settings(cfg):
@@ -477,15 +524,27 @@ def video_settings(cfg):
     for key, value in raw.items():
         if not str(key).startswith("_"):
             settings[key] = value
-    settings["production_generation_enabled"] = bool(
-        settings.get("production_generation_enabled"))
-    settings["enabled"] = bool(settings.get("enabled"))
-    settings["kill_switch"] = bool(settings.get("kill_switch"))
+    settings["production_generation_enabled"] = _strict_flag(
+        "production_generation_enabled",
+        settings.get("production_generation_enabled"), False)
+    settings["enabled"] = _strict_flag("enabled", settings.get("enabled"), False)
+    # kill_switch 만 방향이 반대다 — 애매하면 **걸린 것**으로 본다.
+    settings["kill_switch"] = _strict_flag(
+        "kill_switch", settings.get("kill_switch"), True)
     markets = settings.get("markets") or []
+    if isinstance(markets, str):
+        # "KR" 이 ['K','R'] 로 쪼개지면 모든 market 게이트가 조용히 막힌다.
+        markets = [markets]
     settings["markets"] = [str(m).upper() for m in markets] or ["KR"]
     if not settings.get("ledger_root"):
-        settings["ledger_root"] = state_path(cfg, "video") if cfg.get("paths") \
-            else None
+        # None 을 그대로 VideoLedger 에 넘기면 video_queue.default_root() 로
+        # 폴백한다(= load_config 재독). 어느 원장을 쓰는지 status 에 찍혀야
+        # 하므로 여기서 확정해 둔다.
+        if isinstance(cfg, dict) and cfg.get("paths", {}).get("state_dir"):
+            settings["ledger_root"] = state_path(cfg, "video")
+        else:
+            import video_queue as vq
+            settings["ledger_root"] = vq.default_root()
     return settings
 
 
@@ -497,10 +556,12 @@ def _video_ledger(settings):
 def _video_prereq_report():
     """(모두충족?, 줄 목록) — 리허설이 사람에게 보여줄 전제조건 표."""
     lines, all_ok = [], True
-    for label, module, why in VIDEO_PREREQUISITES:
-        ok = _has_module(module)
+    for label, probe_name, why in VIDEO_PREREQUISITES:
+        # 이름으로 늦게 찾는다 — 테스트가 프로브를 갈아끼울 수 있어야 한다.
+        ok, detail = globals()[probe_name]()
         all_ok = all_ok and ok
         lines.append(f"  [{'충족' if ok else '미충족'}] {label} — {why}")
+        lines.append(f"          {detail}")
     return all_ok, lines
 
 
@@ -539,6 +600,11 @@ def _video_process(cfg, settings, args):
     축나고, 반복 거부만으로 멀쩡한 잡이 dead_letter 로 굴러떨어진다.
     """
     ledger = _video_ledger(settings)
+    # 킬스위치를 **가장 먼저** 본다. README §5-2 는 kill_switch=true 가
+    # enqueue·process 를 즉시 막는다고 약속한다 — --dry-run 도 process 다.
+    if settings["kill_switch"]:
+        print("킬스위치가 켜져 있다 — 생성하지 않는다 (video.kill_switch=false 로 해제)")
+        return 3
     if args.dry_run:
         jobs = ledger.list_jobs(state="queued")[:settings["max_jobs_per_run"]]
         print(f"[dry-run] 유료 호출 없이 대상만 나열한다 ({len(jobs)}건)")
@@ -548,9 +614,6 @@ def _video_process(cfg, settings, args):
         if not jobs:
             print("  (대기 중인 잡 없음)")
         return 0
-    if settings["kill_switch"]:
-        print("킬스위치가 켜져 있다 — 생성하지 않는다 (video.kill_switch=false 로 해제)")
-        return 3
     # 돈 게이트를 **먼저** 본다. enabled 를 먼저 검사하면 운영자가 받는 메시지가
     # "파이프라인이 꺼져 있다"가 되어, 정작 비용을 여는 스위치가 따로 있다는
     # 사실이 가려진다. 가장 비싼 실수를 가장 먼저 설명한다.
