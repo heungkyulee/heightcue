@@ -111,6 +111,17 @@ _FORBIDDEN_PATTERNS = (
 
 _FORBIDDEN_RE = tuple(re.compile(p, re.I) for p in _FORBIDDEN_PATTERNS)
 
+
+def forbidden_patterns() -> tuple:
+    """금지 표현 정규식의 **공개 정본 접근자**.
+
+    이 목록은 다른 모듈(예: ``video_qa`` 의 발행 직전 게이트)이 재사용한다 —
+    두 벌로 관리하면 한쪽만 갱신되어 조용히 구멍이 난다. 사설 이름
+    ``_FORBIDDEN_RE`` 에 직접 의존하면 이름이 바뀌는 순간 하류가 소리 없이
+    깨지므로, 외부는 반드시 이 함수를 통해 읽는다.
+    """
+    return _FORBIDDEN_RE
+
 #: 실측이 아님을 드러내는 기준선 출처 표현.
 _PLACEHOLDER_SOURCE_MARKERS = (
     "추정", "예시", "임시", "placeholder", "example", "todo", "tbd",

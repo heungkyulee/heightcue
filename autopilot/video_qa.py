@@ -52,6 +52,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import unicodedata
 import zlib
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -111,8 +112,10 @@ DUPLICATE_MAX_ABS_DIFF = 1
 #: 동일성을 *증명*하는 값이 아니다. 모듈 상단 고지 참조.
 MAX_DHASH_DISTANCE = 16
 
-#: 승인 카피에서 벗어난 잔여 발화가 이 글자 수 이상이면 드리프트.
-MAX_UNAPPROVED_CHARS = 4
+#: 승인 카피에서 벗어나 **용인되는** 잔여 발화의 최대 글자 수.
+#: 1 = 전사 아티팩트 한 글자까지만 흡수한다. 한국어에서 3음절은 이미
+#: 완결된 한 단어("무조건", "아니요", "확실히")이므로 절대 흡수하지 않는다.
+MAX_UNAPPROVED_CHARS = 1
 
 #: 같은 프로바이더로 재생성을 허용하는 최대 횟수. 넘으면 dead letter.
 MAX_REGEN_ATTEMPTS = 2
@@ -377,12 +380,29 @@ def default_audio_probe(video_path: str) -> Dict[str, Any]:
 # 텍스트 정규화 / 승인 카피 대조
 # ---------------------------------------------------------------------------
 
+#: 레거시 호환용 — 코드포인트 화이트리스트는 **더 이상 대조에 쓰지 않는다.**
+#: 이 정규식은 [0-9a-z가-힣] 밖의 모든 글자를 지웠기 때문에, 주입된 중국어/
+#: 일본어/키릴 문장 한 줄이 통째로 빈 문자열이 되어 잔여 0자로 통과했다.
 _NORM_STRIP = re.compile(r"[^0-9a-z\uac00-\ud7a3]+")
+
+#: 대조에서 버리는 유니코드 카테고리 — 공백(Z), 제어(C), 문장부호(P), 기호(S).
+#: 문자(L)·숫자(N)·결합기호(M)는 **스크립트와 무관하게 전부 남긴다.**
+_DROPPED_UNICODE_CATEGORIES = ("Z", "C", "P", "S")
 
 
 def normalize_speech(text: Any) -> str:
-    """대조용 정규화: 공백·문장부호·대소문자만 없앤다. 내용은 바꾸지 않는다."""
-    return _NORM_STRIP.sub("", str(text or "").lower())
+    """대조용 정규화: 공백·문장부호·대소문자만 없앤다. 내용은 바꾸지 않는다.
+
+    **스크립트 중립이다.** 한글·라틴 밖의 글자(한자, 가나, 키릴, 악센트 라틴)도
+    그대로 남긴다 — 지워버리면 주입된 외국어 문장이 잔여 0자가 되어 조용히
+    통과한다. 버리는 것은 유니코드 카테고리 Z/C/P/S 뿐이다.
+    """
+    out = []
+    for ch in str(text or "").lower():
+        if unicodedata.category(ch)[0] in _DROPPED_UNICODE_CATEGORIES:
+            continue
+        out.append(ch)
+    return "".join(out)
 
 
 def approved_voice_lines(storyboard: Dict[str, Any]) -> List[str]:
@@ -397,7 +417,7 @@ def approved_voice_lines(storyboard: Dict[str, Any]) -> List[str]:
 def find_forbidden_claims(text: str) -> List[str]:
     """video_storyboard 의 금지 패턴을 그대로 재사용한다 (두 벌 관리 금지)."""
     hits = []
-    for pattern in vs._FORBIDDEN_RE:
+    for pattern in vs.forbidden_patterns():
         match = pattern.search(str(text or ""))
         if match:
             hits.append(match.group(0).strip())
@@ -498,8 +518,16 @@ def sample_timestamps(duration: float, cut_count: int) -> List[float]:
 
 
 def check_frames(frames: List[Dict[str, Any]], expected_count: int,
-                 error: Optional[str] = None) -> Dict[str, Any]:
-    """블랙 프레임·정지(중복) 프레임 검출. 샘플링이 안 됐으면 실패."""
+                 error: Optional[str] = None,
+                 measured_duration: Optional[float] = None) -> Dict[str, Any]:
+    """블랙 프레임·정지(중복) 프레임 검출. 샘플링이 안 됐으면 실패.
+
+    추가로 **헤더 길이 vs 실제 미디어 길이 교차검증**을 한다. 컨테이너 검사의
+    ``expected_seconds`` 는 선언된 스토리보드에서 온 값이라 독립 증거가 아니다.
+    샘플러가 돌려준 실제 프레임 위치(``actual_timestamp``)는 페이로드를 실제로
+    읽은 유일한 증거이므로, 헤더가 10초라고 주장하는데 마지막 진짜 프레임이
+    7초라면 여기서 잡는다.
+    """
     if error:
         return _fail(f"프레임을 샘플링할 수 없다 ({error}) — "
                      "돌지 못한 검사는 통과가 아니다", sampled=0)
@@ -535,10 +563,27 @@ def check_frames(frames: List[Dict[str, Any]], expected_count: int,
                     f"사실상 같은 프레임이다 (최대 차 {worst}) — 정지 영상")
 
     summary = [{k: v for k, v in s.items() if k != "small"} for s in stats]
+
+    # 독립 길이 교차검증 — 샘플러가 실제 위치를 보고할 때만 판정한다.
+    actuals = [float(f["actual_timestamp"]) for f in frames
+               if f.get("actual_timestamp") is not None]
+    last_actual = max(actuals) if actuals else None
+    if last_actual is not None and measured_duration is not None:
+        drift = float(measured_duration) - last_actual
+        if drift > DURATION_TOLERANCE_SECONDS:
+            problems.append(
+                f"헤더가 주장하는 길이 {measured_duration}s 가 실제로 샘플된 "
+                f"마지막 프레임 {last_actual}s 보다 {drift:.2f}s 길다 — "
+                "선언 길이가 아니라 실제 미디어를 믿는다")
+
     if problems:
-        return _fail("; ".join(problems), sampled=len(frames), frames=summary)
+        return _fail("; ".join(problems), sampled=len(frames), frames=summary,
+                     last_actual_timestamp=last_actual,
+                     measured_duration=measured_duration)
     return _ok(f"{len(frames)}장 검사: 블랙 없음, 중복 없음",
-               sampled=len(frames), frames=summary)
+               sampled=len(frames), frames=summary,
+               last_actual_timestamp=last_actual,
+               measured_duration=measured_duration)
 
 
 def check_product_identity_screen(frames: List[Dict[str, Any]],
@@ -611,27 +656,53 @@ def check_spoken_content(transcript: Optional[str],
         return _fail("전사 결과가 비어 있다 — 영상이 실제로 말을 하는지 확인 불가",
                      transcript=transcript)
 
-    residual = normalized
-    missing = []
+    # 컷 순서대로만 찾는다 — 3컷 서사에서 순서가 뒤바뀌면 다른 영상이다.
+    # 각 줄은 직전 줄이 끝난 지점(cursor) 이후에서만 매칭된다.
+    residual_parts: List[str] = []
+    missing: List[str] = []
+    out_of_order: List[str] = []
+    cursor = 0
     for line in approved_lines:
         norm = normalize_speech(line)
-        if norm and norm in residual:
-            residual = residual.replace(norm, "", 1)
+        if not norm:
+            continue
+        at = normalized.find(norm, cursor)
+        if at >= 0:
+            residual_parts.append(normalized[cursor:at])
+            cursor = at + len(norm)
+            continue
+        if norm in normalized:
+            # 발화는 됐지만 승인된 컷 순서를 지키지 않았다.
+            out_of_order.append(line)
         else:
             missing.append(line)
+
+    residual_parts.append(normalized[cursor:])
+    residual = "".join(residual_parts)
 
     if missing:
         return _fail(
             f"승인된 나레이션 {len(missing)}줄이 실제 발화에 없다: {missing!r} — "
             f"전사: {str(transcript)[:200]!r}",
-            transcript=transcript, missing_lines=missing)
-    if len(residual) >= MAX_UNAPPROVED_CHARS:
+            transcript=transcript, missing_lines=missing,
+            out_of_order_lines=out_of_order)
+    if out_of_order:
+        return _fail(
+            f"승인된 나레이션 {len(out_of_order)}줄이 스토리보드 컷 순서와 다른 "
+            f"자리에서 발화됐다: {out_of_order!r} — 순서가 바뀌면 다른 서사다",
+            transcript=transcript, out_of_order_lines=out_of_order,
+            missing_lines=[])
+    if len(residual) > MAX_UNAPPROVED_CHARS:
         return _fail(
             f"승인되지 않은 발화가 {len(residual)}자 섞여 있다: {residual[:120]!r} — "
             "승인되지 않은 말은 영상이 하지 않는다",
             transcript=transcript, unapproved_residual=residual)
-    return _ok(f"승인 나레이션 {len(approved_lines)}줄과 일치 (잔여 {len(residual)}자)",
-               transcript=transcript)
+    # 통과해도 흡수된 잔여를 리포트에 남긴다 — 운영자가 무엇이 용인됐는지 본다.
+    return _ok(f"승인 나레이션 {len(approved_lines)}줄과 순서까지 일치 "
+               f"(용인된 잔여 {len(residual)}자: {residual!r})",
+               transcript=transcript, unapproved_residual=residual,
+               unapproved_residual_tolerance=MAX_UNAPPROVED_CHARS,
+               out_of_order_lines=[])
 
 
 def check_disclosure(caption: str, overlay_texts: Sequence[str],
@@ -662,14 +733,24 @@ def check_disclosure(caption: str, overlay_texts: Sequence[str],
 
 def check_forbidden_claims(caption: str, transcript: Optional[str],
                            overlay_texts: Sequence[str]) -> Dict[str, Any]:
-    """캡션·전사·오버레이 세 면 전부에서 금지 표현을 스캔한다."""
+    """캡션·전사·오버레이 세 면 전부에서 금지 표현을 스캔한다.
+
+    전사가 실패해 본문이 없으면 그 면은 ``scanned`` 가 아니라 ``unscanned``
+    로 보고한다 — 읽지 못한 면을 '깨끗하다'고 적으면 리포트가 운영자를 속인다.
+    (게이트 자체는 ``spoken_content`` 에서 이미 fail closed 된다.)
+    """
     surfaces = {
         "caption": [str(caption or "")],
         "transcript": [str(transcript or "")],
         "overlay": [str(t or "") for t in (overlay_texts or [])],
     }
+    unscanned: List[str] = []
+    if transcript is None:
+        unscanned.append("transcript")
+    scanned = [n for n in CLAIM_SCAN_SURFACES if n not in unscanned]
+
     hits: Dict[str, List[str]] = {}
-    for name in CLAIM_SCAN_SURFACES:
+    for name in scanned:
         found: List[str] = []
         for text in surfaces.get(name, []):
             found.extend(find_forbidden_claims(text))
@@ -678,9 +759,12 @@ def check_forbidden_claims(caption: str, transcript: Optional[str],
     if hits:
         parts = [f"{k}: {v}" for k, v in sorted(hits.items())]
         return _fail("금지 표현(효능 암시·가짜 체험담) 검출 — " + "; ".join(parts),
-                     hits=hits, scanned=list(CLAIM_SCAN_SURFACES))
-    return _ok(f"{len(CLAIM_SCAN_SURFACES)}개 면에서 금지 표현 없음",
-               hits={}, scanned=list(CLAIM_SCAN_SURFACES))
+                     hits=hits, scanned=scanned, unscanned=unscanned)
+    detail = f"{len(scanned)}개 면에서 금지 표현 없음"
+    if unscanned:
+        detail += (f" — 단 {unscanned} 면은 본문이 없어 **스캔하지 못했다** "
+                   "(깨끗하다는 뜻이 아니다)")
+    return _ok(detail, hits={}, scanned=scanned, unscanned=unscanned)
 
 
 def _sha256_file(path: str) -> str:
@@ -748,7 +832,11 @@ def run_qa(*, job_id: str, run_id: str, video_path: str,
     except Exception as exc:                     # noqa: BLE001 — fail closed
         sample_error = f"{type(exc).__name__}: {exc}"
 
-    checks[CHECK_TECHNICAL_FRAMES] = check_frames(frames, len(stamps), sample_error)
+    checks[CHECK_TECHNICAL_FRAMES] = check_frames(
+        frames, len(stamps), sample_error,
+        measured_duration=(float(measured["duration_seconds"])
+                           if measured.get("duration_seconds") is not None
+                           else None))
     checks[CHECK_PRODUCT_IDENTITY] = check_product_identity_screen(
         frames, product_image_path, sample_error)
 
@@ -799,8 +887,13 @@ def apply_qa_result(job: VideoJob, report: QAReport) -> VideoJob:
             f"QA 리포트 계보 불일치: {report.job_id}/{report.run_id} != "
             f"{job.job_id}/{job.run_id}")
     if not report.passed:
+        # 리포트를 먼저 단다 — video_contracts 는 qa_failed 잡이 실패 리포트를
+        # 지니도록 요구한다. 순서를 뒤집으면 두 문장 사이에서 잡이 자기
+        # 불변식을 위반한 상태가 된다 (transition 이 validate 를 부르는 순간 터진다).
+        job.qa_report = report
         job.transition(vc.STATE_QA_FAILED)      # 불법 간선이면 여기서 죽는다
-    job.qa_report = report
+    else:
+        job.qa_report = report
     return job
 
 

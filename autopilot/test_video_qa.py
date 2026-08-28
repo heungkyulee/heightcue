@@ -551,5 +551,141 @@ class TestReportDetail(QABase):
         self.assertEqual(again.to_dict(), report.to_dict())
 
 
+# ---------------------------------------------------------------------------
+# 9. 픽스 라운드 1 — 짧은/비한글 드리프트, 순서, 쓰기 순서, 독립 길이 교차검증
+# ---------------------------------------------------------------------------
+
+
+class TestSpokenDriftHardening(QABase):
+    """리뷰 지적 1·2·4 — 짧은 추가·비한글 추가·순서 뒤바뀜이 통과하면 안 된다."""
+
+    def test_three_hangul_syllable_addition_fails(self):
+        # 3음절이면 한국어에서 완결된 한 단어다 ("무조건").
+        self.assertFailed(self.run_qa(transcriber=TranscriberSpy(
+            f"{VOICE_1} {VOICE_2} 무조건")), "spoken_content")
+
+    def test_single_hangul_artifact_is_tolerated(self):
+        report = self.run_qa(transcriber=TranscriberSpy(
+            f"{VOICE_1} {VOICE_2} 음"))
+        self.assertTrue(report.checks["spoken_content"]["passed"],
+                        report.failures)
+
+    def test_passing_report_records_the_tolerated_residual(self):
+        report = self.run_qa(transcriber=TranscriberSpy(
+            f"{VOICE_1} {VOICE_2} 음"))
+        check = report.checks["spoken_content"]
+        self.assertIn("unapproved_residual", check)
+        self.assertEqual(check["unapproved_residual"], "음")
+
+    def test_injected_non_hangul_sentence_fails(self):
+        # 중국어 한 문장은 [0-9a-z가-힣] 필터에서 통째로 사라진다.
+        self.assertFailed(self.run_qa(transcriber=TranscriberSpy(
+            f"{VOICE_1} {VOICE_2} 这个产品绝对能让孩子长高")), "spoken_content")
+
+    def test_injected_cyrillic_sentence_fails(self):
+        self.assertFailed(self.run_qa(transcriber=TranscriberSpy(
+            f"{VOICE_1} {VOICE_2} купите прямо сейчас")), "spoken_content")
+
+    def test_injected_japanese_sentence_fails(self):
+        self.assertFailed(self.run_qa(transcriber=TranscriberSpy(
+            f"{VOICE_1} {VOICE_2} これを飲めば必ず背が伸びます")), "spoken_content")
+
+    def test_approved_lines_spoken_out_of_order_fail(self):
+        self.assertFailed(self.run_qa(transcriber=TranscriberSpy(
+            f"{VOICE_2}. {VOICE_1}")), "spoken_content")
+
+    def test_out_of_order_failure_is_diagnosable(self):
+        report = self.run_qa(transcriber=TranscriberSpy(
+            f"{VOICE_2}. {VOICE_1}"))
+        check = report.checks["spoken_content"]
+        self.assertTrue(check.get("out_of_order_lines"),
+                        f"순서 위반 근거가 없다: {check}")
+
+
+class TestClaimScanSurfaceHonesty(QABase):
+    """리뷰 지적 5 — 읽지 못한 면을 '깨끗하다'고 말하지 않는다."""
+
+    def test_transcript_surface_is_marked_unscanned_when_unavailable(self):
+        report = self.run_qa(transcriber=TranscriberSpy(
+            "", fail=RuntimeError("no whisper")))
+        claims = report.checks["policy_forbidden_claims"]
+        self.assertIn("transcript", claims.get("unscanned") or [])
+        self.assertNotIn("transcript", claims.get("scanned") or [])
+
+    def test_transcript_surface_is_scanned_when_available(self):
+        claims = self.run_qa().checks["policy_forbidden_claims"]
+        self.assertIn("transcript", claims.get("scanned") or [])
+        self.assertEqual(claims.get("unscanned") or [], [])
+
+
+class TestForbiddenPatternAccessor(unittest.TestCase):
+    """리뷰 지적 6 — 사설 심볼 커플링을 공개 접근자로 승격한다."""
+
+    def test_storyboard_exposes_a_public_forbidden_pattern_accessor(self):
+        import video_storyboard as vs
+        self.assertTrue(hasattr(vs, "forbidden_patterns"))
+        self.assertEqual(tuple(vs.forbidden_patterns()), tuple(vs._FORBIDDEN_RE))
+
+    def test_qa_uses_the_public_accessor(self):
+        import video_storyboard as vs
+        calls = []
+        original = vs.forbidden_patterns
+
+        def spy():
+            calls.append(1)
+            return original()
+
+        vs.forbidden_patterns = spy
+        self.addCleanup(setattr, vs, "forbidden_patterns", original)
+        vq.find_forbidden_claims("아무 말")
+        self.assertTrue(calls, "공개 접근자를 거치지 않았다")
+
+
+class TestDurationCrossCheck(QABase):
+    """리뷰 지적 7 — 헤더 길이를 실제 샘플된 마지막 프레임과 대조한다."""
+
+    def test_header_duration_beyond_last_real_frame_fails(self):
+        class TruncatedSampler(SamplerSpy):
+            def __call__(self, video_path, timestamps, out_dir):
+                frames = super().__call__(video_path, timestamps, out_dir)
+                for f in frames:            # 실제 미디어는 7초에서 끝난다
+                    f["actual_timestamp"] = min(float(f["timestamp"]), 7.0)
+                return frames
+
+        self.assertFailed(self.run_qa(frame_sampler=TruncatedSampler()),
+                          "technical_frames")
+
+    def test_matching_actual_timestamps_pass(self):
+        class HonestSampler(SamplerSpy):
+            def __call__(self, video_path, timestamps, out_dir):
+                frames = super().__call__(video_path, timestamps, out_dir)
+                for f in frames:
+                    f["actual_timestamp"] = float(f["timestamp"])
+                return frames
+
+        report = self.run_qa(frame_sampler=HonestSampler())
+        self.assertTrue(report.checks["technical_frames"]["passed"],
+                        report.failures)
+
+
+class TestApplyQAWriteOrdering(QABase):
+    """리뷰 지적 3 — qa_failed 로 전이하는 순간 이미 실패 리포트를 달고 있어야 한다."""
+
+    def test_report_is_attached_before_the_qa_failed_transition(self):
+        job = _job()
+        report = self.run_qa(transcriber=TranscriberSpy("완전히 다른 말"))
+        seen = {}
+        original = job.transition
+
+        def spy(target, *a, **kw):
+            seen["qa_report"] = job.qa_report
+            return original(target, *a, **kw)
+
+        job.transition = spy
+        vq.apply_qa_result(job, report)
+        self.assertIs(seen.get("qa_report"), report,
+                      "전이 시점에 잡이 자기 불변식을 위반한다 (리포트 미부착)")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
