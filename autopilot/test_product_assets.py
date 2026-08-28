@@ -22,6 +22,7 @@ import zlib
 
 import product_assets as pa
 import sourcing
+import video_storyboard as vs
 
 
 # ---------------------------------------------------------------------------
@@ -480,6 +481,118 @@ class TestTakedownLineage(BaseCase):
         self.assertEqual(ev.market, "KR")
         self.assertIn(IMG1, ev.source_urls)
         self.assertIn(sha256(self.png), ev.source_sha256)
+
+
+# ---------------------------------------------------------------------------
+# 6-1. 증거 다리는 시장 언어를 따른다 (US 스토리보드 차단 사고 재발 방지)
+#
+# 2026-08-28 실사고: to_product_evidence 가 모든 시장에 **한국어** quote 를
+# 만들어서, video_storyboard 의 시장 언어 게이트가 US 상품 카피를 전부 거부했다.
+# US 스토리보드가 구조적으로 생성 불가능했다. 언어 게이트는 옳다 — 고친 곳은
+# 증거 다리다. 그래서 이 테스트는 문자열이 영어처럼 보이는지가 아니라
+# **진짜 게이트**(video_storyboard._assert_language / generate_storyboard)를
+# 통과하는지로 판정한다.
+# ---------------------------------------------------------------------------
+
+
+US_OFFICIAL = "https://www.amazon.com/dp/B00843E5NS"
+US_IMG = "https://m.media-amazon.com/images/I/81VnUASlMEL._AC_SL1500_.jpg"
+US_OPTION = "600 IU, 100 drops (0.09 fl oz)"
+US_SPEC_FACTS = ["600 IU vitamin D3 per labeled drop",
+                 "single tasteless oil drop format"]
+
+
+def us_image_spec(**over):
+    spec = {
+        "source_url": US_IMG,
+        "market": "US",
+        "product_id": "us-ddrops-kids-600iu",
+        "option": US_OPTION,
+        "official_page_url": US_OFFICIAL,
+        "rights_basis": "official_product_page",
+        "rights_holder": "Ddrops Company",
+        "captured_at": "2026-08-28T09:00:00+09:00",
+    }
+    spec.update(over)
+    return spec
+
+
+def us_product(**over):
+    p = {
+        "product_key": "us-ddrops-kids-600iu",
+        "country": "US",
+        "product_name": "Ddrops Kids Booster Vitamin D3 600 IU",
+        "product_url": US_OFFICIAL,
+        "marketed_option": US_OPTION,
+        "spec_facts": list(US_SPEC_FACTS),
+        "official_image_provenance": [us_image_spec()],
+    }
+    p.update(over)
+    return p
+
+
+class TestEvidenceIsMarketAware(BaseCase):
+    def _us_manifest(self, **over):
+        f = FakeFetcher({US_IMG: {"bytes": self.jpg, "content_type": "image/jpeg"}})
+        return pa.acquire_product_assets(us_product(**over), self.ws, fetcher=f)
+
+    def test_us_evidence_quotes_pass_the_real_language_gate(self):
+        """US 증거 원문은 실제 video_storyboard 언어 게이트를 통과해야 한다."""
+        ev = pa.to_product_evidence(self._us_manifest())
+        ev.validate()
+        for i, entry in enumerate(ev.provenance):
+            vs._assert_language(entry["quote"], "US", f"provenance[{i}].quote")
+
+    def test_kr_evidence_quotes_pass_the_real_language_gate(self):
+        m = pa.acquire_product_assets(product(), self.ws, fetcher=self.fetcher_ok())
+        ev = pa.to_product_evidence(m)
+        ev.validate()
+        for i, entry in enumerate(ev.provenance):
+            vs._assert_language(entry["quote"], "KR", f"provenance[{i}].quote")
+
+    def test_us_spec_facts_are_carried_verbatim(self):
+        """진실 계층 — 문구를 지어내지 않고 기록된 스펙 원문을 그대로 옮긴다."""
+        quotes = [e["quote"] for e in pa.to_product_evidence(self._us_manifest()).provenance]
+        for fact in US_SPEC_FACTS:
+            self.assertIn(fact, quotes)
+
+    def test_us_storyboard_is_actually_producible(self):
+        """진짜 최종 판정: 이 증거로 US 스토리보드가 실제로 생성된다."""
+        ev = pa.to_product_evidence(self._us_manifest())
+        quote = ev.provenance[0]["quote"]
+
+        def model(system_prompt, payload):
+            return {"cuts": [{
+                "index": 1,
+                "duration_seconds": 5,
+                "action": "Hold the amber bottle up to the camera",
+                "benefit": "One drop is the whole serving",
+                "claim": quote,
+                "evidence_id": "ev1",
+                "voice_line": f"The label says {quote}.",
+                "first_frame_prompt": ("Vertical 9:16 still photo of one amber "
+                                       "dropper bottle on a plain kitchen counter"),
+                "motion_prompt": "Slow push in toward the bottle label",
+            }]}
+
+        board = vs.generate_storyboard(
+            {}, ev, "US", run_id="run-us-1", content_draft_id="draft-us-1",
+            viral_pattern_ids=["vp-1"], complexity="simple", model=model)
+        self.assertEqual(board.market, "US")
+        self.assertEqual(board.cuts[0].evidence_quote, quote)
+
+    def test_unknown_market_fails_loudly_instead_of_defaulting(self):
+        """모르는 시장에 어느 한쪽 언어를 기본값으로 주지 않는다 — 그게 이 버그의 원인."""
+        m = self._us_manifest()
+        for bad in ("JP", "", None):
+            broken = dict(m, market=bad)
+            with self.assertRaises(pa.AssetLineageError):
+                pa.to_product_evidence(broken)
+
+    def test_spec_fact_in_wrong_language_is_rejected(self):
+        """시장과 언어가 어긋난 스펙 원문은 조용히 흘려보내지 않는다."""
+        with self.assertRaises(pa.EvidenceLanguageError):
+            pa.to_product_evidence(self._us_manifest(spec_facts=["방울당 600 IU"]))
 
 
 # ---------------------------------------------------------------------------

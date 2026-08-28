@@ -157,6 +157,16 @@ class AssetDimensionError(ProductAssetError):
     """헤더가 선언한 픽셀 크기가 MIN_ASSET_DIMENSION 미만."""
 
 
+class EvidenceLanguageError(ProductAssetError):
+    """증거 원문의 언어가 시장과 어긋난다 (KR=한국어 / US=영어).
+
+    2026-08-28 실사고: 이 다리가 **모든** 시장에 한국어 원문을 만들어서
+    ``video_storyboard`` 의 시장 언어 게이트가 US 카피를 전량 거부했고,
+    US 스토리보드가 구조적으로 생성 불가능했다. 게이트는 옳다 — 틀린 쪽은
+    여기였다. 그래서 잘못된 언어의 원문은 하류로 흘려보내지 않고 여기서 죽인다.
+    """
+
+
 class AssetTakedownError(ProductAssetError):
     """삭제 요청된 자산을 다시 수집하려 했다 — takedown 대장은 denylist 다."""
 
@@ -722,6 +732,10 @@ def acquire_product_assets(product: Dict[str, Any], workspace: str, *,
         "market": market,
         "product_url": product_url,
         "marketed_option": marketed_option,
+        # 기록된 스펙 원문(on-pack/공식 페이지 표기). 하류 증거 다리가 이 문구를
+        # **그대로** 옮긴다 — 상품에 대해 무언가를 주장하는 템플릿을 쓰지 않는다.
+        "spec_facts": [str(f).strip() for f in (product.get("spec_facts") or [])
+                       if str(f).strip()],
         "created_at": _now(),
         "asset_dir": asset_dir,
         "manifest_path": manifest_path,
@@ -811,25 +825,113 @@ def takedown(manifest_path: str, *, source_url: str,
     }
 
 
+#: 자산 서술 원문 템플릿 — 시장 언어별. 이 문장은 **자산 자체에 대한 사실**만
+#: 말한다 (포맷·헤더 선언 크기·근거). 상품의 성능·효용에 대해서는 한 마디도
+#: 하지 않는다 — 그건 기록된 spec_facts 원문만이 말할 수 있다.
+ASSET_QUOTE_TEMPLATES: Dict[str, str] = {
+    "KR": ("공식 상품 페이지 이미지 {fmt} "
+           "(헤더 선언 크기 {width}x{height}, basis={basis})"),
+    "US": ("Official product page image {fmt} "
+           "(header-declared size {width}x{height}, basis={basis})"),
+}
+
+_HANGUL_RE = re.compile(r"[\uac00-\ud7a3]")
+_LATIN_WORD_RE = re.compile(r"[A-Za-z]{2,}")
+
+
+def assert_evidence_language(text: str, market: str, where: str) -> str:
+    """증거 원문이 시장 언어와 맞는지 확인한다 (KR=한국어 / US=영어).
+
+    ``video_storyboard._assert_language`` 와 같은 판정을 **상류에서** 한 번 더
+    한다. 게이트를 복제해 약화시키려는 것이 아니라, 잘못된 언어의 원문이
+    애초에 증거가 되지 못하게 막으려는 것이다 — 하류 게이트는 그대로 둔다.
+    """
+    if market not in ASSET_QUOTE_TEMPLATES:
+        raise AssetLineageError(
+            f"{where}: 알 수 없는 시장 {market!r} — 지원 시장 "
+            f"{tuple(ASSET_QUOTE_TEMPLATES)} 중 하나여야 한다. 어느 한쪽 언어로 "
+            "기본값을 주지 않는다 (그 기본값이 US 스토리보드를 막았다)")
+    has_hangul = bool(_HANGUL_RE.search(text))
+    if market == "KR":
+        if not has_hangul:
+            raise EvidenceLanguageError(
+                f"{where}: KR 증거 원문은 한국어여야 한다: {text!r}")
+    else:
+        if has_hangul:
+            raise EvidenceLanguageError(
+                f"{where}: US 증거 원문은 영어여야 한다 (한글 발견): {text!r}")
+        if not _LATIN_WORD_RE.search(text):
+            raise EvidenceLanguageError(
+                f"{where}: US 증거 원문에 영문이 없다: {text!r}")
+    return text
+
+
 def to_product_evidence(manifest: Dict[str, Any]) -> ProductEvidence:
-    """매니페스트를 하류 영상 계약의 ProductEvidence 로 옮긴다."""
+    """매니페스트를 하류 영상 계약의 ProductEvidence 로 옮긴다.
+
+    **시장을 안다.** 원문(quote)은 시장 언어로 나온다 — KR 은 한국어, US 는
+    영어. 알 수 없거나 빠진 시장은 어느 한쪽 언어로 기본값을 주지 않고 크게
+    실패한다 (2026-08-28: 한국어 하드코딩이 US 스토리보드를 구조적으로
+    불가능하게 만들었다).
+
+    원문의 출처는 두 가지뿐이다.
+
+    * 기록된 스펙 원문(``manifest['spec_facts']``) — 표기 그대로 옮긴다.
+      번역하지도, 다시 쓰지도, 무언가를 덧붙이지도 않는다.
+    * 자산 자체에 대한 사실(포맷·헤더 선언 크기) — 상품에 대한 주장이 아니다.
+
+    둘 다 상품의 효용·효과를 말하지 않는다. 이 모듈은 진실 계층이며,
+    지어낸 문장은 여기서 나오면 안 된다.
+    """
     assets = manifest.get("assets") or []
     if not assets:
         raise AssetProvenanceError(
             "자산이 없는 매니페스트로는 ProductEvidence 를 만들 수 없다")
+
+    market = manifest.get("market")
+    if not isinstance(market, str) or market not in ASSET_QUOTE_TEMPLATES:
+        raise AssetLineageError(
+            f"매니페스트 market 이 {tuple(ASSET_QUOTE_TEMPLATES)} 중 하나가 "
+            f"아니다: {market!r} — 시장을 모르면 증거의 언어도 알 수 없다. "
+            "기본 언어로 넘어가지 않는다")
+
     first = assets[0]
+    official_page = (manifest.get("product_url")
+                     or first.get("official_page_url"))
+
+    provenance: List[Dict[str, Any]] = []
+
+    # 1) 기록된 스펙 원문 — 표기 그대로. 시장 언어와 어긋나면 거부한다.
+    for i, fact in enumerate(manifest.get("spec_facts") or []):
+        text = str(fact).strip()
+        if not text:
+            continue
+        assert_evidence_language(text, market, f"spec_facts[{i}]")
+        provenance.append({
+            "quote": text,
+            "source_url": first["source_url"],
+            "original_location": official_page,
+        })
+
+    # 2) 자산 서술 — 시장 언어 템플릿.
+    template = ASSET_QUOTE_TEMPLATES[market]
+    for i, a in enumerate(assets):
+        quote = template.format(
+            fmt=a["format"], width=a["width"], height=a["height"],
+            basis=a.get("dimension_basis", DIMENSION_BASIS))
+        assert_evidence_language(quote, market, f"assets[{i}].quote")
+        provenance.append({
+            "quote": quote,
+            "source_url": a["source_url"],
+            "original_location": a["official_page_url"],
+        })
+
     return ProductEvidence(
         product_id=manifest["product_id"],
-        market=manifest["market"],
+        market=market,
         source_urls=[a["source_url"] for a in assets],
         source_sha256=[a["sha256"] for a in assets],
         rights=dict(first["rights"]),
-        provenance=[{
-            "quote": (f"공식 상품 페이지 이미지 {a['format']} "
-                      f"(헤더 선언 크기 {a['width']}x{a['height']}, "
-                      f"basis={a.get('dimension_basis', DIMENSION_BASIS)})"),
-            "source_url": a["source_url"],
-            "original_location": a["official_page_url"],
-        } for a in assets],
+        provenance=provenance,
         captured_at=manifest.get("created_at") or first["captured_at"],
     )
