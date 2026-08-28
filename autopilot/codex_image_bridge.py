@@ -31,6 +31,8 @@ import subprocess
 import sys
 from typing import Any, Dict, Iterable, List, Optional
 
+import video_contracts as vc
+
 # ---------------------------------------------------------------------------
 # Pinned contract
 # ---------------------------------------------------------------------------
@@ -40,7 +42,15 @@ HERMES_PROVIDER = "openai-codex"
 HERMES_MODEL = "gpt-image-2-medium"
 PROVIDER_MODEL = "gpt-image-2"
 ASPECT_RATIO = "portrait"
-PORTRAIT_PIXEL_SIZE = "1024x1536"
+
+#: 첫 프레임 형상 규칙은 **video_contracts 한 곳**에만 있다. 여기서 다시
+#: 정의하지 않고 import 한다 — 게이트와 규칙이 갈라지면 사고가 난다.
+#: (구 `PORTRAIT_PIXEL_SIZE = "1024x1536"` 는 폐기했다. 그것은 Hermes
+#:  플러그인이 *요청*하던 2:3 크기일 뿐, 실 provider 는 941x1672(9:16) 를
+#:  돌려줬고 파이프라인이 필요로 하는 것도 9:16 이다.)
+assert_first_frame_geometry = vc.assert_first_frame_geometry
+parse_pixel_size = vc.parse_pixel_size
+FirstFrameGeometryError = vc.FirstFrameGeometryError
 
 HERMES_HOME = os.path.expanduser(
     os.environ.get("HERMES_HOME", "~/.hermes"))
@@ -242,11 +252,18 @@ def edit_image(prompt: str, source_images: Optional[Iterable[str]],
             f"expected {ASPECT_RATIO!r}")
 
     observed_pixels = result.get("pixel_size")
-    if observed_pixels is not None and observed_pixels != PORTRAIT_PIXEL_SIZE:
-        raise AspectMismatch(
-            "refusing non-portrait result: "
-            f"observed pixel_size={observed_pixels!r}; "
-            f"expected {PORTRAIT_PIXEL_SIZE!r}")
+    if observed_pixels is not None:
+        # The dispatcher's echoed aspect string proves nothing; pixel_size is
+        # the only observed value it reports, and it is optional. When it IS
+        # present, hold it to the geometry the 9:16 pipeline actually needs.
+        # Unparseable is a refusal, not a pass — fail closed.
+        try:
+            width, height = parse_pixel_size(observed_pixels)
+            assert_first_frame_geometry(width, height, where="dispatcher pixel_size")
+        except FirstFrameGeometryError as exc:
+            raise AspectMismatch(
+                f"refusing result whose geometry is not the 9:16 the pipeline "
+                f"needs: pixel_size={observed_pixels!r} — {exc}") from exc
 
     produced = result.get("image")
     if not isinstance(produced, str) or not produced.strip():

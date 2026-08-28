@@ -15,7 +15,8 @@
 * 프레임은 `<projects_root>/heightcue_<run_id>/assets/frames/` 에 쓴다.
 * **대체 금지, 크게 실패.** Codex OAuth 또는 `gpt-image-2-medium` 티어를
   프리플라이트에서 확인하지 못하면 한 푼도 쓰기 전에 잡을 멈춘다.
-* 출력 PNG 의 **IHDR 을 직접 읽어** 실제 1024x1536 세로인지 확인한다.
+* 출력 PNG 의 **IHDR 을 직접 읽어** 실제 9:16 세로인지 확인한다
+  (규칙은 `video_contracts.assert_first_frame_geometry` 한 곳에만 있다).
   Hermes Codex 플러그인은 요청한 aspect_ratio 를 그대로 에코할 뿐
   측정하지 않으므로(`plugins/image_gen/openai-codex/__init__.py:749`,
   `resolve_aspect_ratio` :583) 그 값은 아무것도 증명하지 못한다.
@@ -85,9 +86,14 @@ REQUIRED_IMAGE_IDENTIFIERS = {
     "image_provider_model": PROVIDER_MODEL,
 }
 
-#: 측정으로 확인해야 하는 실제 픽셀 크기 (세로 숏폼).
-PORTRAIT_WIDTH = 1024
-PORTRAIT_HEIGHT = 1536
+#: 첫 프레임 형상 규칙 — video_contracts 한 곳에서만 온다. 여기서 다시
+#: 정의하지 않는다(codex_image_bridge 도 같은 함수를 쓴다). 파이프라인은
+#: 전 구간 9:16 이고 Remotion 합성은 768x1360 이다. 과거의
+#: `PORTRAIT_WIDTH/HEIGHT = 1024x1536` 은 2:3 이라 크롭 없이는 들어갈 수
+#: 없는 크기였고, 실 provider 는 941x1672(9:16) 를 돌려준다.
+assert_first_frame_geometry = vc.assert_first_frame_geometry
+PORTRAIT_MIN_WIDTH = vc.FIRST_FRAME_MIN_WIDTH
+PORTRAIT_MIN_HEIGHT = vc.FIRST_FRAME_MIN_HEIGHT
 
 #: 상품 1개당 만들 수 있는 첫 프레임 후보 최대 수 (승인된 설계값).
 MAX_FIRST_FRAME_CANDIDATES = 3
@@ -116,7 +122,7 @@ PRODUCT_FIDELITY_CLAUSE = (
     "hands, background, lighting, and camera framing. "
     "Exactly ONE moment, ONE action, ONE benefit — not a collage, "
     "not a storyboard, not a multi-panel image. "
-    "Vertical 9:16 portrait still frame, 1024x1536."
+    "Vertical 9:16 portrait still frame."
 )
 
 
@@ -134,7 +140,7 @@ class PreflightError(FirstFrameError):
 
 
 class PortraitError(FirstFrameError):
-    """출력 이미지를 직접 재보니 1024x1536 세로가 아니다."""
+    """출력 이미지를 직접 재보니 파이프라인이 요구하는 9:16 세로가 아니다."""
 
 
 class CandidateCapError(FirstFrameError):
@@ -181,7 +187,7 @@ def measure_png(path: str) -> tuple:
     이 바이트는 브리지를 통해 **네트워크에서** 온다. 그래서 선언된 크기를
     그냥 믿지 않는다: IHDR CRC 를 직접 계산해 대조하고, 비어 있지 않은
     IDAT 가 최소 1개 있어야 하며, 파일이 12바이트 IEND 청크로 끝나야 한다.
-    앞 33바이트만 멀쩡한 잘린 응답이 1024x1536 세로로 통과해 매니페스트에
+    앞 33바이트만 멀쩡한 잘린 응답이 세로로 통과해 매니페스트에
     기록되는 일을 막는다.
     """
     try:
@@ -238,13 +244,19 @@ def measure_png(path: str) -> tuple:
 
 
 def assert_measured_portrait(path: str) -> tuple:
-    """실측 크기가 정확히 1024x1536 이 아니면 PortraitError."""
+    """실측 크기가 파이프라인이 요구하는 9:16 형상이 아니면 PortraitError.
+
+    규칙은 `video_contracts.assert_first_frame_geometry` 한 곳에만 있다 —
+    codex_image_bridge 도 같은 함수를 쓴다.
+    """
     width, height = measure_png(path)
-    if (width, height) != (PORTRAIT_WIDTH, PORTRAIT_HEIGHT):
+    try:
+        assert_first_frame_geometry(width, height, where=path)
+    except vc.FirstFrameGeometryError as exc:
         raise PortraitError(
-            f"측정된 출력 크기 {width}x{height} 가 요구 세로 크기 "
-            f"{PORTRAIT_WIDTH}x{PORTRAIT_HEIGHT} 와 다르다: {path} — "
-            "디스패처가 에코한 aspect_ratio 는 신뢰하지 않는다")
+            f"측정된 출력 크기 {width}x{height} 가 파이프라인 형상 계약을 "
+            f"위반한다: {exc} — 디스패처가 에코한 aspect_ratio 는 신뢰하지 않는다"
+        ) from exc
     return width, height
 
 
@@ -305,12 +317,75 @@ _AUTH_NEGATIVE_TOKENS = frozenset({
 _AUTH_POSITIVE_TOKEN = "authorized"
 
 
-def _line_says_authorized(line: str) -> bool:
-    """`hermes auth list` 한 줄이 **명시적 인증 상태**인지 토큰 단위로 본다."""
+def _line_is_negative(line: str) -> bool:
+    """줄이 **명시적으로** 미인증/만료/취소를 말하는지 토큰 단위로 본다."""
     tokens = set(re.findall(r"[a-z]+", str(line or "").lower()))
-    if tokens & _AUTH_NEGATIVE_TOKENS:
+    return bool(tokens & _AUTH_NEGATIVE_TOKENS)
+
+
+def _line_says_authorized(line: str) -> bool:
+    """한 줄이 **명시적 인증 상태**인지 토큰 단위로 본다 (구 형식 호환)."""
+    if _line_is_negative(line):
         return False
+    tokens = set(re.findall(r"[a-z]+", str(line or "").lower()))
     return _AUTH_POSITIVE_TOKEN in tokens
+
+
+#: `hermes auth list` 의 provider 헤더: ``openai-codex (1 credentials):``
+_AUTH_HEADER_RE = re.compile(
+    r"^(?P<provider>\S+)\s*\((?P<count>\d+)\s+credential", re.IGNORECASE)
+
+
+def _provider_is_authorized(auth_text: str, provider: str) -> bool:
+    """`hermes auth list` 실제 출력에서 ``provider`` 가 인증돼 있는지 판정한다.
+
+    실제 형식은 provider 헤더 한 줄 + 들여쓴 자격증명 행들이다::
+
+        openai-codex (1 credentials):
+          #1  device_code          oauth   device_code ←
+
+    'authorized' 라는 단어는 어디에도 나오지 않는다. 그러므로 **자격증명 행의
+    존재**가 인증의 증거다. 단, 명시적으로 부정을 말하는 행(unauthorized,
+    expired, revoked, "not authorized" 등)은 인증으로 치지 않는다 —
+    substring 검사로 `unauthorized` 가 통과하던 구멍을 다시 열지 않는다.
+
+    페일클로즈: provider 헤더가 없거나, credentials 수가 0 이거나, 유효한
+    자격증명 행이 하나도 없으면 False.
+    """
+    target = str(provider or "").strip().lower()
+    if not target:
+        return False
+
+    in_block = False
+    declared = 0
+    good_rows = 0
+    for raw in str(auth_text or "").splitlines():
+        header = _AUTH_HEADER_RE.match(raw.strip())
+        if header:
+            if header.group("provider").strip().lower() == target:
+                in_block = True
+                declared = int(header.group("count"))
+                good_rows = 0
+                # 헤더 자체가 부정을 말하면 즉시 거부.
+                if _line_is_negative(raw):
+                    return False
+            elif in_block:
+                break          # 다음 provider 블록 시작 — 우리 블록은 끝났다
+            continue
+        if not in_block:
+            continue
+        line = raw.strip()
+        if not line:
+            continue
+        if not raw[:1].isspace():
+            break              # 들여쓰지 않은 줄 = 블록 밖
+        if _line_is_negative(line):
+            return False       # 명시적 미인증/만료/취소 — 거부
+        good_rows += 1
+
+    if not in_block or declared <= 0 or good_rows <= 0:
+        return False
+    return True
 
 
 def preflight_codex(*, runner: Optional[Callable] = None) -> Dict[str, Any]:
@@ -332,7 +407,10 @@ def preflight_codex(*, runner: Optional[Callable] = None) -> Dict[str, Any]:
             "다른 provider 로 대체하지 않고 중단한다.")
     provider_line = next(
         (ln for ln in auth.splitlines() if HERMES_PROVIDER in ln.lower()), "")
-    if not _line_says_authorized(provider_line):
+    # 실제 형식(provider 헤더 + 들여쓴 자격증명 행)을 먼저 파싱하고,
+    # 명시적 'authorized' 를 쓰는 구/다른 형식은 줄 단위 판정으로 받는다.
+    if not (_provider_is_authorized(auth, HERMES_PROVIDER)
+            or _line_says_authorized(provider_line)):
         raise PreflightError(
             f"provider {HERMES_PROVIDER!r} 가 인증 상태가 아니다: "
             f"{provider_line.strip()!r} — 중단한다.")

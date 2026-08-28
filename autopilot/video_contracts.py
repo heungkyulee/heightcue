@@ -45,6 +45,99 @@ VIDEO_ENDPOINT = "minimax/h3-max/image-to-video"
 VIDEO_RESOLUTION = "768P"
 VIDEO_ASPECT_RATIO = "9:16"
 
+# ---------------------------------------------------------------------------
+# 첫 프레임 형상 — 게이트와 피게이트 대상이 어긋나지 않도록 **여기 한 곳**에만
+# 정의한다. codex_image_bridge 와 video_generate 는 이것을 import 해서 쓴다.
+# (규칙과 검사가 갈라져 이 빌드에서 이미 두 번 사고가 났다: 거짓 초록 1회,
+#  거짓 빨강 1회.)
+# ---------------------------------------------------------------------------
+
+#: 파이프라인 전체가 9:16 이다. pipeline_defs/heightcue-ugc.yaml 이 9:16 을
+#: 고정하고, build_cut_request 는 9:16 이 아니면 거부하며, Remotion 합성은
+#: 768x1360 으로 렌더한다. 따라서 첫 프레임도 9:16 이어야 한다.
+FIRST_FRAME_TARGET_RATIO = 9.0 / 16.0          # 0.5625
+
+#: **허용 오차 1.0% (상대오차) — 근거는 실측 산술이다.**
+#:
+#:   통과해야 하는 것
+#:     941 x 1672 (실 provider 출력) = 0.5627990 → 상대오차 0.0532%
+#:     768 x 1360 (Remotion 합성 크기) = 0.5647059 → 상대오차 0.3921%
+#:   거부해야 하는 것
+#:     1024 x 1536 (플러그인이 *요청*하는 크기, 2:3) = 0.6666667 → 18.52%
+#:      768 x 1344                                  = 0.5714286 →  1.587%
+#:
+#: 즉 임계값은 0.3921% 초과 1.587% 미만이어야 한다. 1.0% 는 그 구간의
+#: 거의 정중앙이며, 반드시 통과해야 하는 최악 사례(0.3921%)에 2.55배의
+#: 여유를 두고도 반드시 거부해야 하는 최선 사례(1.587%)를 막는다.
+#: 감으로 고른 둥근 수가 아니라 위 두 경계 사이에서 고른 값이다.
+FIRST_FRAME_ASPECT_TOLERANCE = 0.010
+
+#: 해상도 하한. 첫 프레임은 768x1360 합성으로 내려가므로 그보다 작으면
+#: 업스케일이 되어 디테일이 뭉개진다. 비율만 맞는 초소형 이미지 차단.
+FIRST_FRAME_MIN_WIDTH = 768
+FIRST_FRAME_MIN_HEIGHT = 1360
+
+
+class FirstFrameGeometryError(ValueError):
+    """첫 프레임의 실측 크기가 9:16 파이프라인 형상 계약을 위반했다."""
+
+
+def first_frame_ratio_error(width: int, height: int) -> float:
+    """(너비/높이) 가 9:16 에서 벗어난 **상대오차**를 돌려준다."""
+    if height <= 0:
+        raise FirstFrameGeometryError(f"높이가 0 이하다: {width}x{height}")
+    return abs((width / height) - FIRST_FRAME_TARGET_RATIO) / FIRST_FRAME_TARGET_RATIO
+
+
+def assert_first_frame_geometry(width: Any, height: Any, *,
+                                where: str = "") -> tuple:
+    """실측 (너비, 높이) 가 9:16 하한 해상도 계약을 만족하는지 강제한다.
+
+    측정된 픽셀만 받는다 — 디스패처가 에코한 aspect 문자열은 요청의 메아리일
+    뿐이므로 이 함수에 넘겨선 안 된다. 판정 불가는 통과가 아니라 거부다.
+    """
+    tail = f": {where}" if where else ""
+    try:
+        w = int(width)
+        h = int(height)
+    except (TypeError, ValueError) as exc:
+        raise FirstFrameGeometryError(
+            f"첫 프레임 크기를 정수로 읽을 수 없다: {width!r}x{height!r}{tail}"
+        ) from exc
+    if w <= 0 or h <= 0:
+        raise FirstFrameGeometryError(
+            f"첫 프레임 크기가 유효하지 않다: {w}x{h}{tail}")
+    if h <= w:
+        raise FirstFrameGeometryError(
+            f"첫 프레임 {w}x{h} 는 세로가 아니다{tail} — 9:16 세로 숏폼이어야 한다")
+    if w < FIRST_FRAME_MIN_WIDTH or h < FIRST_FRAME_MIN_HEIGHT:
+        raise FirstFrameGeometryError(
+            f"첫 프레임 {w}x{h} 가 최소 해상도 "
+            f"{FIRST_FRAME_MIN_WIDTH}x{FIRST_FRAME_MIN_HEIGHT} 미만이다{tail} — "
+            "합성 크기보다 작으면 업스케일된다")
+    err = first_frame_ratio_error(w, h)
+    if err > FIRST_FRAME_ASPECT_TOLERANCE:
+        raise FirstFrameGeometryError(
+            f"첫 프레임 {w}x{h} 의 비율 {w / h:.6f} 가 {VIDEO_ASPECT_RATIO} "
+            f"({FIRST_FRAME_TARGET_RATIO:.6f}) 에서 상대오차 {err * 100:.3f}% "
+            f"벗어났다 (허용 {FIRST_FRAME_ASPECT_TOLERANCE * 100:.1f}%){tail} — "
+            "이 프레임은 크롭 없이 9:16 영상에 들어갈 수 없다")
+    return w, h
+
+
+def parse_pixel_size(text: Any) -> tuple:
+    """``"941x1672"`` 같은 픽셀 크기 문자열을 (너비, 높이) 로 파싱한다."""
+    if not isinstance(text, str):
+        raise FirstFrameGeometryError(f"픽셀 크기가 문자열이 아니다: {text!r}")
+    parts = text.strip().lower().split("x")
+    if len(parts) != 2:
+        raise FirstFrameGeometryError(f"픽셀 크기 형식을 알 수 없다: {text!r}")
+    try:
+        return int(parts[0]), int(parts[1])
+    except ValueError as exc:
+        raise FirstFrameGeometryError(
+            f"픽셀 크기 형식을 알 수 없다: {text!r}") from exc
+
 CUT_DURATION_SECONDS = 5
 MIN_CUTS = 1
 MAX_CUTS = 3

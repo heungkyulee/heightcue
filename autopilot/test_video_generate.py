@@ -38,9 +38,21 @@ def make_png(width=1024, height=1536):
     return sig + ihdr + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
 
 
-OK_AUTH = ("provider        status\n"
-           "openai-codex    authorized (oauth)\n"
-           "anthropic       authorized\n")
+#: 이 맥에서 실제로 나오는 `hermes auth list` 출력. 'authorized' 라는 단어는
+#: 어디에도 없다 — provider 헤더 + 들여쓴 자격증명 행이 전부다.
+REAL_AUTH = ("anthropic (1 credentials):\n"
+             "  #1  claude_code          oauth   claude_code ←\n"
+             "\n"
+             "copilot (1 credentials):\n"
+             "  #1  gh auth token        api_key gh_cli ←\n"
+             "\n"
+             "openai-codex (1 credentials):\n"
+             "  #1  device_code          oauth   device_code ←\n"
+             "\n"
+             "openrouter (1 credentials):\n"
+             "  #1  OPENROUTER_API_KEY   api_key env:OPENROUTER_API_KEY ←\n")
+
+OK_AUTH = REAL_AUTH
 OK_IMAGE_CFG = ('{"provider": "openai-codex", "model": "gpt-image-2-medium"}\n')
 
 
@@ -68,7 +80,7 @@ def make_preflight(auth=OK_AUTH, image=OK_IMAGE_CFG, auth_rc=0, image_rc=0):
 class FakeBridge:
     """codex_image_bridge.edit_image 대체. 호출 인자를 전부 기록한다."""
 
-    def __init__(self, width=1024, height=1536, fail=None, partial_bytes=None):
+    def __init__(self, width=941, height=1672, fail=None, partial_bytes=None):
         self.width = width
         self.height = height
         self.fail = fail
@@ -219,7 +231,7 @@ class TestHappyPath(Base):
             self.assertEqual(frame["output_sha256"],
                              vg.sha256_file(frame["output_path"]))
             self.assertEqual((frame["measured_width"], frame["measured_height"]),
-                             (1024, 1536))
+                             (941, 1672))
 
     def test_product_truth_preserved_in_prompt_instructions(self):
         bridge = FakeBridge()
@@ -284,6 +296,69 @@ class TestPreflight(Base):
         self.assertEqual(info["provider"], "openai-codex")
         self.assertEqual(info["model"], "gpt-image-2-medium")
 
+    def test_real_hermes_auth_list_shape_is_accepted(self):
+        """이 맥의 실제 `hermes auth list` 출력. 'authorized' 토큰이 없다."""
+        info = vg.preflight_codex(runner=make_preflight(auth=REAL_AUTH))
+        self.assertEqual(info["provider"], "openai-codex")
+
+    def test_provider_with_zero_credentials_rejected(self):
+        auth = ("openai-codex (0 credentials):\n"
+                "\nanthropic (1 credentials):\n"
+                "  #1  claude_code          oauth   claude_code ←\n")
+        with self.assertRaises(vg.PreflightError):
+            vg.preflight_codex(runner=make_preflight(auth=auth))
+
+    def test_provider_header_with_no_credential_rows_rejected(self):
+        auth = ("openai-codex (1 credentials):\n"
+                "\nanthropic (1 credentials):\n"
+                "  #1  claude_code          oauth   claude_code ←\n")
+        with self.assertRaises(vg.PreflightError):
+            vg.preflight_codex(runner=make_preflight(auth=auth))
+
+    def test_explicitly_unauthorized_provider_rejected(self):
+        auth = ("openai-codex (1 credentials):\n"
+                "  #1  device_code          oauth   unauthorized\n")
+        with self.assertRaises(vg.PreflightError):
+            vg.preflight_codex(runner=make_preflight(auth=auth))
+
+    def test_expired_credential_rejected(self):
+        auth = ("openai-codex (1 credentials):\n"
+                "  #1  device_code          oauth   expired (was authorized)\n")
+        with self.assertRaises(vg.PreflightError):
+            vg.preflight_codex(runner=make_preflight(auth=auth))
+
+    def test_not_authorized_credential_rejected(self):
+        auth = ("openai-codex (1 credentials):\n"
+                "  #1  device_code          oauth   not authorized\n")
+        with self.assertRaises(vg.PreflightError):
+            vg.preflight_codex(runner=make_preflight(auth=auth))
+
+    def test_revoked_credential_rejected(self):
+        auth = ("openai-codex (1 credentials):\n"
+                "  #1  device_code          oauth   revoked\n")
+        with self.assertRaises(vg.PreflightError):
+            vg.preflight_codex(runner=make_preflight(auth=auth))
+
+    def test_absent_provider_rejected(self):
+        auth = ("anthropic (1 credentials):\n"
+                "  #1  claude_code          oauth   claude_code ←\n")
+        with self.assertRaises(vg.PreflightError):
+            vg.preflight_codex(runner=make_preflight(auth=auth))
+
+    def test_empty_auth_listing_rejected(self):
+        with self.assertRaises(vg.PreflightError):
+            vg.preflight_codex(runner=make_preflight(auth=""))
+
+    def test_other_provider_credentials_do_not_vouch_for_codex(self):
+        """다른 provider 의 정상 자격증명이 codex 를 대신 인증해선 안 된다."""
+        auth = ("openai-codex (1 credentials):\n"
+                "\nanthropic (1 credentials):\n"
+                "  #1  claude_code          oauth   claude_code ←\n"
+                "\ncopilot (1 credentials):\n"
+                "  #1  gh auth token        api_key gh_cli ←\n")
+        with self.assertRaises(vg.PreflightError):
+            vg.preflight_codex(runner=make_preflight(auth=auth))
+
 
 # ---------------------------------------------------------------------------
 # 측정된 세로비 — 에코를 믿지 않는다
@@ -291,6 +366,30 @@ class TestPreflight(Base):
 
 
 class TestMeasuredPortrait(Base):
+    def test_real_941x1672_first_frame_accepted(self):
+        """실 provider 출력 941x1672(9:16) 는 통과해야 한다 — 이게 파이프라인 형상이다."""
+        bridge = FakeBridge(width=941, height=1672)
+        result = self.run_generate(bridge=bridge)
+        self.assertTrue(result)
+
+    def test_2x3_1024x1536_rejected(self):
+        """1024x1536 은 2:3 이라 9:16 영상에 크롭 없이 못 들어간다 — 거부."""
+        with self.assertRaises(vg.PortraitError) as ctx:
+            self.run_generate(bridge=FakeBridge(width=1024, height=1536))
+        self.assertIn("1024x1536", str(ctx.exception))
+
+    def test_tiny_9x16_rejected(self):
+        with self.assertRaises(vg.PortraitError):
+            self.run_generate(bridge=FakeBridge(width=90, height=160))
+
+    def test_geometry_rule_is_shared_with_bridge(self):
+        import codex_image_bridge as cib_mod
+        import video_contracts as vc_mod
+        self.assertIs(vg.assert_first_frame_geometry,
+                      vc_mod.assert_first_frame_geometry)
+        self.assertIs(cib_mod.assert_first_frame_geometry,
+                      vc_mod.assert_first_frame_geometry)
+
     def test_landscape_output_rejected_despite_portrait_echo(self):
         bridge = FakeBridge(width=1536, height=1024)  # 에코는 여전히 portrait
         with self.assertRaises(vg.PortraitError) as ctx:

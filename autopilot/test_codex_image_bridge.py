@@ -87,11 +87,11 @@ class BridgeTestBase(unittest.TestCase):
             "prompt": "portrait edit",
             "aspect_ratio": "portrait",
             "modality": "image",
-            "size": "1024x1536",
+            "size": "941x1672",
             "quality": "medium",
             "input_image_count": 1,
             "image_source": "final",
-            "pixel_size": "1024x1536",
+            "pixel_size": "941x1672",
         }
 
 
@@ -280,8 +280,50 @@ class ManifestTest(BridgeTestBase):
 class PortraitEnforcementTest(BridgeTestBase):
     """Portrait must be VERIFIED in the result, not merely requested."""
 
-    def test_portrait_pixel_size_constant(self):
-        self.assertEqual(bridge.PORTRAIT_PIXEL_SIZE, "1024x1536")
+    def test_accepts_real_provider_941x1672(self):
+        """실제 provider 가 돌려준 941x1672 는 9:16 이므로 통과해야 한다.
+
+        941/1672 = 0.56280 vs 9/16 = 0.5625 → 상대오차 0.053%.
+        """
+        ok = self.good_result()
+        ok["pixel_size"] = "941x1672"
+        manifest = bridge.edit_image(prompt="edit", source_images=[self.src_a],
+                                     output_path=self.out,
+                                     runner=_FakeRunner(ok))
+        self.assertTrue(os.path.exists(self.out))
+        self.assertEqual(manifest["pixel_size"], "941x1672")
+
+    def test_rejects_2x3_1024x1536(self):
+        """1024x1536 은 2:3(0.6667) 이라 9:16 영상에 크롭 없이 못 들어간다."""
+        bad = self.good_result()
+        bad["pixel_size"] = "1024x1536"
+        with self.assertRaises(bridge.AspectMismatch):
+            bridge.edit_image(prompt="edit", source_images=[self.src_a],
+                              output_path=self.out, runner=_FakeRunner(bad))
+        self.assertFalse(os.path.exists(self.out))
+
+    def test_rejects_tiny_9x16_image(self):
+        """비율만 맞고 해상도가 바닥이면 거부 — 768x1360 합성에 못 쓴다."""
+        bad = self.good_result()
+        bad["pixel_size"] = "90x160"
+        with self.assertRaises(bridge.AspectMismatch):
+            bridge.edit_image(prompt="edit", source_images=[self.src_a],
+                              output_path=self.out, runner=_FakeRunner(bad))
+        self.assertFalse(os.path.exists(self.out))
+
+    def test_rejects_unparseable_pixel_size(self):
+        bad = self.good_result()
+        bad["pixel_size"] = "who knows"
+        with self.assertRaises(bridge.AspectMismatch):
+            bridge.edit_image(prompt="edit", source_images=[self.src_a],
+                              output_path=self.out, runner=_FakeRunner(bad))
+        self.assertFalse(os.path.exists(self.out))
+
+    def test_geometry_rule_is_shared_not_duplicated(self):
+        """게이트와 피게이트 대상이 어긋나면 안 된다 — 규칙은 한 곳에서 온다."""
+        import video_contracts as vc
+        self.assertIs(bridge.assert_first_frame_geometry,
+                      vc.assert_first_frame_geometry)
 
     def test_rejects_non_portrait_aspect_ratio(self):
         bad = self.good_result()
@@ -492,8 +534,11 @@ class HermesCompatibilityTest(unittest.TestCase):
                    if isinstance(n, ast.ClassDef)}
         self.assertIn("OpenAICodexImageGenProvider", classes)
 
-        self.assertIn('"portrait": "1024x1536"', src,
-                      "portrait size mapping changed")
+        # NOTE: 플러그인이 요청하는 portrait 픽셀 크기("1024x1536")는 여기서
+        # 검사하지 않는다. 실측 결과 provider 는 그 요청을 무시하고 941x1672 를
+        # 돌려줬다 — 즉 플러그인 상수는 실제 도착하는 프레임에 대해 아무것도
+        # 보증하지 않으므로, 그 상수를 고정하는 테스트는 거짓 안정감만 준다.
+        # 실제 형상은 video_contracts.assert_first_frame_geometry 가 판정한다.
         self.assertIn('return "openai-codex"', src,
                       "provider name changed")
 
