@@ -590,40 +590,24 @@ class TestPngChunkVerification(BaseCase):
 
 
 # ---------------------------------------------------------------------------
-# 9. WebP 헤더 파서 (KR CDN 대비)
+# 9. WebP 는 지원하지 않는다 (선언만으로 위조 가능) — 섹션 13 참조
 # ---------------------------------------------------------------------------
 
 
-class TestWebp(BaseCase):
-    def test_webp_vp8_dimensions(self):
-        self.assertEqual(pa.sniff_image(make_webp_vp8(600, 800)),
-                         ("webp", 600, 800))
+class TestWebpVariantsAllRejected(BaseCase):
+    """VP8 / VP8L / VP8X 어느 형태로도 truth layer 에 들어올 수 없다."""
 
-    def test_webp_vp8l_dimensions(self):
-        self.assertEqual(pa.sniff_image(make_webp_vp8l(640, 480)),
-                         ("webp", 640, 480))
-
-    def test_webp_vp8x_dimensions(self):
-        self.assertEqual(pa.sniff_image(make_webp_vp8x(1200, 1200)),
-                         ("webp", 1200, 1200))
-
-    def test_webp_is_an_allowed_format(self):
-        self.assertIn("webp", pa.ALLOWED_FORMATS)
-
-    def test_webp_asset_is_acquired(self):
-        f = FakeFetcher({IMG1: {"bytes": make_webp_vp8(600, 800),
-                                "content_type": "image/webp"}})
-        m = pa.acquire_product_assets(product(), self.ws, fetcher=f)
-        self.assertEqual(m["assets"][0]["format"], "webp")
-        self.assertEqual((m["assets"][0]["width"], m["assets"][0]["height"]),
-                         (600, 800))
+    def test_all_webp_flavours_rejected(self):
+        for maker in (make_webp_vp8, make_webp_vp8l, make_webp_vp8x):
+            with self.subTest(maker=maker.__name__):
+                with self.assertRaises(pa.NotAnImageError):
+                    pa.sniff_image(maker(600, 800))
 
     def test_truncated_webp_rejected(self):
         with self.assertRaises(pa.ProductAssetError):
             pa.sniff_image(make_webp_vp8()[:-4])
 
-    def test_fetcher_pins_image_accept_header(self):
-        """CDN 콘텐츠 협상을 고정한다 — Accept 를 비워두지 않는다."""
+    def test_accept_header_still_pins_the_two_supported_formats(self):
         self.assertIn("image/png", pa.IMAGE_ACCEPT_HEADER)
         self.assertIn("image/jpeg", pa.IMAGE_ACCEPT_HEADER)
 
@@ -768,6 +752,156 @@ class TestRemainingProvenanceKeys(BaseCase):
             pa.acquire_product_assets(p, self.ws, fetcher=self.fetcher_ok())
         self.assertIn("rights_holder", str(cm.exception))
         self.assertEqual(os.listdir(self.ws), [])
+
+
+# ---------------------------------------------------------------------------
+# 13. 라운드 2 — 모든 청크 CRC / WebP 위조 / takedown URL 정규화 / 정직한 크기
+# ---------------------------------------------------------------------------
+
+
+def png_chunk_bad_crc(tag, data, crc=0xDEADBEEF):
+    """CRC 를 일부러 틀리게 넣은 청크."""
+    return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", crc)
+
+
+class TestEveryPngChunkCrcIsVerified(BaseCase):
+    def test_ancillary_text_chunk_with_wrong_crc_is_rejected(self):
+        """tEXt 에 숨긴 임의 바이트도 CRC 로 걸러야 한다.
+
+        CRC 를 IHDR/IDAT/IEND 세 태그에만 걸면, 공격자가 통제하는 바이트가
+        유효해 보이는 PNG 안에 그대로 실려 truth layer 로 들어온다 —
+        원래의 'PNG 헤더로 감싼 HTML' 버그가 보조 청크로 자리만 옮긴 것이다.
+        """
+        good = make_png(600, 800)
+        # sig(8) + IHDR(25) 뒤에 위조 CRC 를 단 tEXt 를 끼워 넣는다.
+        head, tail = good[:33], good[33:]
+        payload = head + png_chunk_bad_crc(b"tEXt", b"<html>" * 34) + tail
+        with self.assertRaises(pa.ProductAssetError):
+            pa.sniff_image(payload)
+
+    def test_ancillary_chunk_with_correct_crc_still_parses(self):
+        """정상 CRC 를 가진 보조 청크는 정상 PNG 를 깨뜨리지 않는다."""
+        good = make_png(600, 800)
+        head, tail = good[:33], good[33:]
+        payload = head + png_chunk(b"tEXt", b"Comment\x00hi") + tail
+        self.assertEqual(pa.sniff_image(payload), ("png", 600, 800))
+
+    def test_every_chunk_crc_is_checked_not_just_three_tags(self):
+        """어떤 태그든 CRC 가 틀리면 거부된다."""
+        good = make_png(600, 800)
+        head, tail = good[:33], good[33:]
+        for tag in (b"tEXt", b"pHYs", b"zTXt", b"iTXt", b"bKGD"):
+            with self.subTest(tag=tag):
+                payload = head + png_chunk_bad_crc(tag, b"x" * 40) + tail
+                with self.assertRaises(pa.ProductAssetError):
+                    pa.sniff_image(payload)
+
+
+class TestWebpIsNotAcceptable(BaseCase):
+    def test_thirty_byte_vp8x_declaring_huge_canvas_is_rejected(self):
+        """30바이트짜리 VP8X 가 4000x4000 을 '선언' 한다고 통과하면 안 된다.
+
+        선언만으로 MIN_ASSET_DIMENSION 을 만족시킬 수 있으면 최소 크기
+        게이트 자체가 무의미해진다.
+        """
+        forged = make_webp_vp8x(4000, 4000)
+        self.assertLess(len(forged), 40, "이 위조 페이로드는 30바이트대여야 한다")
+        with self.assertRaises(pa.ProductAssetError):
+            pa.sniff_image(forged)
+
+    def test_webp_is_not_an_allowed_format(self):
+        self.assertNotIn("webp", pa.ALLOWED_FORMATS)
+
+    def test_accept_header_does_not_negotiate_webp(self):
+        """파싱하지 못하는 포맷을 CDN 에 요구하지 않는다."""
+        self.assertNotIn("webp", pa.IMAGE_ACCEPT_HEADER)
+
+    def test_webp_asset_is_refused_at_acquisition(self):
+        f = FakeFetcher({IMG1: {"bytes": make_webp_vp8(600, 800),
+                                "content_type": "image/webp"}})
+        with self.assertRaises(pa.NotAnImageError):
+            pa.acquire_product_assets(product(), self.ws, fetcher=f)
+        self.assertEqual(os.listdir(self.ws), [])
+
+
+class TestTakedownUrlNormalization(BaseCase):
+    """exact-string denylist 는 ?v=2 하나로 뚫린다."""
+
+    VARIANTS = (
+        IMG1 + "?v=2",
+        IMG1.replace("https://", "http://"),
+        IMG1 + "/",
+        IMG1.replace("image.", "IMAGE."),
+    )
+
+    def _taken_down(self):
+        m = pa.acquire_product_assets(product(), self.ws,
+                                      fetcher=self.fetcher_ok())
+        pa.takedown(m["manifest_path"], source_url=IMG1, reason="rights holder")
+
+    def test_url_variants_do_not_escape_the_denylist(self):
+        self._taken_down()
+        for variant in self.VARIANTS:
+            with self.subTest(variant=variant):
+                p = product(
+                    official_image_provenance=[image_spec(source_url=variant)])
+                # 바이트를 바꿔 sha256 그물을 우회한다 (재압축 시나리오).
+                f = FakeFetcher({variant: {"bytes": make_png(601, 801)}})
+                with self.assertRaises(pa.AssetTakedownError):
+                    pa.acquire_product_assets(p, self.ws, fetcher=f)
+                self.assertEqual(f.calls, [],
+                                 "denylist 는 fetch 이전에 물어야 한다")
+
+    def test_normalization_is_symmetric_on_write(self):
+        """대장에 변형 URL 로 기록돼도 정규 URL 이 막힌다."""
+        self.assertEqual(pa.normalize_url(IMG1 + "?v=2"),
+                         pa.normalize_url(IMG1.replace("image.", "IMAGE.")))
+
+    def test_unrelated_url_still_allowed(self):
+        self._taken_down()
+        p = product(official_image_provenance=[image_spec(source_url=IMG2)])
+        f = FakeFetcher({IMG2: {"bytes": self.jpg, "content_type": "image/jpeg"}})
+        m = pa.acquire_product_assets(p, self.ws, fetcher=f)
+        self.assertEqual(len(m["assets"]), 1)
+
+
+class TestDimensionHonesty(BaseCase):
+    def test_manifest_labels_dimensions_as_declared(self):
+        """IHDR 값은 관측이 아니라 선언이다 — 매니페스트가 그렇게 말해야 한다."""
+        m = pa.acquire_product_assets(product(), self.ws,
+                                      fetcher=self.fetcher_ok())
+        asset = m["assets"][0]
+        self.assertEqual(asset["dimension_basis"], pa.DIMENSION_BASIS)
+        self.assertEqual(asset["declared_width"], 600)
+        self.assertEqual(asset["declared_height"], 800)
+
+    def test_dimension_basis_does_not_claim_observation(self):
+        self.assertIn("declared", pa.DIMENSION_BASIS)
+
+    def test_sniff_docstring_does_not_claim_observed_pixels(self):
+        self.assertNotIn("관측", pa._sniff_png.__doc__ or "")
+
+    def test_header_declared_huge_png_with_real_idat_is_labelled_declared(self):
+        """99999x99999 를 주장하는 PNG 는 통과하더라도 '선언' 으로만 기록된다."""
+        payload = (PNG_SIG + png_ihdr(99999, 99999)
+                   + png_chunk(b"IDAT", zlib.compress(b"\x00" * 64)) + PNG_IEND)
+        self.assertEqual(pa.sniff_image(payload), ("png", 99999, 99999))
+
+
+class TestFetcherHeaders(BaseCase):
+    def test_fetcher_actually_sends_the_pinned_accept_header(self):
+        """상수 내용이 아니라 fetcher 가 실제로 보내는지를 본다."""
+        from unittest import mock
+
+        with mock.patch("requests.get") as get:
+            get.return_value.status_code = 200
+            get.return_value.headers = {"Content-Type": "image/png"}
+            get.return_value.url = IMG1
+            get.return_value.history = []
+            get.return_value.iter_content.return_value = [self.png]
+            pa._requests_fetcher(IMG1)
+        self.assertEqual(get.call_args.kwargs["headers"],
+                         {"Accept": pa.IMAGE_ACCEPT_HEADER})
 
 
 if __name__ == "__main__":

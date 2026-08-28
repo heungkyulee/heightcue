@@ -17,7 +17,11 @@
   상품 id, 바이트의 sha256, 수집 시각. 하나라도 비면 **거부**한다.
 * 공식 상품 페이지 이미지만. 크리에이터 사진·경쟁사·스톡·생성 이미지 금지.
 * 확장자와 Content-Type 은 **믿지 않는다**. 매직 바이트를 직접 스니핑해
-  포맷과 실제 픽셀 크기를 확인한다. 잘리거나 이미지가 아니면 거부.
+  포맷을 확인하고, 모든 PNG 청크의 CRC 를 검증한다. 잘리거나 이미지가
+  아니면 거부. 픽셀 크기는 **헤더가 선언한 값** 이며 실제 코딩된 데이터의
+  존재로 방증될 뿐이다 (Pillow 없이 디코드하지 않으므로 관측이라 부르지
+  않는다 — ``DIMENSION_BASIS`` 참조). WebP 는 선언만으로 위조 가능해
+  지원하지 않는다.
 * 자산 최대 크기와 상품당 최대 개수는 명명 상수로 강제한다.
 * 삭제 요청(takedown)을 위해 자산 → 상품 → 출처 URL 계보를 전부 남긴다.
 
@@ -58,7 +62,12 @@ MAX_ASSETS_PER_PRODUCT = 6
 MIN_ASSET_DIMENSION = 200
 
 #: 허용 포맷 (매직 바이트로 확인된 것만).
-ALLOWED_FORMATS = ("png", "jpeg", "webp")
+#:
+#: WebP 는 의도적으로 빠져 있다. RIFF/VP8X 헤더는 캔버스 크기를 **선언만** 하고
+#: 30바이트짜리 파일도 4000x4000 을 주장할 수 있어서, MIN_ASSET_DIMENSION 이
+#: 선언만으로 충족된다. PNG 만큼 엄격하게(청크 CRC 수준으로) 검증할 방법이
+#: 표준 라이브러리에 없으므로 지원을 넣는 대신 뺐다.
+ALLOWED_FORMATS = ("png", "jpeg")
 
 #: 시장별 공식 상품 이미지 CDN allowlist.
 #: `rights_basis` 는 호출자가 적어 넣는 문자열이라 그 자체로는 증거가 되지 못한다.
@@ -72,7 +81,20 @@ OFFICIAL_IMAGE_HOSTS: Dict[str, Tuple[str, ...]] = {
 
 #: CDN 콘텐츠 협상을 고정한다. requests 기본값 `Accept: */*` 를 그대로 두면
 #: 쿠팡 CDN 정책이 바뀌는 순간 WebP 가 돌아와 KR 트랙이 통째로 실패한다.
-IMAGE_ACCEPT_HEADER = "image/png,image/jpeg,image/webp"
+#: 파싱하지 못하는 포맷은 애초에 요구하지 않는다 (WebP 제외).
+IMAGE_ACCEPT_HEADER = "image/png,image/jpeg"
+
+#: 픽셀 크기의 근거. PNG IHDR / JPEG SOF 는 **헤더가 선언한 값** 이며 이 모듈은
+#: 픽셀을 디코드하지 않는다 (Pillow 금지). 실제 코딩된 데이터(IDAT/SOS)의
+#: 존재로 방증할 뿐이므로, 매니페스트는 이 값을 관측이라 부르지 않는다.
+DIMENSION_BASIS = "header_declared_corroborated_by_coded_data"
+
+#: CRC 가 맞더라도 이 집합 밖의 청크 태그는 받지 않는다.
+PNG_ALLOWED_CHUNKS = frozenset({
+    b"IHDR", b"PLTE", b"IDAT", b"IEND", b"tRNS", b"gAMA", b"cHRM", b"sRGB",
+    b"iCCP", b"bKGD", b"pHYs", b"sBIT", b"hIST", b"tIME", b"sPLT",
+    b"tEXt", b"zTXt", b"iTXt", b"eXIf",
+})
 
 #: truth layer 에 들어올 수 있는 유일한 권리 근거.
 #: 크리에이터 사진·스톡·경쟁사·생성 이미지는 전부 여기 없다 — 곧 거부된다.
@@ -132,7 +154,7 @@ class AssetCountError(ProductAssetError):
 
 
 class AssetDimensionError(ProductAssetError):
-    """관측된 픽셀 크기가 MIN_ASSET_DIMENSION 미만."""
+    """헤더가 선언한 픽셀 크기가 MIN_ASSET_DIMENSION 미만."""
 
 
 class AssetTakedownError(ProductAssetError):
@@ -146,6 +168,28 @@ class AssetTakedownError(ProductAssetError):
 
 def _host_of(url: str) -> str:
     return (urlsplit(url).hostname or "").lower().rstrip(".")
+
+
+def normalize_url(url: str) -> str:
+    """takedown 대조용 정규 형식으로 URL 을 접는다.
+
+    denylist 를 원시 문자열로 비교하면 사소한 변형 네 가지 —
+    ``?v=2`` 추가 / ``http://`` 로 다운그레이드 / 후행 슬래시 / 호스트 대문자 —
+    만으로 삭제 요청된 자산이 다시 수집된다. 그래서 **쓸 때와 읽을 때 모두**
+    이 함수를 통과시킨다.
+
+    스킴과 호스트는 소문자로, 스킴 차이(http/https)는 무시하고, 쿼리와
+    프래그먼트는 버리며, 경로의 후행 슬래시는 제거한다. 같은 바이트를 다른
+    URL 로 다시 내주는 우회를 막는 것이 목적이므로 보수적으로 넓게 접는다.
+    """
+    if not isinstance(url, str):
+        return ""
+    parts = urlsplit(url.strip())
+    host = (parts.hostname or "").lower().rstrip(".")
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    path = parts.path.rstrip("/")
+    return f"{host}{path}"
 
 
 def is_official_image_host(url: str, market: str) -> bool:
@@ -180,15 +224,21 @@ _PNG_SIG = b"\x89PNG\r\n\x1a\n"
 
 
 def _sniff_png(data: bytes) -> Tuple[int, int]:
-    """PNG 청크 목록을 실제로 순회해 검증한다.
+    """PNG 청크 목록을 실제로 순회해 검증하고, IHDR 이 **선언한** 크기를 읽는다.
+
+    반환값은 헤더 선언값이다 — 이 모듈은 픽셀을 디코드하지 않으므로
+    (Pillow 금지) 크기를 실측했다고 주장하지 않는다. 대신 IDAT(실제 코딩된
+    데이터)의 존재로 방증하고, 그 사실을 ``DIMENSION_BASIS`` 로 매니페스트에
+    명시한다.
 
     시그니처만 보고 넘어가면 헤더로 감싼 HTML 오류 페이지가 "공식 상품 사진"
-    으로 저장되고, IHDR 이 주장하는 크기를 그대로 믿으면 **관측이 아니라 선언**
-    을 기록하게 된다. 그래서 여기서는:
+    으로 저장된다. 그래서 여기서는:
 
     * 청크 (길이/태그/데이터/CRC) 를 끝까지 걸어가고,
-    * IHDR CRC 를 검증하고,
-    * IDAT(실제 픽셀 데이터) 가 최소 1개 있어야 하며,
+    * **모든** 청크의 CRC 를 검증하며 (세 태그만 검사하면 공격자 바이트가
+      보조 청크에 실려 그대로 통과한다),
+    * 알려진 PNG 청크 태그(``PNG_ALLOWED_CHUNKS``) 만 허용하고,
+    * IDAT(실제 코딩된 데이터) 가 최소 1개 있어야 하며,
     * 청크 길이 합이 페이로드를 **정확히** 소비해야 한다
       (뒤에 쓰레기가 붙어도, 모자라도 거부).
 
@@ -219,12 +269,17 @@ def _sniff_png(data: bytes) -> Tuple[int, int]:
         (declared_crc,) = struct.unpack(
             ">I", data[pos + 8 + length:pos + 12 + length])
 
-        if tag in (b"IHDR", b"IEND", b"IDAT"):
-            actual = zlib.crc32(tag + body) & 0xFFFFFFFF
-            if actual != declared_crc:
-                raise NotAnImageError(
-                    f"PNG {tag!r} 청크 CRC 불일치 (선언 {declared_crc:#010x} != "
-                    f"실제 {actual:#010x}) — 손상되었거나 이미지가 아니다")
+        if tag not in PNG_ALLOWED_CHUNKS:
+            raise NotAnImageError(
+                f"PNG 에 알 수 없는 청크 태그 {tag!r} 가 있다 — 임의 바이트를 "
+                "이미지에 실어 나르는 통로가 되므로 허용하지 않는다")
+
+        # 태그를 가리지 않고 **모든** 청크의 CRC 를 검증한다.
+        actual = zlib.crc32(tag + body) & 0xFFFFFFFF
+        if actual != declared_crc:
+            raise NotAnImageError(
+                f"PNG {tag!r} 청크 CRC 불일치 (선언 {declared_crc:#010x} != "
+                f"실제 {actual:#010x}) — 손상되었거나 이미지가 아니다")
 
         if tag == b"IHDR":
             if seen_ihdr or pos != 8 or length != 13:
@@ -252,7 +307,7 @@ def _sniff_png(data: bytes) -> Tuple[int, int]:
     if not seen_idat:
         raise NotAnImageError(
             "PNG 에 IDAT(실제 픽셀 데이터) 청크가 없다 — 래퍼만 있고 이미지가 없다. "
-            "IHDR 이 주장하는 크기는 관측된 값이 아니므로 신뢰하지 않는다")
+            "IHDR 이 주장하는 크기는 선언일 뿐이므로 그것만으로는 신뢰하지 않는다")
     return width, height
 
 
@@ -294,53 +349,21 @@ def _sniff_jpeg(data: bytes) -> Tuple[int, int]:
         stream.seek(max(length - 2, 0), os.SEEK_CUR)
 
 
-_WEBP_MIN = 12 + 8
-
-
-def _sniff_webp(data: bytes) -> Tuple[int, int]:
-    """RIFF/WEBP 의 VP8 / VP8L / VP8X 헤더에서 캔버스 크기를 읽는다."""
-    if len(data) < _WEBP_MIN:
-        raise TruncatedAssetError(f"WebP 헤더가 잘렸다: {len(data)} 바이트")
-    (riff_size,) = struct.unpack("<I", data[4:8])
-    if data[8:12] != b"WEBP":
-        raise NotAnImageError("RIFF 컨테이너지만 WEBP 가 아니다")
-    if riff_size + 8 != len(data):
-        raise TruncatedAssetError(
-            f"WebP RIFF 길이 {riff_size} 가 실제 {len(data) - 8} 와 다르다 — 잘린 다운로드")
-
-    tag = data[12:16]
-    (chunk_size,) = struct.unpack("<I", data[16:20])
-    body = data[20:20 + chunk_size]
-    if len(body) < chunk_size:
-        raise TruncatedAssetError(f"WebP {tag!r} 청크 본문이 잘렸다")
-
-    if tag == b"VP8 ":
-        if len(body) < 10 or body[3:6] != b"\x9d\x01\x2a":
-            raise NotAnImageError("WebP VP8 키프레임 시작 코드가 없다")
-        width = struct.unpack("<H", body[6:8])[0] & 0x3FFF
-        height = struct.unpack("<H", body[8:10])[0] & 0x3FFF
-        return width, height
-    if tag == b"VP8L":
-        if len(body) < 5 or body[0] != 0x2F:
-            raise NotAnImageError("WebP VP8L 시그니처 바이트가 없다")
-        (bits,) = struct.unpack("<I", body[1:5])
-        return (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
-    if tag == b"VP8X":
-        if len(body) < 10:
-            raise TruncatedAssetError("WebP VP8X 헤더가 잘렸다")
-        width = int.from_bytes(body[4:7], "little") + 1
-        height = int.from_bytes(body[7:10], "little") + 1
-        return width, height
-    raise NotAnImageError(f"알 수 없는 WebP 청크 타입: {tag!r}")
-
-
 def sniff_image(data: bytes) -> Tuple[str, int, int]:
-    """바이트에서 (포맷, 너비, 높이) 를 직접 읽는다.
+    """바이트에서 (포맷, **선언된** 너비, **선언된** 높이) 를 직접 읽는다.
 
     확장자와 Content-Type 헤더는 전혀 보지 않는다 — 오직 실제 바이트만 본다.
     이미지가 아니면 NotAnImageError, 잘렸으면 TruncatedAssetError.
-    관측된 크기가 0 이면(픽셀이 없으면) 여기서 바로 거부한다 —
-    하류의 MIN_ASSET_DIMENSION 에 떠넘기지 않는다.
+
+    크기는 PNG IHDR / JPEG SOF 가 선언한 값이며, 실제 코딩된 데이터의 존재로
+    방증될 뿐 디코드로 실측되지 않는다 (``DIMENSION_BASIS`` 참조).
+    선언 크기가 0 이면 여기서 바로 거부한다 — 하류의 MIN_ASSET_DIMENSION 에
+    떠넘기지 않는다.
+
+    WebP 는 **지원하지 않는다**. RIFF 헤더는 캔버스 크기를 선언만 하고
+    30바이트 파일도 4000x4000 을 주장할 수 있어서, 파서를 두면 PNG 경로에서
+    막은 위조가 WebP 경로로 그대로 돌아온다. 표준 라이브러리만으로 PNG 수준의
+    엄격함을 낼 수 없으므로 절반짜리 파서를 남기는 대신 삭제했다.
     """
     if not isinstance(data, (bytes, bytearray)):
         raise NotAnImageError(f"바이트가 아니다: {type(data)}")
@@ -351,8 +374,6 @@ def sniff_image(data: bytes) -> Tuple[str, int, int]:
         fmt, (width, height) = "png", _sniff_png(data)
     elif data.startswith(b"\xff\xd8\xff"):
         fmt, (width, height) = "jpeg", _sniff_jpeg(data)
-    elif data.startswith(b"RIFF") and data[8:12] == b"WEBP":
-        fmt, (width, height) = "webp", _sniff_webp(data)
     else:
         head = data[:64]
         raise NotAnImageError(
@@ -361,7 +382,7 @@ def sniff_image(data: bytes) -> Tuple[str, int, int]:
             f"선두 바이트: {head!r}")
     if width <= 0 or height <= 0:
         raise AssetDimensionError(
-            f"관측된 픽셀 크기가 {width}x{height} 다 — 픽셀이 없는 이미지는 "
+            f"선언된 픽셀 크기가 {width}x{height} 다 — 픽셀이 없는 이미지는 "
             "공식 상품 사진이 될 수 없다")
     return fmt, width, height
 
@@ -511,7 +532,11 @@ def _existing_takedowns(manifest_path: str) -> List[Dict[str, Any]]:
 
 
 def _takedown_denylist(takedowns: List[Dict[str, Any]]) -> Tuple[set, set]:
-    """takedown 대장에서 (URL 집합, sha256 집합) denylist 를 만든다."""
+    """takedown 대장에서 (정규화된 URL 집합, sha256 집합) denylist 를 만든다.
+
+    URL 은 반드시 ``normalize_url`` 를 통과시킨다. 원시 문자열로 비교하면
+    ``?v=2`` 하나만 붙여도 삭제 요청된 자산이 다시 수집된다.
+    """
     urls, digests = set(), set()
     for entry in takedowns:
         if not isinstance(entry, dict):
@@ -519,7 +544,7 @@ def _takedown_denylist(takedowns: List[Dict[str, Any]]) -> Tuple[set, set]:
         for key in ("source_url", "final_url"):
             value = entry.get(key)
             if value:
-                urls.add(value)
+                urls.add(normalize_url(value))
         digest = entry.get("sha256")
         if digest:
             digests.add(digest)
@@ -582,11 +607,11 @@ def acquire_product_assets(product: Dict[str, Any], workspace: str, *,
     denied_urls, denied_sha256 = _takedown_denylist(prior_takedowns)
 
     for i, clean in enumerate(cleaned):
-        if clean["source_url"] in denied_urls:
+        if normalize_url(clean["source_url"]) in denied_urls:
             raise AssetTakedownError(
                 f"official_image_provenance[{i}].source_url "
                 f"{clean['source_url']!r} 는 이미 삭제 요청된(takedown) 자산이다 — "
-                "다시 수집하지 않는다")
+                "다시 수집하지 않는다 (쿼리·스킴·후행 슬래시·대소문자 변형 포함)")
 
     dispatch = fetcher or _requests_fetcher
     staged: List[Tuple[Dict[str, Any], bytes]] = []
@@ -614,6 +639,12 @@ def acquire_product_assets(product: Dict[str, Any], workspace: str, *,
         data = bytes(data)
 
         final_url = resp.get("final_url") or url
+        # 리다이렉트 최종 URL 도 denylist 대조 대상이다 — 삭제된 자산을
+        # 다른 URL 로 리다이렉트시켜 되돌려주는 우회를 막는다.
+        if normalize_url(final_url) in denied_urls:
+            raise AssetTakedownError(
+                f"{url} 의 리다이렉트 최종 URL {final_url!r} 가 이미 삭제 "
+                "요청된 자산이다 — 다시 수집하지 않는다")
         # 리다이렉트 대상도 같은 allowlist 로 검증한다 — 선언된 URL 만 보면
         # CDN 에서 임의 호스트로 튕겨나가는 경로가 열린다.
         require_official_image_host(
@@ -635,7 +666,7 @@ def acquire_product_assets(product: Dict[str, Any], workspace: str, *,
             raise NotAnImageError(f"{url} 포맷 {fmt!r} 는 허용되지 않는다")
         if width < MIN_ASSET_DIMENSION or height < MIN_ASSET_DIMENSION:
             raise AssetDimensionError(
-                f"{url} 관측 크기 {width}x{height} 가 최소 "
+                f"{url} 선언 크기 {width}x{height} 가 최소 "
                 f"{MIN_ASSET_DIMENSION}px 미만이다")
 
         digest = sha256_bytes(data)
@@ -649,8 +680,14 @@ def acquire_product_assets(product: Dict[str, Any], workspace: str, *,
             # source_sha256 는 바이트 해시와 동일한 값의 계약상 별칭이다.
             "source_sha256": digest,
             "format": fmt,
+            # width/height 는 **헤더가 선언한** 값이다. 이 모듈은 픽셀을
+            # 디코드하지 않으므로(Pillow 금지) 실측했다고 주장하지 않는다 —
+            # dimension_basis 가 그 근거를 명시한다.
             "width": width,
             "height": height,
+            "declared_width": width,
+            "declared_height": height,
+            "dimension_basis": DIMENSION_BASIS,
             "bytes": len(data),
             "fetched_at": _now(),
             "final_url": final_url,
@@ -788,7 +825,9 @@ def to_product_evidence(manifest: Dict[str, Any]) -> ProductEvidence:
         source_sha256=[a["sha256"] for a in assets],
         rights=dict(first["rights"]),
         provenance=[{
-            "quote": f"공식 상품 페이지 이미지 {a['width']}x{a['height']} {a['format']}",
+            "quote": (f"공식 상품 페이지 이미지 {a['format']} "
+                      f"(헤더 선언 크기 {a['width']}x{a['height']}, "
+                      f"basis={a.get('dimension_basis', DIMENSION_BASIS)})"),
             "source_url": a["source_url"],
             "original_location": a["official_page_url"],
         } for a in assets],
