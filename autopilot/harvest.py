@@ -31,6 +31,9 @@ ASIDE_TIMEOUT = 1800  # 브라우저 조사는 느리다. 30분.
 # 실측(2026-08-28): 단일 주제 2건 ≈ 2분 30초. 주제 2개 × 3건은 15분을 넘겨
 # 타임아웃으로 전량 유실됐다. 배치는 작게, 여러 번 도는 편이 안전하다.
 MAX_TOPICS_PER_BATCH = 1
+# 같은 주제가 1회차 타임아웃 → 2회차 성공한 실측 사례가 있다(body_image).
+# 주제 난이도가 아니라 실행별 변동이므로 1회 재시도한다.
+MAX_ATTEMPTS_PER_TOPIC = 2
 
 # 거리별 수집 가이드 — Aside에게 "어디를 뒤질지" 알려준다.
 TOPIC_SOURCES = {
@@ -244,15 +247,28 @@ def harvest_once(cfg, topics=None, count=3, dry_run=False, account="u0"):
         return {"harvested": 0, "topics": topics, "dry_run": True}
 
     total, failures = 0, []
-    for topic in topics:
+    pending = list(topics)
+    attempts = {}
+    while pending:
+        topic = pending.pop(0)
+        attempts[topic] = attempts.get(topic, 0) + 1
         stamp = time.strftime("%Y%m%d%H%M")
         prompt = build_prompt([topic], count=count, stamp=stamp)
-        log(f"증거 수집 시작: {topic} (목표 {count}건)")
+        log(f"증거 수집 시작: {topic} (목표 {count}건"
+            + (f", {attempts[topic]}회차)" if attempts[topic] > 1 else ")"))
         try:
             raw = run_aside(prompt, account=account)
         except subprocess.TimeoutExpired:
-            log(f"수집 타임아웃: {topic} — 다음 주제로 계속")
-            failures.append({"topic": topic, "why": "timeout"})
+            # 실측: 같은 주제가 1회차 타임아웃 → 2회차 성공한 사례가 있다
+            # (2026-08-28 body_image). 주제 난이도가 아니라 실행별 변동이므로
+            # 한 번은 다시 시도하되, 다른 주제를 먼저 처리한 뒤 뒤로 돌린다.
+            if attempts[topic] < MAX_ATTEMPTS_PER_TOPIC:
+                log(f"수집 타임아웃: {topic} — 뒤로 미루고 재시도 예정")
+                pending.append(topic)
+            else:
+                log(f"수집 타임아웃: {topic} — {attempts[topic]}회 실패, 포기")
+                failures.append({"topic": topic, "why": "timeout",
+                                 "attempts": attempts[topic]})
             continue
         except Exception as e:
             record_error(cfg, "harvest.run_aside", e)

@@ -140,11 +140,32 @@ def main():
             res3 = harvest.harvest_once(cfg, topics=["discipline", "sleep"], count=1)
         finally:
             harvest.run_aside = orig
-        check("주제 수만큼 개별 호출(한 번에 몰지 않음)", len(calls) == 2)
+        check("주제별로 개별 호출(한 번에 몰지 않음) — 2주제+재시도 1회=3",
+              len(calls) == 3)
         check("타임아웃 주제를 건너뛰고 계속", res3["harvested"] == 1)
-        check("실패가 기록됨",
+        check("2회 시도 후 포기하고 기록",
               len(res3["failures"]) == 1
-              and res3["failures"][0]["why"] == "timeout")
+              and res3["failures"][0]["why"] == "timeout"
+              and res3["failures"][0]["attempts"] == 2)
+        check("무한 재시도하지 않음(호출 총량 제한)", len(calls) <= 4)
+
+        print("\n[7-1] 타임아웃 1회차 실패 → 2회차 성공 시 살려낸다")
+        seen = []
+
+        def flaky_once(prompt, account="u0", timeout=None):
+            seen.append(prompt)
+            if len(seen) == 1:
+                raise sp.TimeoutExpired("aside", 1800)
+            return ('[{"topic":"sleep","claim":"c","counter_claim":"cc",'
+                    '"confidence":"weak","sources":[]}]')
+
+        harvest.run_aside = flaky_once
+        try:
+            res5 = harvest.harvest_once(cfg, topics=["sleep"], count=1)
+        finally:
+            harvest.run_aside = orig
+        check("재시도로 수확 성공", res5["harvested"] == 1)
+        check("재시도 성공은 실패로 남기지 않음", not res5["failures"])
 
         print("\n[8] 적재 2차 방어 — 빈 껍데기는 원장에 쌓지 않는다")
         before = len(read_jsonl(state_path(cfg, "evidence.jsonl")))
