@@ -56,6 +56,16 @@ BENEFIT_MAX_CHARS = 80
 REQUIRED_CUT_TEXT_FIELDS = ("action", "benefit", "claim", "voice_line",
                             "first_frame_prompt", "motion_prompt")
 
+#: 언어 게이트 대상 — 시장에 노출되거나 생성 모델에 전달되는 모든 텍스트.
+#: KR 스토리보드에 영어 benefit·프롬프트가 섞이는 구멍을 막는다.
+MARKET_FACING_TEXT_FIELDS = ("action", "benefit", "claim", "voice_line",
+                             "first_frame_prompt", "motion_prompt")
+
+#: 금지 표현 스캔 대상 — 이미지/영상 모델에 도달하는 프롬프트까지 포함한다.
+#: 효능 암시를 문장이 아니라 그림으로 렌더링하는 우회로를 막는다.
+FORBIDDEN_SCAN_TEXT_FIELDS = ("action", "benefit", "claim", "voice_line",
+                              "first_frame_prompt", "motion_prompt")
+
 #: 제휴 고지 — SSOT 부록 A 불변 문구. 시장별로 반드시 하나가 붙는다.
 DISCLOSURE_TEXT = {
     "KR": "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.",
@@ -221,18 +231,19 @@ def _assert_no_markers(text: str, markers, where: str, hint: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def compute_baseline_from_metrics(path: str, market: str, metric: str = "views",
-                                  pattern_value: Optional[float] = None
-                                  ) -> Dict[str, Any]:
-    """``state/metrics.jsonl`` 실측 기록에서 기준선을 계산한다.
+#: 재집계 부동소수 비교 허용 오차.
+BASELINE_TOLERANCE = 1e-6
 
-    기록이 없으면 그럴듯한 숫자를 만들어 넣지 않고 ``BaselineError`` 로 죽는다.
+#: 기준선 유도 방식 — 현재는 산술 평균 하나뿐. 모르는 method 는 거부한다.
+_BASELINE_METHODS = ("mean",)
+
+
+def _aggregate_metric(path: str, market: str, metric: str) -> List[float]:
+    """``metrics.jsonl`` 에서 (market, metric) 실측값만 뽑아낸다.
+
+    집계는 이 함수 하나뿐이다 — 계산 경로와 검증 경로가 같은 코드를 쓰기 때문에
+    ``assert_measured_baseline`` 이 진짜로 재유도할 수 있다.
     """
-    vc._require_market(market)
-    if not path or not os.path.isfile(path):
-        raise BaselineError(
-            f"metrics 파일이 없다: {path!r} — 기준선을 지어내지 않는다")
-
     values: List[float] = []
     with open(path, "r", encoding="utf-8") as fh:
         for line in fh:
@@ -252,34 +263,100 @@ def compute_baseline_from_metrics(path: str, market: str, metric: str = "views",
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 continue
             values.append(float(value))
+    return values
+
+
+def compute_baseline_from_metrics(path: str, market: str, metric: str = "views",
+                                  pattern_value: Optional[float] = None
+                                  ) -> Dict[str, Any]:
+    """``state/metrics.jsonl`` 실측 기록에서 기준선을 계산한다.
+
+    기록이 없으면 그럴듯한 숫자를 만들어 넣지 않고 ``BaselineError`` 로 죽는다.
+
+    ``pattern_value`` 는 **측정된 값을 넘겨줄 때만** 채워진다. 넘겨주지 않으면
+    ``None`` 으로 남는다 — 기준선 평균을 대신 넣으면 "패턴이 기준선과 정확히
+    같은 성과를 냈다" 는 존재하지 않는 측정 결과를 지어내는 것이다.
+    """
+    vc._require_market(market)
+    if not path or not os.path.isfile(path):
+        raise BaselineError(
+            f"metrics 파일이 없다: {path!r} — 기준선을 지어내지 않는다")
+
+    values = _aggregate_metric(path, market, metric)
 
     if not values:
         raise BaselineError(
             f"{path} 에 market={market} metric={metric} 실측 기록이 없다 "
             f"— 기준선을 손으로 채우지 말 것 (2026-08-27 플레이스홀더 사고)")
 
-    baseline = {
+    if pattern_value is not None and (isinstance(pattern_value, bool)
+                                      or not isinstance(pattern_value, (int, float))):
+        raise BaselineError(
+            f"pattern_value 는 측정된 수치여야 한다: {pattern_value!r}")
+
+    return {
         "metric": metric,
         "baseline_value": sum(values) / len(values),
-        "pattern_value": pattern_value if pattern_value is not None
-                         else sum(values) / len(values),
+        # 측정되지 않았으면 None 그대로 — 절대 평균으로 메우지 않는다.
+        "pattern_value": float(pattern_value) if pattern_value is not None else None,
         "sample_size": len(values),
         "source": path,
         "compared_at": vc.datetime.now(vc.timezone.utc).astimezone().isoformat(),
-        "derivation": "mean of recorded metrics.jsonl insights",
+        "derivation": {
+            "method": "mean",
+            "market": market,
+            "metric": metric,
+            "field": "insights",
+        },
     }
-    return baseline
+
+
+def compute_baseline_from_cfg(cfg: Dict[str, Any], market: str,
+                              metric: str = "views",
+                              pattern_value: Optional[float] = None
+                              ) -> Dict[str, Any]:
+    """설정의 ``video_storyboard.metrics_path`` 로 기준선을 계산한다.
+
+    설정 키가 없으면 기본 경로로 조용히 넘어가지 않고 크게 실패한다 — 조용히
+    무시되는 설정 키가 운영자를 놀라게 하는 방식이다.
+    """
+    block = (cfg or {}).get("video_storyboard") or {}
+    path = block.get("metrics_path")
+    if not isinstance(path, str) or not path.strip():
+        raise StoryboardError(
+            "config.video_storyboard.metrics_path 가 없다 — 기준선 출처를 "
+            "설정에서 명시해야 한다 (기본값으로 넘어가지 않는다)")
+    return compute_baseline_from_metrics(path.strip(), market, metric,
+                                         pattern_value)
 
 
 def assert_measured_baseline(baseline: Any) -> Dict[str, Any]:
-    """기준선이 실측 파일에서 유도됐는지 확인한다. 손으로 적은 값은 거부."""
+    """기준선이 실측 파일에서 **실제로 유도됐는지** 확인한다.
+
+    문자열 휴리스틱이 아니라 재유도다: ``derivation`` 이 기술한 방식대로
+    ``source`` 를 다시 집계해서 ``baseline_value`` · ``sample_size`` 가 정말
+    그 파일에서 나오는지 대조한다. 손으로 적은 숫자는 실존 파일 경로를
+    적어 넣어도 통과하지 못한다 (2026-08-27 플레이스홀더 사고 재발 방지).
+    """
     if not isinstance(baseline, dict):
         raise BaselineError(f"baseline 은 dict 여야 한다: {baseline!r}")
-    for key in ("metric", "baseline_value", "pattern_value", "sample_size",
-                "source", "compared_at"):
+    for key in ("metric", "baseline_value", "sample_size", "source",
+                "compared_at", "derivation"):
         value = baseline.get(key)
         if value is None or (isinstance(value, str) and not value.strip()):
             raise BaselineError(f"baseline.{key} 가 비어 있다")
+
+    # pattern_value 는 None 이 허용된다 (미측정). 다만 있다면 반드시 수치다.
+    if "pattern_value" not in baseline:
+        raise BaselineError(
+            "baseline.pattern_value 키가 없다 — 미측정이면 명시적으로 None 이어야 한다")
+    pattern_value = baseline["pattern_value"]
+    if pattern_value is not None and (isinstance(pattern_value, bool)
+                                      or not isinstance(pattern_value, (int, float))):
+        raise BaselineError(
+            f"baseline.pattern_value 는 측정된 수치이거나 None 이어야 한다: "
+            f"{pattern_value!r}")
+
     source = str(baseline["source"])
     lowered = source.lower()
     for marker in _PLACEHOLDER_SOURCE_MARKERS:
@@ -294,6 +371,49 @@ def assert_measured_baseline(baseline: Any) -> Dict[str, Any]:
     if not isinstance(baseline["sample_size"], int) or baseline["sample_size"] < 1:
         raise BaselineError(f"baseline.sample_size 가 유효하지 않다: "
                             f"{baseline['sample_size']!r}")
+
+    # --- 여기서부터가 진짜 검증: source 를 다시 집계한다 -------------------
+    derivation = baseline["derivation"]
+    if not isinstance(derivation, dict):
+        raise BaselineError(
+            f"baseline.derivation 은 유도 방식을 기술한 dict 여야 한다: "
+            f"{derivation!r}")
+    method = derivation.get("method")
+    if method not in _BASELINE_METHODS:
+        raise BaselineError(
+            f"알 수 없는 baseline.derivation.method: {method!r} "
+            f"— 허용: {list(_BASELINE_METHODS)}")
+    market = derivation.get("market")
+    metric = derivation.get("metric", baseline["metric"])
+    if not isinstance(market, str) or not market.strip():
+        raise BaselineError("baseline.derivation.market 이 없다 — 재집계 불가")
+    if metric != baseline["metric"]:
+        raise BaselineError(
+            f"baseline.metric 과 derivation.metric 이 다르다: "
+            f"{baseline['metric']!r} != {metric!r}")
+
+    try:
+        values = _aggregate_metric(source, str(market).upper(), str(metric))
+    except OSError as exc:
+        raise BaselineError(
+            f"baseline.source 재집계 실패: {source!r} :: {exc}") from exc
+
+    if not values:
+        raise BaselineError(
+            f"재집계 결과가 비어 있다: {source!r} 에 market={market} "
+            f"metric={metric} 실측 기록이 없다 — 기준선이 이 파일에서 나올 수 없다")
+
+    recomputed_value = sum(values) / len(values)
+    if abs(recomputed_value - float(baseline["baseline_value"])) > BASELINE_TOLERANCE:
+        raise BaselineError(
+            f"baseline_value 가 source 재집계 결과와 다르다: "
+            f"기록 {baseline['baseline_value']!r} != 재집계 {recomputed_value!r} "
+            f"({source}) — 손으로 적은 수치는 거부한다")
+    if len(values) != baseline["sample_size"]:
+        raise BaselineError(
+            f"sample_size 가 source 재집계 결과와 다르다: "
+            f"기록 {baseline['sample_size']!r} != 재집계 {len(values)} "
+            f"({source}) — 손으로 적은 수치는 거부한다")
     return baseline
 
 
@@ -354,7 +474,18 @@ class GroundedStoryboard:
         return sum(c.duration_seconds for c in self.cuts)
 
     def as_contract_storyboard(self) -> vc.Storyboard:
-        """상류 계약 타입으로 투영 — 계약 검증기를 그대로 재사용할 수 있다."""
+        """상류 계약 타입으로 **검증 전용** 투영 — 핸드오프 타입이 아니다.
+
+        .. warning::
+           이 투영은 손실적이다. ``disclosure``, ``evidence_ids``,
+           ``evidence_quote``/``evidence_source_url``, ``claim``,
+           ``voice_line``, ``benefit``, ``action``, ``baseline`` 이 전부
+           떨어져 나가고 ``first_frame_prompt`` 만 ``CutPrompt.prompt`` 로
+           남는다. 계약 검증기를 재사용하려고 만든 것이며, 후속 태스크에
+           넘기는 핸드오프 타입으로 **절대 쓰지 말 것** — 고지 의무와 근거
+           결속이 조용히 사라진다. 핸드오프에는 ``to_dict()`` 를 쓴다.
+        """
+
         return vc.Storyboard(
             storyboard_id=self.storyboard_id,
             run_id=self.run_id,
@@ -408,11 +539,19 @@ Return JSON: {"cuts": [{"index", "duration_seconds", "action", "benefit",
 """
 
 
-def _default_model(system_prompt: str, payload: Dict[str, Any]) -> Any:
-    """운영 경로: 기존 OpenRouter 호출 계층을 재사용한다 (새 HTTP 클라이언트 금지)."""
-    import generate
-    return generate.llm_call(_default_model.cfg, system_prompt, payload,
-                             json_mode=True, temperature=0.4)
+def _default_model(cfg: Dict[str, Any]) -> Callable[[str, Dict[str, Any]], Any]:
+    """운영 경로 시임 팩토리 — cfg 를 **클로저로** 묶어 호출자를 돌려준다.
+
+    함수 속성에 cfg 를 얹으면 모듈 전역 가변 상태가 되어 재진입·동시 실행에서
+    서로의 설정을 덮어쓴다. 그래서 호출마다 새 클로저를 만든다.
+    """
+
+    def _call(system_prompt: str, payload: Dict[str, Any]) -> Any:
+        import generate
+        return generate.llm_call(cfg, system_prompt, payload,
+                                 json_mode=True, temperature=0.4)
+
+    return _call
 
 
 # ---------------------------------------------------------------------------
@@ -473,10 +612,14 @@ def _validate_cut(raw: Any, position: int, market: str,
               for name in REQUIRED_CUT_TEXT_FIELDS}
 
     # 1) 시장·언어 게이트 (근거 검사보다 먼저 — 언어가 틀리면 언어로 죽는다)
-    _assert_language(fields["voice_line"], market, f"{where}.voice_line")
+    #    시장에 노출되거나 이미지/영상 모델에 도달하는 모든 텍스트를 덮는다.
+    for name in MARKET_FACING_TEXT_FIELDS:
+        _assert_language(fields[name], market, f"{where}.{name}")
 
-    # 2) 금지 표현
-    for name in ("voice_line", "claim", "benefit"):
+    # 2) 금지 표현 — 말로 하든 그림으로 그리든 효능 암시는 막는다.
+    #    first_frame_prompt/motion_prompt 가 빠지면 효능을 시각적으로
+    #    렌더링하는 우회로가 열린다.
+    for name in FORBIDDEN_SCAN_TEXT_FIELDS:
         _assert_no_forbidden_claim(fields[name], f"{where}.{name}")
 
     # 3) 컷 1개 = 동작 1개 = 효용 1개
@@ -499,10 +642,22 @@ def _validate_cut(raw: Any, position: int, market: str,
         raise EvidenceError(
             f"{where}.evidence_id={evidence_id!r} 가 공급된 근거에 없다 "
             f"(허용: {sorted(index_by_id)})")
-    if not _claim_is_supported(fields["claim"], entry.get("quote", "")):
+    # 근거 항목의 형태도 신뢰하지 않는다 — 빈 값으로 흘려보내지 않고 죽는다.
+    quote = entry.get("quote")
+    if not isinstance(quote, str) or not quote.strip():
+        raise EvidenceError(
+            f"{where}.evidence_id={evidence_id!r} 근거 항목에 quote 가 없다: "
+            f"{entry!r}")
+    source_url = entry.get("source_url")
+    if not isinstance(source_url, str) or not source_url.strip():
+        raise RightsError(
+            f"{where}.evidence_id={evidence_id!r} 근거 항목에 source_url 이 없다 "
+            f"— 출처 없는 근거는 근거가 아니다: {entry!r}")
+
+    if not _claim_is_supported(fields["claim"], quote):
         raise EvidenceError(
             f"{where}.claim 이 근거 원문으로 뒷받침되지 않는다 — "
-            f"claim={fields['claim']!r} quote={entry.get('quote')!r}")
+            f"claim={fields['claim']!r} quote={quote!r}")
     if _normalise(fields["claim"]) not in _normalise(fields["voice_line"]):
         raise EvidenceError(
             f"{where}.voice_line 이 근거 주장을 담고 있지 않다: "
@@ -512,8 +667,8 @@ def _validate_cut(raw: Any, position: int, market: str,
         index=index,
         duration_seconds=CUT_DURATION_SECONDS,
         evidence_id=evidence_id,
-        evidence_quote=entry.get("quote", ""),
-        evidence_source_url=entry.get("source_url", ""),
+        evidence_quote=quote.strip(),
+        evidence_source_url=source_url.strip(),
         **fields,
     )
 
@@ -525,10 +680,32 @@ def disclosure_for(market: str) -> Dict[str, Any]:
             "placement": "on_screen_and_caption"}
 
 
+def resolve_complexity(cfg: Dict[str, Any],
+                       complexity: Optional[str] = None) -> str:
+    """복잡도 결정: 명시 인자 > ``config.video_storyboard.default_complexity`` > standard.
+
+    설정에 이상한 값이 들어 있으면 조용히 기본값으로 되돌아가지 않고 죽는다.
+    """
+    if complexity is not None:
+        chosen, origin = complexity, "인자"
+    else:
+        block = (cfg or {}).get("video_storyboard") or {}
+        configured = block.get("default_complexity")
+        if configured is None:
+            chosen, origin = DEFAULT_COMPLEXITY, "기본값"
+        else:
+            chosen, origin = configured, "config.video_storyboard.default_complexity"
+    if chosen not in COMPLEXITY_CUTS:
+        raise StoryboardError(
+            f"알 수 없는 complexity ({origin}): {chosen!r} "
+            f"— 허용: {sorted(COMPLEXITY_CUTS)}")
+    return chosen
+
+
 def generate_storyboard(cfg: Dict[str, Any], evidence: Optional[ProductEvidence],
                         market: str, run_id: str, content_draft_id: str,
                         viral_pattern_ids: List[str],
-                        *, complexity: str = DEFAULT_COMPLEXITY,
+                        *, complexity: Optional[str] = None,
                         model: Optional[Callable] = None,
                         storyboard_id: Optional[str] = None,
                         baseline: Optional[Dict[str, Any]] = None,
@@ -537,6 +714,9 @@ def generate_storyboard(cfg: Dict[str, Any], evidence: Optional[ProductEvidence]
 
     ``model`` 은 테스트 주입 시임 (``codex_image_bridge.runner=`` 와 같은 패턴).
     생략하면 기존 OpenRouter 호출 계층을 쓴다.
+
+    ``complexity`` 를 생략하면 ``config.video_storyboard.default_complexity``
+    를 따르고, 그것도 없으면 ``standard`` (10초/2컷) 다.
     """
     # --- 상류 계보 검증 (모델을 부르기 전에 전부 확인) -------------------
     vc._require_market(market)
@@ -547,9 +727,7 @@ def generate_storyboard(cfg: Dict[str, Any], evidence: Optional[ProductEvidence]
     for i, pid in enumerate(viral_pattern_ids):
         vc._require_id(pid, f"viral_pattern_ids[{i}]")
 
-    if complexity not in COMPLEXITY_CUTS:
-        raise StoryboardError(
-            f"알 수 없는 complexity: {complexity!r} — 허용: {sorted(COMPLEXITY_CUTS)}")
+    complexity = resolve_complexity(cfg, complexity)
     cut_count = COMPLEXITY_CUTS[complexity]
 
     index_by_id = evidence_index(evidence)
@@ -590,8 +768,7 @@ def generate_storyboard(cfg: Dict[str, Any], evidence: Optional[ProductEvidence]
 
     caller = model
     if caller is None:
-        _default_model.cfg = cfg
-        caller = _default_model
+        caller = _default_model(cfg)
 
     response = _coerce_response(caller(SYSTEM_PROMPT, payload))
     raw_cuts = response["cuts"]

@@ -38,9 +38,8 @@
   },
   "video_storyboard": {
     "default_complexity": "standard",
-    "voice_line_max_chars": 120,
     "metrics_path": "state/metrics.jsonl",
-    "_안내": "I2V 마이크로 스토리보드(Task 8). default_complexity: simple=5초/1컷, standard=10초/2컷, complex=15초/3컷 — 총 길이는 5·10·15초만 존재하며 컷당 5초는 video_contracts 고정 상수라 여기서 못 바꾼다. metrics_path: 기준선 비교 수치를 계산하는 실측 지표 파일 — 값을 손으로 적어 넣는 것은 금지(2026-08-27 플레이스홀더 사고). 근거·고지 규칙은 코드 하드코딩이라 설정으로 완화할 수 없다."
+    "_안내": "I2V 마이크로 스토리보드(Task 8). default_complexity: simple=5초/1컷, standard=10초/2컷, complex=15초/3컷 — generate_storyboard(complexity=...) 를 생략하면 이 값이 실제로 컷 수를 정한다(코드 배선 완료). 인자를 주면 인자가 이긴다. 알 수 없는 값이면 조용히 기본값으로 돌아가지 않고 StoryboardError 로 죽는다. 컷당 5초는 video_contracts 고정 상수라 여기서 못 바꾼다. metrics_path: compute_baseline_from_cfg() 가 읽는 실측 지표 파일 — 기준선은 이 파일에서 재집계로 대조 검증되므로 값을 손으로 적어 넣으면 거부된다(2026-08-27 플레이스홀더 사고). 길이 제한·근거·고지·금지표현은 코드 하드코딩이며, 가드레일을 설정으로 완화하는 키는 의도적으로 두지 않는다."
   },
   "paths": {
     "skills": "../heightcue-gemini-skills.md",

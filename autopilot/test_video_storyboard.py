@@ -425,6 +425,224 @@ class TestBaselineProvenance(unittest.TestCase):
         vs.assert_measured_baseline(
             vs.compute_baseline_from_metrics(path, market="KR", metric="views"))
 
+    # --- 유도 재계산: 손으로 적은 숫자는 실존 파일을 가리켜도 통과 못 한다 ---
+
+    def test_hand_typed_numbers_with_real_source_file_rejected(self):
+        """실존 metrics 파일을 source 로 적어도 숫자가 그 파일에서 안 나오면 거부.
+
+        모든 필수 키를 채운 완전한 dict 다 — 빈 필드 검사로 우연히 죽지 않고,
+        오직 재집계 불일치로만 죽어야 한다 (비-공허 테스트).
+        """
+        path = self._metrics([{"country": "KR", "insights": {"views": 100}}])
+        with self.assertRaises(vs.BaselineError) as ctx:
+            vs.assert_measured_baseline({
+                "metric": "views", "baseline_value": 9999, "sample_size": 3,
+                "pattern_value": 12345.0,
+                "source": path, "compared_at": "2026-08-28",
+                "derivation": {"method": "mean", "market": "KR",
+                               "metric": "views"},
+            })
+        self.assertIn("재집계", str(ctx.exception),
+                      "빈 필드/경로 검사로 우연히 죽었을 뿐, 재집계 검증이 없다")
+
+    def test_baseline_without_derivation_rejected(self):
+        path = self._metrics([{"country": "KR", "insights": {"views": 100}}])
+        with self.assertRaises(vs.BaselineError):
+            vs.assert_measured_baseline({
+                "metric": "views", "baseline_value": 100.0, "sample_size": 1,
+                "pattern_value": None,
+                "source": path, "compared_at": "2026-08-28",
+            })
+
+    def test_tampered_baseline_value_rejected(self):
+        path = self._metrics([{"country": "KR", "insights": {"views": 100}},
+                              {"country": "KR", "insights": {"views": 300}}])
+        baseline = vs.compute_baseline_from_metrics(path, market="KR")
+        baseline["baseline_value"] = 250.0
+        with self.assertRaises(vs.BaselineError):
+            vs.assert_measured_baseline(baseline)
+
+    def test_tampered_sample_size_rejected(self):
+        path = self._metrics([{"country": "KR", "insights": {"views": 100}},
+                              {"country": "KR", "insights": {"views": 300}}])
+        baseline = vs.compute_baseline_from_metrics(path, market="KR")
+        baseline["sample_size"] = 50
+        with self.assertRaises(vs.BaselineError):
+            vs.assert_measured_baseline(baseline)
+
+    def test_derivation_market_swap_rejected(self):
+        """derivation.market 을 바꾸면 재집계 결과가 달라져 거부된다."""
+        path = self._metrics([{"country": "KR", "insights": {"views": 100}},
+                              {"country": "US", "insights": {"views": 900}}])
+        baseline = vs.compute_baseline_from_metrics(path, market="KR")
+        baseline["derivation"] = dict(baseline["derivation"], market="US")
+        with self.assertRaises(vs.BaselineError):
+            vs.assert_measured_baseline(baseline)
+
+    # --- pattern_value 를 지어내지 않는다 ---
+
+    def test_pattern_value_is_not_synthesised(self):
+        path = self._metrics([{"country": "KR", "insights": {"views": 100}},
+                              {"country": "KR", "insights": {"views": 300}}])
+        baseline = vs.compute_baseline_from_metrics(path, market="KR")
+        self.assertIsNone(baseline["pattern_value"],
+                          "측정되지 않은 pattern_value 를 기준선 평균으로 지어냈다")
+
+    def test_supplied_pattern_value_is_kept(self):
+        path = self._metrics([{"country": "KR", "insights": {"views": 100}}])
+        baseline = vs.compute_baseline_from_metrics(path, market="KR",
+                                                    pattern_value=777.0)
+        self.assertEqual(baseline["pattern_value"], 777.0)
+        vs.assert_measured_baseline(baseline)
+
+    def test_non_numeric_pattern_value_rejected(self):
+        path = self._metrics([{"country": "KR", "insights": {"views": 100}}])
+        baseline = vs.compute_baseline_from_metrics(path, market="KR")
+        baseline["pattern_value"] = "많이"
+        with self.assertRaises(vs.BaselineError):
+            vs.assert_measured_baseline(baseline)
+
+
+# ---------------------------------------------------------------------------
+# 언어 게이트는 시장에 노출되는 모든 텍스트 필드를 덮는다
+# ---------------------------------------------------------------------------
+
+
+class TestLanguageGateCoversEveryField(unittest.TestCase):
+
+    def _reject(self, field, value):
+        resp = _kr_response(2)
+        resp["cuts"][0][field] = value
+        with self.assertRaises(vs.MarketLanguageError):
+            _generate(resp)
+
+    def test_english_action_in_kr_market_rejected(self):
+        self._reject("action", "a hand places the product on the floor")
+
+    def test_english_benefit_in_kr_market_rejected(self):
+        self._reject("benefit", "quieter evenings for the neighbours")
+
+    def test_english_first_frame_prompt_in_kr_market_rejected(self):
+        self._reject("first_frame_prompt",
+                     "vertical 9:16 frame of one product on a wooden floor")
+
+    def test_english_motion_prompt_in_kr_market_rejected(self):
+        self._reject("motion_prompt", "the camera tilts down slowly")
+
+    def test_korean_action_in_us_market_rejected(self):
+        resp = _us_response(2)
+        resp["cuts"][0]["action"] = "손이 병을 집는다"
+        with self.assertRaises(vs.MarketLanguageError):
+            _generate(resp, market="US", evidence=_evidence("US"))
+
+    def test_korean_first_frame_prompt_in_us_market_rejected(self):
+        resp = _us_response(2)
+        resp["cuts"][0]["first_frame_prompt"] = "세로 9:16 화면, 병 하나"
+        with self.assertRaises(vs.MarketLanguageError):
+            _generate(resp, market="US", evidence=_evidence("US"))
+
+
+# ---------------------------------------------------------------------------
+# 금지 표현 스캔은 이미지·영상 모델에 도달하는 필드까지 덮는다
+# ---------------------------------------------------------------------------
+
+
+class TestForbiddenClaimCoversEveryField(unittest.TestCase):
+
+    def _reject(self, field, value):
+        resp = _kr_response(2)
+        resp["cuts"][0][field] = value
+        with self.assertRaises(vs.ForbiddenClaimError):
+            _generate(resp)
+
+    def test_efficacy_in_action_rejected(self):
+        self._reject("action", "성장 촉진 자세를 취한다")
+
+    def test_efficacy_in_first_frame_prompt_rejected(self):
+        """효능 암시를 그림으로 렌더링하는 경로도 막힌다."""
+        self._reject("first_frame_prompt",
+                     "세로 9:16 화면, 키 크는 성장 그래프가 벽에 걸린 한 장면")
+
+    def test_efficacy_in_motion_prompt_rejected(self):
+        self._reject("motion_prompt", "카메라가 올라가며 키가 커지는 모습을 담는다")
+
+    def test_medical_framing_in_us_prompt_rejected(self):
+        resp = _us_response(2)
+        resp["cuts"][0]["first_frame_prompt"] = (
+            "vertical 9:16 frame of a clinically proven growth chart")
+        with self.assertRaises(vs.ForbiddenClaimError):
+            _generate(resp, market="US", evidence=_evidence("US"))
+
+
+# ---------------------------------------------------------------------------
+# 근거 항목 형태 · 설정 배선
+# ---------------------------------------------------------------------------
+
+
+class TestEvidenceEntryShape(unittest.TestCase):
+
+    def test_provenance_entry_without_source_url_fails_loudly(self):
+        ev = _evidence("KR")
+        ev.provenance[0] = {"quote": KR_QUOTE_1, "original_location": "spec row 1"}
+        with self.assertRaises(vc.ContractError):
+            _generate(_kr_response(2), evidence=ev)
+
+
+class TestContractProjectionIsValidationOnly(unittest.TestCase):
+
+    def test_projection_docstring_warns_it_is_not_a_handoff_type(self):
+        doc = vs.GroundedStoryboard.as_contract_storyboard.__doc__ or ""
+        self.assertIn("검증 전용", doc)
+
+
+class TestConfigIsHonoured(unittest.TestCase):
+
+    def test_default_complexity_from_config_is_used(self):
+        cfg = dict(CFG, video_storyboard={"default_complexity": "complex"})
+        sb = vs.generate_storyboard(cfg, evidence=_evidence("KR"), market="KR",
+                                    run_id="run-1", content_draft_id="draft-1",
+                                    viral_pattern_ids=["vp-1"],
+                                    model=_model(_kr_response(3)))
+        self.assertEqual(len(sb.cuts), 3)
+        self.assertEqual(sb.total_duration_seconds(), 15)
+
+    def test_explicit_complexity_overrides_config(self):
+        cfg = dict(CFG, video_storyboard={"default_complexity": "complex"})
+        sb = vs.generate_storyboard(cfg, evidence=_evidence("KR"), market="KR",
+                                    run_id="run-1", content_draft_id="draft-1",
+                                    viral_pattern_ids=["vp-1"],
+                                    complexity="simple",
+                                    model=_model(_kr_response(1)))
+        self.assertEqual(len(sb.cuts), 1)
+
+    def test_bad_config_complexity_fails_loudly(self):
+        cfg = dict(CFG, video_storyboard={"default_complexity": "epic"})
+        with self.assertRaises(vs.StoryboardError):
+            vs.generate_storyboard(cfg, evidence=_evidence("KR"), market="KR",
+                                   run_id="run-1", content_draft_id="draft-1",
+                                   viral_pattern_ids=["vp-1"],
+                                   model=_model(_kr_response(2)))
+
+    def test_absent_config_block_keeps_standard_default(self):
+        sb = _generate(_kr_response(2))
+        self.assertEqual(sb.complexity, vs.DEFAULT_COMPLEXITY)
+        self.assertEqual(len(sb.cuts), 2)
+
+    def test_metrics_path_from_config_is_used(self):
+        fh = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False,
+                                         encoding="utf-8")
+        fh.write(json.dumps({"country": "KR", "insights": {"views": 100}}) + "\n")
+        fh.close()
+        self.addCleanup(os.unlink, fh.name)
+        cfg = dict(CFG, video_storyboard={"metrics_path": fh.name})
+        baseline = vs.compute_baseline_from_cfg(cfg, market="KR")
+        self.assertEqual(baseline["source"], fh.name)
+        vs.assert_measured_baseline(baseline)
+
+    def test_missing_metrics_path_config_fails_loudly(self):
+        with self.assertRaises(vs.StoryboardError):
+            vs.compute_baseline_from_cfg(CFG, market="KR")
+
 
 # ---------------------------------------------------------------------------
 # 프롬프트 페이로드 — 모델에게 근거 외의 것을 주지 않는다
@@ -447,7 +665,12 @@ class TestPayloadGrounding(unittest.TestCase):
 
     def test_offline_by_default_requires_model_seam(self):
         # 시임 없이 부르면 실제 네트워크 경로를 타므로, 테스트는 항상 시임을 준다.
+        # cfg 는 클로저로 묶인다 — 함수 속성에 전역 상태로 얹지 않는다 (재진입 안전).
         self.assertTrue(callable(vs._default_model))
+        caller = vs._default_model(CFG)
+        self.assertTrue(callable(caller))
+        self.assertFalse(hasattr(vs._default_model, "cfg"),
+                         "cfg 가 함수 속성(모듈 전역 가변 상태)으로 저장됐다")
 
 
 if __name__ == "__main__":
