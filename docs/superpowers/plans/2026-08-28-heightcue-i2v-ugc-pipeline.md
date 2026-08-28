@@ -9,9 +9,9 @@
 
 ## Locked implementation decisions
 
-- HeightCue's internal image-model alias remains `gpt-image-gen-2`; the OpenAI provider request uses the verified API model ID `gpt-image-2`. Both identifiers must appear in every generation manifest.
+- HeightCue's internal image-model alias remains `gpt-image-gen-2`. First-frame editing uses Hermes provider `openai-codex`, tier `gpt-image-2-medium`, and underlying image model `gpt-image-2` through the existing Codex/ChatGPT OAuth subscription. All identifiers must appear in every generation manifest.
 - Video generation uses fal.ai `minimax/h3-max/image-to-video`, `768P`, `9:16`, and 5-second generated cuts. It never silently falls back to Hailuo 03, text-to-video, or another provider.
-- OpenMontage owns image editing, I2V, Remotion composition, media probing, and low-level generation outputs.
+- Hermes owns Codex-authenticated first-frame editing. OpenMontage owns I2V, Remotion composition, media probing, and low-level video outputs.
 - HeightCue owns product evidence, reference patterns, storyboards, policy gates, job state, retries, and publishing handoff.
 - Threads and YouTube reference collection uses Aside `u0` for visual/browser inspection. YouTube metadata and subtitles may use agent-reach/`yt-dlp`. Reference media is analyzed for structure, not copied.
 - The publishing handoff contains a local MP4. 송재현 (`pip-publisher`) uploads that file through Aside `u0`; no public video-hosting layer is introduced.
@@ -34,7 +34,7 @@ A task is not complete if its test passed before the production change unless th
 1. In `/Users/leeheungkyu/OpenMontage`, preserve the pre-existing uncommitted edits to `tools/video/minimax_fal_video.py`, `tools/video/video_compose.py`, and `tests/tools/test_new_video_model_support.py`, plus untracked `tests/tools/test_minimax_fal_video.py`. Inspect and incorporate them; do not reset or overwrite them.
 2. In `/Users/leeheungkyu/heightcue-autopilot`, stage only files named by each task. The repository already contains many unrelated untracked files.
 3. Before each commit, run `git diff --check` and inspect `git diff --cached --name-only`.
-4. Never add credentials to either repository. OpenMontage loads `FAL_KEY` from its existing `.env`. A live OpenAI edit is blocked until `OPENAI_API_KEY` is configured; unit and dry-run work may proceed, but completion cannot be claimed without the live generation gate.
+4. Never add credentials to either repository. OpenMontage loads `FAL_KEY` from its existing `.env`. First-frame editing reuses the existing Hermes `openai-codex` OAuth credential; verify it with `hermes auth list` and verify `image_gen.provider=openai-codex` plus `image_gen.model=gpt-image-2-medium` with `hermes config get image_gen`. Do not request or store `OPENAI_API_KEY`.
 
 ## Phase 1: Correct and lock provider contracts
 
@@ -57,30 +57,31 @@ A task is not complete if its test passed before the production change unless th
 - **Validation:** All I2V contract tests pass; the test spy observes only `minimax/h3-max/image-to-video`; no fallback request occurs.
 - **Commit:** `fix: route MiniMax H3 Max image generation correctly`
 
-### Task 2: Add product-preserving GPT Image editing
+### Task 2: Add a deterministic Hermes Codex image bridge
 
 - **Action:**
-  1. Add failing tests for an `edit` operation that requires one or more source image paths.
-  2. Map internal alias `gpt-image-gen-2` to provider model `gpt-image-2` explicitly.
-  3. Use the OpenAI Images edit API with source files, `size="1024x1536"`, configured quality, and a product-preservation prompt.
-  4. Return both `model_alias` and `provider_model` in `ToolResult.data`.
-  5. Reject text-only use when `operation="edit"`; do not generate a replacement product from text.
-  6. Keep the existing text-to-image behavior backward compatible.
+  1. Add failing tests for a subprocess bridge that requires one or more verified source-image paths and an explicit output path.
+  2. Invoke Hermes's configured image-generation dispatcher in a separate Hermes-venv process so credential refresh and profile isolation remain owned by Hermes rather than HeightCue or OpenMontage.
+  3. Require provider `openai-codex`, tier `gpt-image-2-medium`, underlying model `gpt-image-2`, portrait output, and source/reference images sent as Responses `input_image` parts.
+  4. Copy the final PNG into the OpenMontage run workspace and return `model_alias`, `hermes_provider`, `hermes_model`, `provider_model`, output hash, and source-image hashes.
+  5. Reject text-only use and any dispatcher result from another provider/model. Never read, copy, or serialize the OAuth token.
+  6. Add a compatibility test against the installed Hermes dispatcher contract so a Hermes update fails clearly instead of silently switching providers.
 - **Files:**
-  - Modify `/Users/leeheungkyu/OpenMontage/tools/graphics/openai_image.py`
-  - Create `/Users/leeheungkyu/OpenMontage/tests/tools/test_openai_image.py`
+  - Create `autopilot/codex_image_bridge.py`
+  - Create `autopilot/test_codex_image_bridge.py`
 - **Commands:**
-  - `cd /Users/leeheungkyu/OpenMontage && .venv/bin/python -m pytest tests/tools/test_openai_image.py -q`
-  - `cd /Users/leeheungkyu/OpenMontage && .venv/bin/python -m pytest tests/tools -q`
-- **Validation:** Mocked OpenAI client receives `model="gpt-image-2"` and the actual source file; outputs are portrait images; manifests preserve both identifiers; existing tool tests still pass.
-- **Commit:** `feat: add product-grounded GPT Image editing`
+  - `cd /Users/leeheungkyu/heightcue-autopilot/autopilot && ../.venv/bin/python -m unittest -v test_codex_image_bridge.py`
+  - `hermes auth list`
+  - `hermes config get image_gen`
+- **Validation:** The mocked bridge sends the actual product image and portrait edit prompt through Hermes; the contract records `gpt-image-gen-2`, `openai-codex`, `gpt-image-2-medium`, and `gpt-image-2`; no API key is read or required.
+- **Commit:** `feat: bridge Codex image editing into HeightCue`
 
 ### Task 3: Register a HeightCue-specific OpenMontage pipeline
 
 - **Action:**
   1. Add a pipeline contract test before the manifest.
   2. Define stages `research → proposal → script → scene_plan → assets → edit → compose` using existing canonical stage names.
-  3. Require `openai_image`, `minimax_fal_video`, `video_compose`, `frame_sampler`, and `transcriber` where appropriate.
+  3. Require `minimax_fal_video`, `video_compose`, `frame_sampler`, and `transcriber` where appropriate; record the first-frame dependency as external Hermes provider `openai-codex/gpt-image-2-medium`.
   4. Lock `render_runtime: remotion`, `composition_mode: atelier`, `aspect_ratio: 9:16`, and the approved provider/model choices in the proposal metadata.
   5. Do not add a new generalized framework or unrelated artifact schemas.
 - **Files:**
@@ -209,17 +210,17 @@ A task is not complete if its test passed before the production change unless th
 ### Task 10: Generate one first frame per cut
 
 - **Action:**
-  1. Add orchestration tests that mock OpenMontage but inspect every call.
-  2. Invoke `openai_image` in edit mode with the verified product image and one cut's first-frame prompt.
+  1. Add orchestration tests that mock the Hermes bridge and OpenMontage but inspect every call.
+  2. Invoke `codex_image_bridge.py` with the verified product image and one cut's first-frame prompt.
   3. Save each output under `/Users/leeheungkyu/OpenMontage/projects/heightcue_<run_id>/assets/frames/`.
   4. Verify portrait dimensions and record hashes before paying for video generation.
-  5. Stop the job if `OPENAI_API_KEY` is unavailable; do not substitute Hermes image generation or another provider in the production path.
+  5. Stop the job if Hermes `openai-codex` OAuth or `gpt-image-2-medium` is unavailable; do not substitute a different image provider or model.
 - **Files:**
   - Create `autopilot/video_generate.py`
   - Create `autopilot/test_video_generate.py`
 - **Commands:**
   - `cd /Users/leeheungkyu/heightcue-autopilot/autopilot && ../.venv/bin/python -m unittest -v test_video_generate.py`
-  - Live preflight: `cd /Users/leeheungkyu/OpenMontage && .venv/bin/python -c "from tools.tool_registry import registry; import json; registry.discover(); print(json.dumps(registry.provider_menu_summary(), indent=2))"`
+  - Live preflight: `hermes auth list && hermes config get image_gen`
 - **Validation:** Exactly one portrait frame is produced per cut; each frame references the official product input; manifest IDs are correct; missing credentials produce a clear blocked state and zero video charges.
 - **Commit:** `feat: generate product-grounded UGC first frames`
 
@@ -346,12 +347,13 @@ A task is not complete if its test passed before the production change unless th
 ### Task 17: Run all repository and provider-contract regressions
 
 - **Commands:**
-  - `cd /Users/leeheungkyu/OpenMontage && .venv/bin/python -m pytest tests/tools/test_minimax_fal_video.py tests/tools/test_openai_image.py tests/contracts/test_heightcue_ugc_pipeline.py -q`
+  - `cd /Users/leeheungkyu/OpenMontage && .venv/bin/python -m pytest tests/tools/test_minimax_fal_video.py tests/contracts/test_heightcue_ugc_pipeline.py -q`
   - `cd /Users/leeheungkyu/OpenMontage && .venv/bin/python -m pytest -q`
   - `cd /Users/leeheungkyu/heightcue-autopilot/autopilot && ../.venv/bin/python validate.py`
   - `cd /Users/leeheungkyu/heightcue-autopilot/autopilot && ../.venv/bin/python test_ops.py`
   - `cd /Users/leeheungkyu/heightcue-autopilot/autopilot && ../.venv/bin/python test_queue.py`
   - `cd /Users/leeheungkyu/heightcue-autopilot/autopilot && ../.venv/bin/python post_check.py test_posts.json --test`
+  - `cd /Users/leeheungkyu/heightcue-autopilot/autopilot && ../.venv/bin/python -m unittest -v test_codex_image_bridge.py`
   - `cd /Users/leeheungkyu/heightcue-autopilot/autopilot && ../.venv/bin/python -m unittest discover -p 'test_video*.py' -v`
   - `cd /Users/leeheungkyu/heightcue-autopilot && git diff --check`
   - `cd /Users/leeheungkyu/OpenMontage && git diff --check`
@@ -361,7 +363,8 @@ A task is not complete if its test passed before the production change unless th
 
 - **Prerequisites:**
   - `FAL_KEY` remains available to OpenMontage.
-  - `OPENAI_API_KEY` is configured through the user's approved credential path. This is the only known external blocker; do not replace the model.
+  - `hermes auth list` shows a usable `openai-codex` OAuth credential.
+  - `hermes config get image_gen` reports provider `openai-codex` and model `gpt-image-2-medium`.
   - One product has approved official imagery, provenance, exact option, content evidence, and a non-sensitive category.
 - **Action:**
   1. Run provider preflight and record exact available tools/models.
@@ -411,7 +414,7 @@ A task is not complete if its test passed before the production change unless th
 ## Definition of Done
 
 - [ ] OpenMontage sends I2V only to `minimax/h3-max/image-to-video` and has passing provider-contract tests.
-- [ ] OpenMontage edits real product images with provider model `gpt-image-2` while preserving HeightCue alias `gpt-image-gen-2` in manifests.
+- [ ] Hermes edits real product images through Codex OAuth with `openai-codex/gpt-image-2-medium` and underlying model `gpt-image-2`, while preserving HeightCue alias `gpt-image-gen-2` in manifests and requiring no `OPENAI_API_KEY`.
 - [ ] A HeightCue-specific OpenMontage pipeline loads and locks Remotion plus the approved providers/models.
 - [ ] HeightCue stores source provenance, rights, exact product option, storyboard, generation lineage, costs, QA, handoff, and publishing evidence.
 - [ ] Viral UGC collection uses Aside/agent-reach read-only routes, separates observation from inference, and copies no creator media.
