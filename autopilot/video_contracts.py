@@ -22,11 +22,15 @@ from __future__ import annotations
 
 import json
 import os
-import time
+import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from common import redact_secrets
+
+# 계보 검증용 센티널 — 필드가 없으면 조용히 통과하지 않고 크게 실패한다.
+_MISSING = object()
 
 # ---------------------------------------------------------------------------
 # 고정 상수 (상류 확정 계약 — 변경 금지, 변경 시 상류 태스크와 동기화)
@@ -223,7 +227,9 @@ def atomic_write_json(path: str, data: Any) -> str:
     """
     directory = os.path.dirname(os.path.abspath(path))
     os.makedirs(directory, exist_ok=True)
-    tmp = os.path.join(directory, f".{os.path.basename(path)}.{os.getpid()}.tmp")
+    tmp = os.path.join(
+        directory,
+        f".{os.path.basename(path)}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(data, fh, ensure_ascii=False, indent=2)
@@ -239,11 +245,21 @@ def atomic_write_json(path: str, data: Any) -> str:
     return path
 
 
+def _redact_deep(value: Any) -> Any:
+    """문자열·dict·list·tuple 을 재귀적으로 훑어 모든 문자열에 마스킹을 적용한다."""
+    if isinstance(value, str):
+        return redact_secrets(value)
+    if isinstance(value, dict):
+        return {k: _redact_deep(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_redact_deep(v) for v in value]
+    return value
+
+
 def append_event(path: str, record: Dict[str, Any]) -> Dict[str, Any]:
     """추가 전용 JSONL 이벤트. 값에 담긴 자격증명은 기록 전에 마스킹한다."""
-    row = {k: (redact_secrets(v) if isinstance(v, str) else v)
-           for k, v in dict(record).items()}
-    row.setdefault("ts", time.strftime("%Y-%m-%dT%H:%M:%S"))
+    row = {k: _redact_deep(v) for k, v in dict(record).items()}
+    row.setdefault("ts", datetime.now(timezone.utc).astimezone().isoformat())
     directory = os.path.dirname(os.path.abspath(path))
     os.makedirs(directory, exist_ok=True)
     with open(path, "a", encoding="utf-8") as fh:
@@ -733,6 +749,10 @@ class VideoJob:
                     "handoff.content_draft_id 가 스토리보드와 다르다: "
                     f"{self.handoff.content_draft_id!r} != "
                     f"{self.storyboard.content_draft_id!r}")
+            if self.handoff.state != self.state:
+                raise StateError(
+                    "handoff.state 가 잡 상태와 다르다 — 상태의 진실은 하나여야 한다: "
+                    f"{self.handoff.state!r} != {self.state!r}")
 
         if self.state in HANDOFF_STATES:
             if self.manifest is None:
@@ -745,21 +765,25 @@ class VideoJob:
             if self.handoff is None:
                 raise ContractError(f"{self.state} 상태에는 handoff 가 필요하다")
 
-        if self.state == STATE_QA_FAILED and self.qa_report is not None \
-                and self.qa_report.passed:
-            raise ContractError("qa_failed 상태인데 QA 리포트가 통과로 표시돼 있다")
+        if self.state == STATE_QA_FAILED:
+            if self.qa_report is None:
+                raise ContractError("qa_failed 상태에는 실패 근거인 qa_report 가 필요하다")
+            if self.qa_report.passed:
+                raise ContractError("qa_failed 상태인데 QA 리포트가 통과로 표시돼 있다")
         return self
 
     def _require_lineage(self, name: str, obj: Any, run_id: bool = True) -> None:
-        if getattr(obj, "product_id", self.product_id) != self.product_id:
-            raise LineageError(f"{name}.product_id 불일치: "
-                               f"{obj.product_id!r} != {self.product_id!r}")
-        if getattr(obj, "market", self.market) != self.market:
-            raise LineageError(f"{name}.market 불일치: "
-                               f"{obj.market!r} != {self.market!r}")
-        if run_id and getattr(obj, "run_id", self.run_id) != self.run_id:
-            raise LineageError(f"{name}.run_id 불일치: "
-                               f"{obj.run_id!r} != {self.run_id!r}")
+        fields = [("product_id", self.product_id), ("market", self.market)]
+        if run_id:
+            fields.append(("run_id", self.run_id))
+        for attr, expected in fields:
+            actual = getattr(obj, attr, _MISSING)
+            if actual is _MISSING:
+                raise LineageError(
+                    f"{name}.{attr} 가 없다 — 계보를 검증할 수 없다 (fail loudly)")
+            if actual != expected:
+                raise LineageError(f"{name}.{attr} 불일치: "
+                                   f"{actual!r} != {expected!r}")
 
     def transition(self, to_state: str) -> str:
         """상태 전이. 불법 전이면 StateError 로 죽고 상태는 바뀌지 않는다."""

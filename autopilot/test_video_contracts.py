@@ -483,6 +483,32 @@ class TestVideoJob(unittest.TestCase):
         with self.assertRaises(vc.StateError):
             job.transition(vc.STATE_PUBLISHED)
 
+    def test_handoff_state_must_match_job_state(self):
+        # 잡은 publishing 인데 핸드오프는 ready_to_publish 로 굳어 있으면 두 개의 진실이 된다.
+        with self.assertRaises(vc.StateError):
+            self._job(state=vc.STATE_PUBLISHING, manifest=manifest(), qa_report=qa(),
+                      handoff=handoff(state=vc.STATE_READY_TO_PUBLISH)).validate()
+
+    def test_handoff_state_matching_passes(self):
+        self._job(state=vc.STATE_PUBLISHING, manifest=manifest(), qa_report=qa(),
+                  handoff=handoff(state=vc.STATE_PUBLISHING)).validate()
+
+    def test_qa_failed_requires_qa_report(self):
+        with self.assertRaises(vc.ContractError):
+            self._job(state=vc.STATE_QA_FAILED, manifest=manifest()).validate()
+
+    def test_qa_failed_with_failing_report_passes(self):
+        self._job(state=vc.STATE_QA_FAILED, manifest=manifest(),
+                  qa_report=qa(passed=False, failures=["blurry"])).validate()
+
+    def test_lineage_missing_attribute_fails_loudly(self):
+        class Stub:
+            market = "KR"
+            run_id = RUN_ID
+        job = self._job()
+        with self.assertRaises(vc.LineageError):
+            job._require_lineage("stub", Stub())
+
 
 # ---------------------------------------------------------------------------
 # persistence: atomic JSON + append-only JSONL
@@ -552,6 +578,42 @@ class TestPersistence(unittest.TestCase):
             row = json.loads(fh.readline())
         self.assertNotIn("sk-live-12345", row["detail"])
         self.assertIn("[REDACTED]", row["detail"])
+
+    def test_append_event_redacts_nested_secrets(self):
+        p = os.path.join(self.tmp, "video_events.jsonl")
+        vc.append_event(p, {"job_id": JOB_ID, "event": "generating",
+                            "request": {"url": "https://fal.run/x?api_key=sk-live-99",
+                                        "headers": ["authorization=sk-live-88"]}})
+        with open(p, encoding="utf-8") as fh:
+            raw = fh.readline()
+        self.assertNotIn("sk-live-", raw)
+        row = json.loads(raw)
+        self.assertIn("[REDACTED]", row["request"]["url"])
+        self.assertIn("[REDACTED]", row["request"]["headers"][0])
+
+    def test_append_event_ts_is_timezone_aware(self):
+        import datetime as _dt
+        p = os.path.join(self.tmp, "video_events.jsonl")
+        row = vc.append_event(p, {"job_id": JOB_ID, "event": "queued"})
+        parsed = _dt.datetime.fromisoformat(row["ts"])
+        self.assertIsNotNone(parsed.tzinfo)
+
+    def test_atomic_write_tmp_name_is_unique(self):
+        p = os.path.join(self.tmp, "job.json")
+        names = set()
+        real_replace = vc.os.replace
+
+        def spy(src, dst):
+            names.add(src)
+            return real_replace(src, dst)
+
+        vc.os.replace = spy
+        try:
+            vc.atomic_write_json(p, {"a": 1})
+            vc.atomic_write_json(p, {"a": 2})
+        finally:
+            vc.os.replace = real_replace
+        self.assertEqual(len(names), 2)
 
     def test_transition_event_records_both_states(self):
         p = os.path.join(self.tmp, "video_events.jsonl")
