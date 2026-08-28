@@ -12,12 +12,15 @@
   python3 run.py golive     # 가동 전환: dry_run=false + publish=true 저장 + crontab 안내 출력
   python3 run.py dryrun     # API 키 없이 전체 사이클 모의 실행
   python3 run.py context    # 소싱용 채널 컨텍스트 출력 (바이오·게시글·답글·받은댓글·큐 상태, JSON)
+  python3 run.py video ...  # I2V UGC 영상 워크플로 (enqueue|process|status|rehearsal)
+                            # 유료 생성은 config video.production_generation_enabled 기본 꺼짐
 
 발행 정책 (SSOT §8): 포맷 FAIL(500자 초과) → 1회 재생성, 재실패 시 보류함 /
 리스크 메모 있음 → 보류함 / 깨끗함 → (publish=true일 때) 발행, 아니면 preview 기록.
 각 단계는 오류 격리된다 — 한 단계가 죽어도 나머지는 계속 실행되고 errors.jsonl에 남는다.
 """
 import json
+import os
 import random
 import re
 import subprocess
@@ -428,6 +431,266 @@ def rehearsal(cfg):
     return 0
 
 
+# ---------------------------------------------------------------------------
+# 영상(I2V UGC) 명령 — Task 16
+#
+# 설계 원칙 하나: **돈이 나가는 경로는 명시적으로 켜야만 열린다.**
+# `video.production_generation_enabled` 기본값은 false 이고, 이게 꺼져 있으면
+# `video process` 는 잡을 claim 조차 하지 않는다(리스를 잡았다 놓으면 attempts 만
+# 축나고 원장이 지저분해진다). 리허설은 이 플래그와 무관하게 항상 무료다.
+# ---------------------------------------------------------------------------
+
+#: 영상 설정 기본값 — 전부 안전한 쪽(꺼짐/작음)으로 둔다.
+VIDEO_DEFAULTS = {
+    "enabled": False,
+    "production_generation_enabled": False,
+    "kill_switch": False,
+    "markets": ["KR"],
+    "daily_budget_usd": 2.0,
+    "max_jobs_per_run": 1,
+    "max_attempts": 3,
+    "ledger_root": None,
+}
+
+#: QA 게이트(video_qa)는 fail-closed 다. 전사기가 없으면 spoken_content 검사가
+#: 돌지 못하고, 돌지 못한 검사는 실패로 집계된다 → 모든 실영상이 QA 실패한다.
+#: 유료 실행 중에 발견하면 안 되므로 리허설이 먼저 확인한다.
+VIDEO_PREREQUISITES = (
+    ("faster-whisper", "faster_whisper",
+     "QA 전사 검사(spoken_content). 없으면 모든 실영상이 fail-closed 로 QA 실패한다"),
+)
+
+
+def _has_module(module_name):
+    """import 하지 않고 설치 여부만 본다 — 무거운 모듈을 크론에서 로드하지 않는다."""
+    import importlib.util
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def video_settings(cfg):
+    """config 의 video 섹션에 기본값을 덮어 채운 설정 dict."""
+    raw = (cfg.get("video") or {}) if isinstance(cfg, dict) else {}
+    settings = dict(VIDEO_DEFAULTS)
+    for key, value in raw.items():
+        if not str(key).startswith("_"):
+            settings[key] = value
+    settings["production_generation_enabled"] = bool(
+        settings.get("production_generation_enabled"))
+    settings["enabled"] = bool(settings.get("enabled"))
+    settings["kill_switch"] = bool(settings.get("kill_switch"))
+    markets = settings.get("markets") or []
+    settings["markets"] = [str(m).upper() for m in markets] or ["KR"]
+    if not settings.get("ledger_root"):
+        settings["ledger_root"] = state_path(cfg, "video") if cfg.get("paths") \
+            else None
+    return settings
+
+
+def _video_ledger(settings):
+    import video_queue as vq
+    return vq.VideoLedger(settings["ledger_root"])
+
+
+def _video_prereq_report():
+    """(모두충족?, 줄 목록) — 리허설이 사람에게 보여줄 전제조건 표."""
+    lines, all_ok = [], True
+    for label, module, why in VIDEO_PREREQUISITES:
+        ok = _has_module(module)
+        all_ok = all_ok and ok
+        lines.append(f"  [{'충족' if ok else '미충족'}] {label} — {why}")
+    return all_ok, lines
+
+
+def _video_enqueue(cfg, settings, args):
+    import video_contracts as vc
+    if settings["kill_switch"]:
+        print("킬스위치가 켜져 있다 — 새 잡을 받지 않는다 (video.kill_switch=false 로 해제)")
+        return 3
+    if not args.job_file:
+        print("--job-file 이 필요하다 (video_contracts.save_job 로 저장한 잡 문서)")
+        return 2
+    if not os.path.exists(args.job_file):
+        print(f"잡 파일이 없다: {args.job_file}")
+        return 2
+    try:
+        job = vc.load_job(args.job_file)
+    except Exception as exc:
+        print(f"잡 문서를 읽을 수 없다: {type(exc).__name__}: {exc}")
+        return 3
+    if job.market not in settings["markets"]:
+        print(f"허용되지 않은 market={job.market} — 설정의 markets={settings['markets']}")
+        return 3
+    entry = _video_ledger(settings).enqueue(job)
+    if entry.get("created"):
+        print(f"큐에 넣었다: {entry['job_id']} (market={entry['market']}, "
+              f"product={entry['product_id']})")
+    else:
+        print(f"기존 잡을 그대로 쓴다(멱등): {entry['job_id']} state={entry['state']}")
+    return 0
+
+
+def _video_process(cfg, settings, args):
+    """유료 생성 진입점. **기본은 거부한다.**
+
+    거부할 때 잡을 claim 하지 않는 것이 중요하다 — 리스를 잡았다 놓으면 attempts 가
+    축나고, 반복 거부만으로 멀쩡한 잡이 dead_letter 로 굴러떨어진다.
+    """
+    ledger = _video_ledger(settings)
+    if args.dry_run:
+        jobs = ledger.list_jobs(state="queued")[:settings["max_jobs_per_run"]]
+        print(f"[dry-run] 유료 호출 없이 대상만 나열한다 ({len(jobs)}건)")
+        for entry in jobs:
+            print(f"  {entry['job_id']} market={entry['market']} "
+                  f"product={entry['product_id']}")
+        if not jobs:
+            print("  (대기 중인 잡 없음)")
+        return 0
+    if settings["kill_switch"]:
+        print("킬스위치가 켜져 있다 — 생성하지 않는다 (video.kill_switch=false 로 해제)")
+        return 3
+    # 돈 게이트를 **먼저** 본다. enabled 를 먼저 검사하면 운영자가 받는 메시지가
+    # "파이프라인이 꺼져 있다"가 되어, 정작 비용을 여는 스위치가 따로 있다는
+    # 사실이 가려진다. 가장 비싼 실수를 가장 먼저 설명한다.
+    if not settings["production_generation_enabled"]:
+        print("거부: video.production_generation_enabled=false.\n"
+              "  이 플래그는 실제 유료 호출(fal.ai MiniMax H3 Max, 5초 컷당 약 $0.20)을 여는\n"
+              "  유일한 스위치이며 기본값은 꺼짐이다. 라이브 종단 게이트를 통과하기 전에는\n"
+              "  켜지 마라. 무료 확인은 `run.py video rehearsal`.")
+        return 3
+    if not settings["enabled"]:
+        print("video.enabled=false — 영상 파이프라인이 꺼져 있다. 켜기 전에 리허설부터.")
+        return 3
+    ok, lines = _video_prereq_report()
+    if not ok:
+        print("배포 전제조건 미충족 — 생성해도 전량 QA 실패한다:")
+        for line in lines:
+            print(line)
+        return 3
+    # 여기부터가 실제 유료 경로다. 게이트를 전부 통과했을 때만 도달한다.
+    #
+    # 정직하게: 전 단계(스토리보드→첫프레임→컷→합성→QA→핸드오프)를 한 프로세스로
+    # 잇는 오케스트레이터는 아직 없다. 지금은 각 모듈을 사람이 순서대로 부른다.
+    # 여기서 조용히 성공을 반환하면 "돌았는데 아무 일도 안 일어났다"가 되므로
+    # 명시적으로 실패시키고 다음 행동을 알려준다.
+    print("게이트는 모두 통과했다. 그러나 종단 오케스트레이터가 아직 배선되지 않았다 —")
+    print("  현재는 모듈을 순서대로 직접 호출해야 한다:")
+    print("    video_storyboard → video_generate(첫프레임→컷) → video_compose")
+    print("    → video_qa → video_handoff.promote_to_ready")
+    print("  잘못된 성공을 보고하지 않기 위해 여기서 멈춘다(비용은 발생하지 않았다).")
+    return 5
+
+
+def _video_status(cfg, settings, args):
+    stats = _video_ledger(settings).stats()
+    if args.json:
+        print(json.dumps({"settings": settings, "ledger": stats},
+                         ensure_ascii=False, indent=2))
+        return 0
+    flag = "켜짐" if settings["production_generation_enabled"] else "꺼짐"
+    print("heightcue 영상 상태")
+    print("=" * 44)
+    print(f"원장            : {stats['root']}")
+    print(f"총 {stats['total']}건 · 리스 보유 {stats['leased']}건 · "
+          f"만료 리스 {stats['stale_leases']}건")
+    for state, count in stats["by_state"].items():
+        if count:
+            print(f"  {state:<18} {count}")
+    print(f"enabled                        : {settings['enabled']}")
+    print(f"production_generation_enabled  : {flag}")
+    print(f"kill_switch                    : {settings['kill_switch']}")
+    print(f"markets / 일예산 / 회당최대     : {settings['markets']} / "
+          f"${settings['daily_budget_usd']} / {settings['max_jobs_per_run']}건")
+    return 0
+
+
+def _video_rehearsal(cfg, settings, args):
+    """무료 드라이런. 유료 호출 0건 · 발행 0건을 **구조적으로** 보장한다 —
+    provider 호출 경로에 아예 진입하지 않는다."""
+    print("=== 영상 리허설: 유료 호출 없음 · 발행 없음 ===")
+    market = (args.market or settings["markets"][0]).upper()
+    print(f"대상 market: {market}")
+    if market not in settings["markets"]:
+        print(f"경고: {market} 는 설정의 markets={settings['markets']} 에 없다")
+
+    observations = None
+    if args.fixture:
+        if not os.path.exists(args.fixture):
+            print(f"픽스처 파일이 없다: {args.fixture}")
+            return 2
+        observations = [ln for ln in read_jsonl(args.fixture)
+                        if ln.get("observation_id")]
+        matching = [o for o in observations if o.get("market") == market]
+        print(f"픽스처 관측 {len(observations)}건 (market={market} {len(matching)}건)")
+
+    stats = _video_ledger(settings).stats()
+    print(f"원장: 총 {stats['total']}건 "
+          f"(대기 {stats['by_state'].get('queued', 0)}건)")
+
+    print("\n배포 전제조건")
+    ok, lines = _video_prereq_report()
+    for line in lines:
+        print(line)
+
+    print("\n게이트 상태")
+    print(f"  video.enabled                       : {settings['enabled']}")
+    print(f"  video.production_generation_enabled : "
+          f"{settings['production_generation_enabled']} "
+          f"({'켜짐' if settings['production_generation_enabled'] else '꺼짐'})")
+    print(f"  video.kill_switch                   : {settings['kill_switch']}")
+
+    print("\n리허설 결과: 유료 호출 0건 · 발행 0건")
+    if not ok:
+        print("→ 전제조건 미충족. 위 [미충족] 항목을 설치하기 전에는 실행하지 마라 —")
+        print("  QA 는 fail-closed 라 생성한 영상이 전량 탈락하고 비용만 나간다.")
+        return 1
+    print("→ 전제조건 충족. 실행하려면 config 의 video.enabled 와")
+    print("  video.production_generation_enabled 를 명시적으로 켜라(기본은 꺼짐).")
+    return 0
+
+
+def video_command(cfg, argv):
+    """`run.py video <sub>` 진입점. 반환값이 그대로 종료 코드가 된다."""
+    import argparse
+    parser = argparse.ArgumentParser(
+        prog="run.py video", description="HeightCue I2V UGC 영상 워크플로",
+        add_help=False)
+    sub = parser.add_subparsers(dest="sub")
+    p_enq = sub.add_parser("enqueue", add_help=False, help="잡을 원장에 넣는다")
+    p_enq.add_argument("--job-file", default=None)
+    p_proc = sub.add_parser("process", add_help=False, help="대기 잡을 생성한다(유료)")
+    p_proc.add_argument("--dry-run", action="store_true")
+    p_stat = sub.add_parser("status", add_help=False, help="원장·게이트 상태")
+    p_stat.add_argument("--json", action="store_true")
+    p_reh = sub.add_parser("rehearsal", add_help=False, help="무료 드라이런")
+    p_reh.add_argument("--market", default=None)
+    p_reh.add_argument("--fixture", default=None)
+
+    if not argv or argv[0] not in ("enqueue", "process", "status", "rehearsal"):
+        print("사용법: run.py video <enqueue|process|status|rehearsal>")
+        print("  enqueue   --job-file <path>      잡을 원장에 넣는다(멱등)")
+        print("  process   [--dry-run]            대기 잡 생성 — 기본 거부(유료)")
+        print("  status    [--json]               원장 집계 + 게이트 상태")
+        print("  rehearsal [--market KR] [--fixture <path>]  무료 드라이런")
+        return 2
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit:
+        return 2
+
+    settings = video_settings(cfg)
+    handlers = {"enqueue": _video_enqueue, "process": _video_process,
+                "status": _video_status, "rehearsal": _video_rehearsal}
+    try:
+        return handlers[args.sub](cfg, settings, args)
+    except Exception as exc:
+        print(f"영상 명령 실패: {type(exc).__name__}: {exc}")
+        record_error(cfg, f"video_{args.sub}", exc)
+        return 4
+
+
 def golive(cfg):
     mode = set_mode_flags(dry_run=False, publish=True)
     log(f"가동 전환 저장 완료: {mode}")
@@ -479,6 +742,9 @@ def main():
         raise SystemExit(rehearsal(cfg))
     elif cmd == "status":
         status(cfg)
+    elif cmd == "video":
+        # 신규 명령 — 기존 4개(daily/post/comments/weekly) 분기 뒤에 붙는다.
+        raise SystemExit(video_command(cfg, sys.argv[2:]))
     elif cmd == "golive":
         golive(cfg)
     elif cmd == "context":

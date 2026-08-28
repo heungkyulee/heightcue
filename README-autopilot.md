@@ -101,3 +101,56 @@ cd autopilot && ../.venv/bin/python validate.py
   * 가치·스토리 글: 매일 @heightcue_us에 링크 없는 영어 글 1건 (SKILL V1 country=US).
   * 판매글 — **사이트 가이드 경유**: `state/us_products.json` 레지스트리를 로테이션(재사용 간격 7일)해 사이트 가이드 페이지 링크로 판매글 발행. 아마존 태그 직링크는 쓰지 않는다(사이트가 Associates 등록 앵커). 소재가 없으면 자동 건너뜀 — 새 가이드 페이지를 사이트에 추가하고 레지스트리에 항목을 넣으면 소재가 늘어난다(Claude가 제작 가능).
 * **남은 인간 단계:** 아마존 정산 수단 선택 (LAUNCH-STATUS 참조).
+
+## 5. 영상(I2V UGC) 워크플로 — `run.py video`
+
+텍스트 파이프라인과 **완전히 분리된** 별도 명령이다. `daily`/`post`/`comments`/`weekly`
+는 영상 코드를 전혀 부르지 않는다 — 영상 기능이 고장나도 매일 돌아가는 텍스트 발행은
+영향을 받지 않는다.
+
+```bash
+cd ~/heightcue-autopilot/autopilot
+../.venv/bin/python run.py video rehearsal --market KR --fixture fixtures/viral_ugc_sample.jsonl
+../.venv/bin/python run.py video status            # 원장 집계 + 게이트 상태 (--json 지원)
+../.venv/bin/python run.py video enqueue --job-file <잡문서.json>
+../.venv/bin/python run.py video process           # 유료 — 기본은 거부한다
+```
+
+### 5-1. ⚠️ 배포 전제조건 — faster-whisper (설치 전에는 실행 금지)
+
+QA 게이트(`video_qa.py`)는 **fail-closed** 다. 돌지 못한 검사는 통과가 아니라 **실패**로
+집계된다. 따라서 전사기(`faster-whisper`)가 설치돼 있지 않으면 `spoken_content` 검사가
+돌지 못하고 **모든 실영상이 예외 없이 QA 실패한다.**
+
+이건 버그가 아니라 의도된 설계다(검사를 건너뛰고 발행하느니 막는 게 맞다). 다만 그 결과
+**전사기 없이 유료 생성을 돌리면 영상은 전량 탈락하고 비용만 나간다.** 그래서
+`run.py video rehearsal` 이 전제조건 충족 여부를 먼저 보고하고, 미충족이면 **exit 1** 로
+끝난다. 유료 실행 중에 발견하게 두지 않는다.
+
+```bash
+../.venv/bin/python -m pip install faster-whisper   # requirements.txt 에는 넣지 않는다(텍스트 파이프라인은 requests 만 필요)
+```
+
+### 5-2. 유료 생성은 기본 꺼짐 — 켜는 절차
+
+`video process` 는 실제 돈을 쓴다(fal.ai MiniMax H3 Max, 5초 컷당 약 **$0.20**).
+이 파이프라인은 **아직 단 한 번도 유료 호출을 한 적이 없다.** 게이트는 3중이다.
+
+| config 키 | 기본값 | 역할 |
+|---|---|---|
+| `video.production_generation_enabled` | `false` | **비용을 여는 유일한 스위치.** 꺼져 있으면 `process` 가 잡을 claim 조차 하지 않는다 |
+| `video.enabled` | `false` | 파이프라인 전체 on/off |
+| `video.kill_switch` | `false` | `true` 면 `enqueue`·`process` 를 즉시 차단(진행 중인 잡은 건드리지 않는다) |
+
+거부할 때 잡을 claim 하지 않는 것이 중요하다 — 리스를 잡았다 놓으면 `attempts` 가 축나고
+반복 거부만으로 멀쩡한 잡이 `dead_letter` 로 굴러떨어진다.
+
+순서: ① `rehearsal` 로 전제조건·게이트 확인(무료) → ② `faster-whisper` 설치 →
+③ 라이브 종단 게이트 통과 → ④ 그때 비로소 두 플래그를 켠다.
+
+### 5-3. 현재 한계 — `process` 는 아직 끝까지 돌지 않는다
+
+게이트를 모두 통과해도 `video process` 는 **exit 5 로 멈춘다.** 스토리보드→첫프레임→컷
+→합성→QA→핸드오프를 한 프로세스로 잇는 종단 오케스트레이터가 아직 배선되지 않았기
+때문이다. 지금은 모듈을 순서대로 직접 호출해야 한다. 조용히 성공을 반환해서 "돌았는데
+아무 일도 안 일어났다"가 되지 않도록 명시적으로 실패시킨다.
