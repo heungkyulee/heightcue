@@ -60,17 +60,30 @@
 (Task 16). `video.production_generation_enabled` 기본 `false` 이며, 이 플래그가 꺼져
 있는 한 `process` 는 잡을 claim 조차 하지 않는다. 무료 점검은 `run.py video rehearsal`.
 
-**배포 전제조건(미충족 시 실행 금지): OpenMontage transcriber.** QA 게이트는
-fail-closed 라 전사기가 없으면 **모든 실영상이 QA 실패한다** — 영상은 전량 탈락하고
-비용만 나간다. `rehearsal` 이 이 사실을 먼저 보고하고 미충족이면 exit 1 로 끝낸다.
+**배포 전제조건(미충족 시 실행 금지): 전사 백엔드(transcriber 파일이 아니라).** QA
+게이트는 fail-closed 라 전사가 돌지 못하면 **모든 실영상이 QA 실패한다** — 영상은 전량
+탈락하고 비용만 나간다. `rehearsal` 이 이 사실을 먼저 보고하고 미충족이면 exit 1 로 끝낸다.
 
-**리허설의 전제조건 판정은 '실행 가능함'의 증명이 아니다.** 전사는 autopilot venv 가
-아니라 OpenMontage 자기 인터프리터에서 돈다(`video_qa._openmontage_call`). 프로브는
-OpenMontage 루트 도달성과 `tools/analysis/transcriber.py` 존재만 확인하며, 실제로
-전사기를 **돌려보지는 않는다** — OpenMontage 쪽 의존성이 깨져 있거나 모델 가중치가
-없으면 `[충족]` 이 떠도 실행 시 QA 가 전량 실패할 수 있다. 리허설의 초록을 QA 실행
-가능성에 대한 최종 판정으로 읽지 마라. (이전 구현은 autopilot venv 의 `faster_whisper`
-설치 여부를 봤다 — 아예 다른 인터프리터라 거짓 초록이 났다.)
+**파일 존재는 실행 가능을 뜻하지 않는다.** `tools/analysis/transcriber.py` 는 그 자체로
+아무것도 하지 못한다 — 내부에서 `faster_whisper`(대안: `whisperx`)를 import 한다. 파일만
+확인하는 프로브는 백엔드가 하나도 없어도 `[충족]` 을 찍어 **유료 실행을 승인해버린다**
+(2026-08-28 라운드 1 의 실제 결함 — 그 상태로 실행했다면 생성한 영상이 전량 QA 탈락했다).
+현재 프로브는 `video_qa._openmontage_call` 과 **같은 인터프리터·같은 cwd·같은 sys.path**
+로 백엔드를 실제 import 해 보고, 하나도 되지 않으면 `[미충족]` 으로 exit 1 한다. 프로브
+실패·타임아웃·해석 불가 출력도 전부 미충족이다(확인 못 한 것은 충족으로 세지 않는다).
+
+**2026-08-28 현재 이 머신 상태: 미충족.** `faster_whisper`·`whisperx` 어느 것도 설치돼
+있지 않다. 운영자가 실행할 명령:
+
+```bash
+cd /Users/leeheungkyu/OpenMontage && .venv/bin/python -m pip install faster-whisper
+# QA 가 autopilot 인터프리터로 돌면 그쪽에도 설치한다:
+~/heightcue-autopilot/.venv/bin/python -m pip install faster-whisper
+```
+
+**남은 한계(초록도 최종 판정은 아니다).** 프로브는 백엔드 import 까지만 확인한다 — 모델
+가중치 내려받기와 실제 전사 품질은 검증하지 않는다. `[충족]` 은 "전사가 돌 수 있다"는
+뜻이지 "QA 가 통과한다"는 뜻이 아니다.
 
 **`process` 는 아직 끝까지 돌지 않는다.** 게이트를 다 통과해도 exit 5 로 멈춘다 —
 종단 오케스트레이터가 미배선이다. 현재는 모듈을 순서대로 사람이 호출한다.

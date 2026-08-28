@@ -116,30 +116,43 @@ cd ~/heightcue-autopilot/autopilot
 ../.venv/bin/python run.py video process           # 유료 — 기본은 거부한다
 ```
 
-### 5-1. ⚠️ 배포 전제조건 — OpenMontage transcriber (없으면 실행 금지)
+### 5-1. ⚠️ 배포 전제조건 — 전사 **백엔드** (없으면 실행 금지)
 
 QA 게이트(`video_qa.py`)는 **fail-closed** 다. 돌지 못한 검사는 통과가 아니라 **실패**로
-집계된다. 따라서 전사기를 부를 수 없으면 `spoken_content` 검사가 돌지 못하고
+집계된다. 따라서 전사가 돌지 못하면 `spoken_content` 검사가 돌지 못하고
 **모든 실영상이 예외 없이 QA 실패한다.**
 
-**어느 인터프리터인지가 중요하다.** `video_qa.default_transcriber` 는 autopilot venv 에서
-`faster_whisper` 를 import 하지 않는다 — OpenMontage 루트로 셸아웃해
-`tools/analysis/transcriber.py` 를 **OpenMontage 자기 인터프리터**로 돌린다. 그래서
-전제조건 프로브는 로컬 venv 의 패키지 목록이 아니라 OpenMontage 루트 도달성과 그
-엔트리포인트 존재를 본다. 루트는 `OPENMONTAGE_ROOT` 로 지정하며 기본은 `~/OpenMontage`.
+**필요한 것은 `transcriber.py` 파일이 아니라 전사 백엔드다.**
+`tools/analysis/transcriber.py` 는 그 자체로 아무것도 하지 못한다 — 내부에서
+`faster_whisper` 를 import 하고(대안으로 `whisperx`), 없으면
+`"faster-whisper is not installed"` 로 즉시 실패한다. **파일 존재는 실행 가능을 뜻하지
+않는다.** 파일만 확인하는 프로브는 백엔드가 하나도 없는 머신에서도 `[충족]` 을 찍어
+유료 실행을 승인해버린다(2026-08-28 실제로 발생한 결함).
+
+**어느 인터프리터인지도 중요하다.** `video_qa.default_transcriber` 는 OpenMontage 루트로
+셸아웃한다. 그래서 프로브는 `video_qa._openmontage_call` 과 **같은 인터프리터·같은 cwd
+·같은 sys.path** 로 백엔드를 실제 import 해 본다. 루트는 `OPENMONTAGE_ROOT` 로 지정하며
+기본은 `~/OpenMontage`.
+
+운영자가 실행할 설치 명령:
 
 ```bash
-ls ~/OpenMontage/tools/analysis/transcriber.py    # 없으면 리허설이 [미충족] 으로 막는다
+cd ~/OpenMontage && .venv/bin/python -m pip install faster-whisper
+# QA 가 autopilot 인터프리터로 돌면 그쪽에도 설치한다:
+~/heightcue-autopilot/.venv/bin/python -m pip install faster-whisper
 export OPENMONTAGE_ROOT=/path/to/OpenMontage      # 다른 위치에 있다면
 ```
 
-**프로브는 '설치돼 있음'까지만 본다 — '실제로 돈다'를 증명하지 않는다.** 전사기를 실행해
-보지는 않으므로(크론에서 수 초가 든다), OpenMontage 쪽 의존성이나 모델 가중치가 깨져
-있으면 `[충족]` 이 떠도 실행 시 QA 가 전량 실패할 수 있다. 리허설의 초록을 최종 판정으로
-읽지 마라.
+판정 규칙은 fail-closed 다: 백엔드가 하나도 import 되지 않으면 물론이고, 프로브가
+비정상 종료하거나 타임아웃하거나 출력이 해석되지 않아도 **미충족**이다. 확인하지 못한
+것을 충족으로 세지 않는다.
+
+**남은 한계.** 프로브는 백엔드 import 까지만 확인하고 모델 가중치 내려받기나 실제 전사
+품질은 검증하지 않는다. `[충족]` 은 "전사가 돌 수 있다"는 뜻이지 "QA 가 통과한다"는
+뜻이 아니다.
 
 이건 버그가 아니라 의도된 설계다(검사를 건너뛰고 발행하느니 막는 게 맞다). 다만 그 결과
-**전사기 없이 유료 생성을 돌리면 영상은 전량 탈락하고 비용만 나간다.** 그래서
+**전사 백엔드 없이 유료 생성을 돌리면 영상은 전량 탈락하고 비용만 나간다.** 그래서
 `run.py video rehearsal` 이 전제조건 충족 여부를 먼저 보고하고, 미충족이면 **exit 1** 로
 끝난다. 유료 실행 중에 발견하게 두지 않는다.
 

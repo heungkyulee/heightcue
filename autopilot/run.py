@@ -456,32 +456,37 @@ VIDEO_DEFAULTS = {
 #: 돌지 못하고, 돌지 못한 검사는 실패로 집계된다 → 모든 실영상이 QA 실패한다.
 #: 유료 실행 중에 발견하면 안 되므로 리허설이 먼저 확인한다.
 #:
-#: **어느 인터프리터를 보느냐가 전부다.** `video_qa.default_transcriber` 는
-#: faster_whisper 를 import 하지 않는다 — OpenMontage 루트로 셸아웃해
-#: `tools.analysis.transcriber` 를 **OpenMontage 자기 인터프리터**로 돌린다.
-#: 그래서 autopilot venv 의 패키지 목록을 보면 거짓 초록이 난다:
-#: OpenMontage 가 없어도 [충족] 을 찍고 유료 실행을 승인해버린다 — 이 검사가
-#: 막으려던 바로 그 사고다. 프로브는 실제로 호출되는 것을 본다.
+#: **파일 존재는 증거가 아니다.** 라운드 1 은 transcriber.py 가 있으면 [충족]
+#: 을 찍었는데, 이 머신에는 그 파일이 있고 백엔드(faster_whisper/whisperx)는
+#: 아무 인터프리터에도 없다. 즉 전사기는 존재하지만 **실행 불가**다. 그 상태로
+#: [충족] 을 찍는 것은 유료 실행을 승인해놓고 모든 영상이 QA 로 떨어지게 만드는
+#: 거짓 초록이다 — 이 전제조건이 막으려던 사고 그 자체다.
+#:
+#: 그래서 프로브는 **실제로 import 를 시도한다.** `video_qa._openmontage_call`
+#: 이 하는 것과 동일하게: OpenMontage 루트를 sys.path 에 넣고 cwd 를 거기로 두고
+#: 그 호출이 쓰는 인터프리터로 백엔드를 import 해 본다. 하나도 import 되지
+#: 않으면 미충족이다. 해석 못 한 출력·비정상 종료·타임아웃도 전부 미충족이다
+#: (fail closed — 못 확인한 것을 충족으로 세지 않는다).
 OPENMONTAGE_TRANSCRIBER_REL = os.path.join("tools", "analysis", "transcriber.py")
 
+#: transcriber.py 가 실제로 import 하는 것들. faster_whisper 가 본선이고
+#: whisperx 는 문서화된 대안(diarization 경로)이다.
+TRANSCRIBER_BACKENDS = ("faster_whisper", "whisperx")
 
-def _has_module(module_name):
-    """import 하지 않고 설치 여부만 본다 — 무거운 모듈을 크론에서 로드하지 않는다.
+#: 백엔드가 없을 때 운영자가 그대로 복사해 실행할 명령.
+TRANSCRIBER_INSTALL_HINT = (
+    "cd /Users/leeheungkyu/OpenMontage && .venv/bin/python -m pip install "
+    "faster-whisper   # (autopilot 인터프리터로 QA 가 돌면 "
+    "~/heightcue-autopilot/.venv/bin/python -m pip install faster-whisper)")
 
-    (전제조건 판정에는 쓰지 않는다 — 위 주석 참조. 로컬 venv 만 본다.)
-    """
-    import importlib.util
-    try:
-        return importlib.util.find_spec(module_name) is not None
-    except (ImportError, ValueError):
-        return False
+#: 프로브 자체는 import 만 하므로 초 단위다. 모델은 절대 로드하지 않는다.
+TRANSCRIBER_PROBE_TIMEOUT = 60
 
 
 def _probe_openmontage_transcriber():
-    """(충족?, 사람이 읽을 사유) — QA 가 실제로 부르는 전사 시임을 본다.
+    """(충족?, 사람이 읽을 사유) — 전사가 **실제로 돌 수 있는지** 본다.
 
-    네트워크를 쓰지 않고 OpenMontage 도 실행하지 않는다(전사기 로드는 무겁고
-    크론에서 수 초가 든다). 루트 도달성과 transcriber 엔트리포인트 존재만 본다.
+    네트워크를 쓰지 않고 모델도 받지 않는다. 백엔드 import 만 시도한다.
     """
     try:
         import video_qa
@@ -494,7 +499,50 @@ def _probe_openmontage_transcriber():
     entry = os.path.join(root, OPENMONTAGE_TRANSCRIBER_REL)
     if not os.path.isfile(entry):
         return False, f"transcriber 엔트리포인트가 없다: {entry}"
-    return True, f"OpenMontage transcriber: {entry}"
+
+    # video_qa._openmontage_call 과 **같은 인터프리터·같은 cwd·같은 sys.path**.
+    # 다른 인터프리터를 보면 그 자체가 거짓 초록의 원인이 된다.
+    script = (
+        "import json, sys\n"
+        f"sys.path.insert(0, {root!r})\n"
+        "out = {}\n"
+        f"for name in {list(TRANSCRIBER_BACKENDS)!r}:\n"
+        "    try:\n"
+        "        __import__(name)\n"
+        "        out[name] = True\n"
+        "    except Exception:\n"
+        "        out[name] = False\n"
+        "print(json.dumps({'backends': out}))\n"
+    )
+    try:
+        proc = subprocess.run([sys.executable, "-c", script],
+                              capture_output=True, text=True,
+                              timeout=TRANSCRIBER_PROBE_TIMEOUT, cwd=root)
+    except Exception as exc:
+        return False, (f"전사 백엔드 프로브를 실행하지 못했다: "
+                       f"{type(exc).__name__}: {exc} · 설치: {TRANSCRIBER_INSTALL_HINT}")
+    if proc.returncode != 0:
+        return False, (f"전사 백엔드 프로브가 코드 {proc.returncode} 로 죽었다: "
+                       f"{(proc.stderr or '').strip()[-200:]} · "
+                       f"설치: {TRANSCRIBER_INSTALL_HINT}")
+    try:
+        payload = json.loads((proc.stdout or "").strip().splitlines()[-1])
+        backends = payload["backends"]
+        if not isinstance(backends, dict):
+            raise ValueError("backends 가 dict 가 아니다")
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        return False, (f"전사 백엔드 프로브 출력을 해석할 수 없다: {exc} "
+                       "(확인 못 한 것은 충족으로 세지 않는다)")
+    live = sorted(n for n, ok in backends.items() if ok)
+    if not live:
+        missing = ", ".join(TRANSCRIBER_BACKENDS)
+        return False, (
+            f"transcriber.py 는 있으나 전사 백엔드가 없다 ({missing} 모두 "
+            f"import 실패, 인터프리터 {sys.executable}). 파일 존재는 실행 "
+            f"가능을 뜻하지 않는다 — 지금 유료 실행하면 모든 영상이 QA 에서 "
+            f"fail-closed 로 떨어진다. 설치: {TRANSCRIBER_INSTALL_HINT}")
+    return True, (f"전사 백엔드 실행 가능: {', '.join(live)} "
+                  f"(인터프리터 {sys.executable}, 루트 {root})")
 
 
 VIDEO_PREREQUISITES = (

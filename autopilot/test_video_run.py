@@ -20,7 +20,9 @@
 from __future__ import annotations
 
 import io
+import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -509,6 +511,97 @@ class TestVideoRehearsal(VideoRunTestCase):
             ok, detail = run._probe_openmontage_transcriber()
         self.assertFalse(ok)
         self.assertIn("transcriber", detail)
+
+    # -- 러너빌리티(파일 존재 ≠ 실행 가능) ---------------------------------
+    #
+    # transcriber.py 는 있는데 faster_whisper/whisperx 가 어디에도 없으면
+    # QA 전사는 100% 실패한다. 파일 존재만 보는 프로브는 그 상태에서
+    # [충족] 을 찍어 유료 실행을 승인해버린다 — 막으려던 사고 그 자체다.
+    # 아래 테스트들은 이 머신의 실제 패키지 상태에 의존하지 않도록
+    # 인터프리터 프로브(subprocess)를 고정한다.
+
+    def _fake_om(self, payload=None, returncode=0, stdout=None, exc=None):
+        """OpenMontage 루트를 만들고 인터프리터 프로브를 고정한다."""
+        fake = os.path.join(self.tmp, "om-run")
+        os.makedirs(os.path.join(fake, "tools", "analysis"), exist_ok=True)
+        with open(os.path.join(fake, "tools", "analysis", "transcriber.py"),
+                  "w") as fh:
+            fh.write("# stub\n")
+        if stdout is None:
+            stdout = json.dumps(payload or {})
+
+        def fake_run(*a, **kw):
+            if exc is not None:
+                raise exc
+            return subprocess.CompletedProcess(a[0] if a else [], returncode,
+                                               stdout=stdout, stderr="boom")
+        import video_qa
+        return fake, mock.patch.object(video_qa, "DEFAULT_OPENMONTAGE_ROOT",
+                                       fake), mock.patch.object(
+            run.subprocess, "run", side_effect=fake_run)
+
+    def test_prereq_unmet_when_no_transcription_backend_imports(self):
+        """전사 백엔드가 하나도 import 되지 않으면 [미충족] 이어야 한다."""
+        fake, root_patch, run_patch = self._fake_om(
+            {"backends": {"faster_whisper": False, "whisperx": False}})
+        with root_patch, run_patch:
+            ok, detail = run._probe_openmontage_transcriber()
+        self.assertFalse(ok, "백엔드가 없는데 충족으로 보고했다 (거짓 초록)")
+        self.assertIn("faster_whisper", detail)
+
+    def test_prereq_met_when_a_backend_imports(self):
+        fake, root_patch, run_patch = self._fake_om(
+            {"backends": {"faster_whisper": True, "whisperx": False}})
+        with root_patch, run_patch:
+            ok, detail = run._probe_openmontage_transcriber()
+        self.assertTrue(ok)
+        self.assertIn("faster_whisper", detail)
+
+    def test_prereq_met_with_whisperx_alternative(self):
+        fake, root_patch, run_patch = self._fake_om(
+            {"backends": {"faster_whisper": False, "whisperx": True}})
+        with root_patch, run_patch:
+            ok, _ = run._probe_openmontage_transcriber()
+        self.assertTrue(ok)
+
+    def test_prereq_unmet_when_probe_output_unparseable(self):
+        """해석 못 한 출력은 통과가 아니라 실패다 (fail closed)."""
+        fake, root_patch, run_patch = self._fake_om(stdout="not json")
+        with root_patch, run_patch:
+            ok, _ = run._probe_openmontage_transcriber()
+        self.assertFalse(ok)
+
+    def test_prereq_unmet_when_probe_process_fails(self):
+        fake, root_patch, run_patch = self._fake_om(stdout="", returncode=1)
+        with root_patch, run_patch:
+            ok, _ = run._probe_openmontage_transcriber()
+        self.assertFalse(ok)
+
+    def test_prereq_unmet_when_probe_raises(self):
+        fake, root_patch, run_patch = self._fake_om(
+            exc=subprocess.TimeoutExpired("py", 1))
+        with root_patch, run_patch:
+            ok, _ = run._probe_openmontage_transcriber()
+        self.assertFalse(ok)
+
+    def test_prereq_probe_runs_in_the_openmontage_root(self):
+        """autopilot venv 가 아니라 OpenMontage 쪽에서 돌아야 한다."""
+        fake = os.path.join(self.tmp, "om-cwd")
+        os.makedirs(os.path.join(fake, "tools", "analysis"))
+        open(os.path.join(fake, "tools", "analysis", "transcriber.py"),
+             "w").close()
+        seen = {}
+
+        def fake_run(cmd, **kw):
+            seen["cwd"] = kw.get("cwd")
+            seen["cmd"] = cmd
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout=json.dumps({"backends": {}}), stderr="")
+        import video_qa
+        with mock.patch.object(video_qa, "DEFAULT_OPENMONTAGE_ROOT", fake), \
+                mock.patch.object(run.subprocess, "run", side_effect=fake_run):
+            run._probe_openmontage_transcriber()
+        self.assertEqual(seen["cwd"], fake)
 
     def test_prereq_probe_makes_no_network_call(self):
         """프로브는 파일시스템 + 로컬 import 만 본다."""
