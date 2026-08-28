@@ -20,8 +20,26 @@ REQUIRED_ATTRIBUTION_FIELDS = (
 )
 
 
+# --- 영상(UGC) 행 인식 — 추가만 하고 텍스트 경로는 건드리지 않는다 -------------
+# 영상 발행 근거는 video_handoff 가 원장 옆 publish_evidence.jsonl 에 쓴다.
+# 스키마가 텍스트 글과 다르므로(훅 패턴·writer_variant 가 없고, 대신 잡/QA 계보가
+# 있다) 같은 필수 필드표로 재면 영상 행은 전부 '귀속 불완전'로 잘못 집계된다.
+VIDEO_POST_TYPE = "video_ugc"
+
+REQUIRED_VIDEO_ATTRIBUTION_FIELDS = (
+    "post_type", "country", "product_id",
+    "video_job_id", "video_run_id", "qa_report_ref", "media_id",
+)
+
+
+def is_video_row(row):
+    return (row or {}).get("post_type") == VIDEO_POST_TYPE
+
+
 def attribution_gaps(row):
-    return [field for field in REQUIRED_ATTRIBUTION_FIELDS if not row.get(field)]
+    fields = (REQUIRED_VIDEO_ATTRIBUTION_FIELDS if is_video_row(row)
+              else REQUIRED_ATTRIBUTION_FIELDS)
+    return [field for field in fields if not row.get(field)]
 
 
 def _is_dry(row):
