@@ -40,6 +40,7 @@ HERMES_PROVIDER = "openai-codex"
 HERMES_MODEL = "gpt-image-2-medium"
 PROVIDER_MODEL = "gpt-image-2"
 ASPECT_RATIO = "portrait"
+PORTRAIT_PIXEL_SIZE = "1024x1536"
 
 HERMES_HOME = os.path.expanduser(
     os.environ.get("HERMES_HOME", "~/.hermes"))
@@ -80,6 +81,10 @@ class PromptError(CodexBridgeError):
 
 class ProviderMismatch(CodexBridgeError):
     """The dispatcher answered from a provider/model we did not pin."""
+
+
+class AspectMismatch(CodexBridgeError):
+    """The dispatcher did not actually return the pinned portrait output."""
 
 
 class DispatchError(CodexBridgeError):
@@ -229,6 +234,20 @@ def edit_image(prompt: str, source_images: Optional[Iterable[str]],
         raise DispatchError(
             f"expected an image-to-image edit, got modality={result.get('modality')!r}")
 
+    observed_aspect = result.get("aspect_ratio")
+    if observed_aspect != ASPECT_RATIO:
+        raise AspectMismatch(
+            "refusing non-portrait result: "
+            f"observed aspect_ratio={observed_aspect!r}; "
+            f"expected {ASPECT_RATIO!r}")
+
+    observed_pixels = result.get("pixel_size")
+    if observed_pixels is not None and observed_pixels != PORTRAIT_PIXEL_SIZE:
+        raise AspectMismatch(
+            "refusing non-portrait result: "
+            f"observed pixel_size={observed_pixels!r}; "
+            f"expected {PORTRAIT_PIXEL_SIZE!r}")
+
     produced = result.get("image")
     if not isinstance(produced, str) or not produced.strip():
         raise DispatchError("dispatcher returned no image path")
@@ -246,7 +265,10 @@ def edit_image(prompt: str, source_images: Optional[Iterable[str]],
         "hermes_provider": HERMES_PROVIDER,
         "hermes_model": HERMES_MODEL,
         "provider_model": PROVIDER_MODEL,
-        "aspect_ratio": ASPECT_RATIO,
+        "aspect_ratio": observed_aspect,
+        "observed_aspect_ratio": observed_aspect,
+        "requested_aspect_ratio": ASPECT_RATIO,
+        "observed_pixel_size": observed_pixels,
         "prompt": prompt,
         "output_path": out_abs,
         "output_sha256": _sha256_file(out_abs),
@@ -256,7 +278,7 @@ def edit_image(prompt: str, source_images: Optional[Iterable[str]],
         ],
         "size": result.get("size"),
         "quality": result.get("quality"),
-        "pixel_size": result.get("pixel_size"),
+        "pixel_size": observed_pixels,
         "image_source": result.get("image_source"),
         "input_image_count": result.get("input_image_count"),
     }

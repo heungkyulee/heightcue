@@ -10,7 +10,9 @@ import json
 import os
 import shutil
 import struct
+import sys
 import tempfile
+import textwrap
 import unittest
 import zlib
 
@@ -268,6 +270,175 @@ class ManifestTest(BridgeTestBase):
                           output_path=deep,
                           runner=_FakeRunner(self.good_result()))
         self.assertTrue(os.path.exists(deep))
+
+
+# ---------------------------------------------------------------------------
+# observed portrait output enforcement
+# ---------------------------------------------------------------------------
+
+
+class PortraitEnforcementTest(BridgeTestBase):
+    """Portrait must be VERIFIED in the result, not merely requested."""
+
+    def test_portrait_pixel_size_constant(self):
+        self.assertEqual(bridge.PORTRAIT_PIXEL_SIZE, "1024x1536")
+
+    def test_rejects_non_portrait_aspect_ratio(self):
+        bad = self.good_result()
+        bad["aspect_ratio"] = "landscape"
+        bad["pixel_size"] = "1536x1024"
+        with self.assertRaises(bridge.AspectMismatch):
+            bridge.edit_image(prompt="edit", source_images=[self.src_a],
+                              output_path=self.out, runner=_FakeRunner(bad))
+        self.assertFalse(os.path.exists(self.out),
+                         "must not write a non-portrait output")
+
+    def test_rejects_missing_aspect_ratio(self):
+        bad = self.good_result()
+        bad.pop("aspect_ratio")
+        with self.assertRaises(bridge.AspectMismatch):
+            bridge.edit_image(prompt="edit", source_images=[self.src_a],
+                              output_path=self.out, runner=_FakeRunner(bad))
+        self.assertFalse(os.path.exists(self.out))
+
+    def test_rejects_non_portrait_pixel_size(self):
+        bad = self.good_result()
+        bad["pixel_size"] = "1536x1024"
+        with self.assertRaises(bridge.AspectMismatch):
+            bridge.edit_image(prompt="edit", source_images=[self.src_a],
+                              output_path=self.out, runner=_FakeRunner(bad))
+        self.assertFalse(os.path.exists(self.out))
+
+    def test_allows_absent_pixel_size(self):
+        ok = self.good_result()
+        ok.pop("pixel_size")
+        manifest = bridge.edit_image(prompt="edit", source_images=[self.src_a],
+                                     output_path=self.out,
+                                     runner=_FakeRunner(ok))
+        self.assertTrue(os.path.exists(self.out))
+        self.assertIsNone(manifest["pixel_size"])
+        self.assertEqual(manifest["aspect_ratio"], "portrait")
+
+    def test_manifest_records_observed_values(self):
+        ok = self.good_result()
+        manifest = bridge.edit_image(prompt="edit", source_images=[self.src_a],
+                                     output_path=self.out,
+                                     runner=_FakeRunner(ok))
+        self.assertEqual(manifest["aspect_ratio"], ok["aspect_ratio"])
+        self.assertEqual(manifest["pixel_size"], ok["pixel_size"])
+        self.assertEqual(manifest["observed_aspect_ratio"], ok["aspect_ratio"])
+        self.assertEqual(manifest["observed_pixel_size"], ok["pixel_size"])
+        self.assertEqual(manifest["requested_aspect_ratio"],
+                         bridge.ASPECT_RATIO)
+
+
+# ---------------------------------------------------------------------------
+# default dispatch seam
+# ---------------------------------------------------------------------------
+
+
+class DefaultRunnerTest(unittest.TestCase):
+    def test_default_dispatch_is_the_subprocess_runner(self):
+        """runner= is a test seam only; production must not be bypassable."""
+        called = {}
+
+        def spy(payload):
+            called["payload"] = payload
+            raise bridge.DispatchError("stop here")
+
+        real = bridge._subprocess_runner
+        bridge._subprocess_runner = spy
+        try:
+            with self.assertRaises(bridge.DispatchError):
+                bridge.edit_image(prompt="edit", source_images=[__file__],
+                                  output_path="/tmp/never-written.png")
+        finally:
+            bridge._subprocess_runner = real
+        self.assertIn("payload", called,
+                      "edit_image did not dispatch via _subprocess_runner")
+
+
+# ---------------------------------------------------------------------------
+# _subprocess_runner branches (no network, no paid call)
+# ---------------------------------------------------------------------------
+
+
+class SubprocessRunnerTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="codexrunner-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        for name in ("HERMES_PYTHON", "HERMES_DISPATCHER_FILE",
+                     "HERMES_AGENT_DIR"):
+            self.addCleanup(setattr, bridge, name, getattr(bridge, name))
+
+    def _fake_agent_dir(self, body):
+        agent = os.path.join(self.tmp, "agent")
+        tools = os.path.join(agent, "tools")
+        os.makedirs(tools, exist_ok=True)
+        open(os.path.join(tools, "__init__.py"), "w").close()
+        mod = os.path.join(tools, "image_generation_tool.py")
+        with open(mod, "w", encoding="utf-8") as fh:
+            fh.write(textwrap.dedent(body))
+        bridge.HERMES_PYTHON = sys.executable
+        bridge.HERMES_AGENT_DIR = agent
+        bridge.HERMES_DISPATCHER_FILE = mod
+        return agent
+
+    def test_missing_hermes_python(self):
+        bridge.HERMES_PYTHON = os.path.join(self.tmp, "no-such-python")
+        with self.assertRaises(bridge.DispatchError) as ctx:
+            bridge._subprocess_runner({"prompt": "x"})
+        self.assertIn("venv python not found", str(ctx.exception))
+
+    def test_missing_dispatcher_file(self):
+        bridge.HERMES_PYTHON = sys.executable
+        bridge.HERMES_DISPATCHER_FILE = os.path.join(self.tmp, "no-tool.py")
+        with self.assertRaises(bridge.DispatchError) as ctx:
+            bridge._subprocess_runner({"prompt": "x"})
+        self.assertIn("dispatcher not found", str(ctx.exception))
+
+    def test_no_result_marker(self):
+        self._fake_agent_dir("""
+            def _handle_image_generate(args, **kw):
+                raise RuntimeError("boom-no-marker")
+        """)
+        with self.assertRaises(bridge.DispatchError) as ctx:
+            bridge._subprocess_runner({"prompt": "x"})
+        self.assertIn("no result", str(ctx.exception))
+
+    def test_unparseable_blob_after_marker(self):
+        self._fake_agent_dir("""
+            import sys
+
+            def _handle_image_generate(args, **kw):
+                sys.stdout.write("@@RESULT@@{not json at all")
+                return {"success": True}
+        """)
+        with self.assertRaises(bridge.DispatchError) as ctx:
+            bridge._subprocess_runner({"prompt": "x"})
+        self.assertIn("Unparseable", str(ctx.exception))
+
+    def test_non_object_result(self):
+        self._fake_agent_dir("""
+            def _handle_image_generate(args, **kw):
+                return "[1, 2, 3]"
+        """)
+        with self.assertRaises(bridge.DispatchError) as ctx:
+            bridge._subprocess_runner({"prompt": "x"})
+        self.assertIn("not an object", str(ctx.exception))
+
+    def test_parses_dict_result_and_forwards_payload(self):
+        self._fake_agent_dir("""
+            import json
+
+            def _handle_image_generate(args, **kw):
+                return {"success": True, "echo": args}
+        """)
+        out = bridge._subprocess_runner({"prompt": "hello", "aspect_ratio":
+                                         "portrait"})
+        self.assertTrue(out["success"])
+        self.assertEqual(out["echo"]["prompt"], "hello")
+        self.assertEqual(out["echo"]["aspect_ratio"], "portrait")
 
 
 # ---------------------------------------------------------------------------
