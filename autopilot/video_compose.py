@@ -96,6 +96,16 @@ DISCLOSURE_PIXEL_VERIFICATION_HOOK = (
 
 PROBE_TIMEOUT = 60
 
+#: `npx remotion` 은 **Remotion 프로젝트 디렉터리 안에서만** 해석된다.
+#: cwd 를 주지 않으면 임의의 디렉터리에서
+#: `npm error could not determine executable to run` 로 죽고, 그러면 프로브가
+#: '없다'고 보고해 멀쩡한 설치에서도 잡이 멈춘다. 반대로 이 경로가 실제로
+#: 없으면 **그대로 실패해야 한다** — FFmpeg·HyperFrames 로 내려가는 경로는
+#: 이 파일에 존재하지 않는다 (fail closed).
+REMOTION_COMPOSER_DIR = os.path.expanduser(
+    os.environ.get("HEIGHTCUE_REMOTION_COMPOSER_DIR",
+                   "~/OpenMontage/remotion-composer"))
+
 
 # ---------------------------------------------------------------------------
 # 예외
@@ -461,10 +471,22 @@ def assert_measured_output(path: str, expected_seconds: int) -> Dict[str, Any]:
 
 
 def _subprocess_probe() -> Dict[str, Any]:
-    """프로덕션 기본 프로브: `npx remotion versions`. 렌더는 하지 않는다."""
+    """프로덕션 기본 프로브: `npx remotion versions`. 렌더는 하지 않는다.
+
+    **반드시 컴포저 디렉터리에서 실행한다.** `npx` 는 cwd 의 node_modules 를
+    보고 실행 파일을 찾으므로, cwd 없이 돌리면 임의 디렉터리에서
+    `npm error could not determine executable to run` 으로 죽는다.
+    디렉터리가 없으면 대체 런타임으로 내려가지 않고 **그대로 실패한다**.
+    """
+    composer_dir = REMOTION_COMPOSER_DIR
+    if not os.path.isdir(composer_dir):
+        raise RuntimeUnavailableError(
+            f"Remotion 컴포저 디렉터리가 없다: {composer_dir!r} — 프로브를 "
+            "실행할 수 없다. FFmpeg·HyperFrames 로 대체하지 않고 중단한다")
     try:
         proc = subprocess.run(["npx", "remotion", "versions"],
                               capture_output=True, text=True,
+                              cwd=composer_dir,
                               timeout=PROBE_TIMEOUT)
     except (OSError, subprocess.SubprocessError) as exc:
         raise RuntimeUnavailableError(
@@ -476,10 +498,16 @@ def _subprocess_probe() -> Dict[str, Any]:
     # 라벨이 붙은 줄에서만 버전을 읽는다. 아무 dotted 토큰이나 집으면 Node·
     # Chrome·FFmpeg 버전을 Remotion 버전으로 계보에 남길 수 있다 —
     # '틀렸지만 그럴듯한' 버전은 없느니만 못하다.
+    # 실측: `npx remotion versions` 는 통일 버전일 때 "On version: 4.0.484"
+    # 한 줄만 내놓고 그 줄엔 'remotion' 이란 낱말이 없다. 'remotion' 만
+    # 찾으면 멀쩡한 설치에서 버전이 빈 채로 fail-closed 된다.
+    VERSION_LABELS = ("remotion", "on version")
     version = ""
     for line in (proc.stdout or "").splitlines():
         low = line.lower()
-        if "remotion" not in low:
+        if not any(label in low for label in VERSION_LABELS):
+            continue
+        if "node.js" in low or "node =" in low:
             continue
         for token in line.replace(":", " ").replace(",", " ").split():
             token = token.strip("v()[]")

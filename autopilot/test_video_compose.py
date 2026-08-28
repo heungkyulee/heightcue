@@ -16,6 +16,7 @@ import struct
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -786,6 +787,83 @@ class TestInputLineage(ComposeTestBase):
         sb["market"] = "JP"
         with self.assertRaises(vcm.ComposeLineageError):
             self.compose(storyboard=sb, renderer=RendererSpy())
+
+
+class TestProbeRunsInComposerDir(unittest.TestCase):
+    """`npx remotion` 은 컴포저 디렉터리 안에서만 해석된다.
+
+    cwd 없이 돌리면 임의 디렉터리에서 `npm error could not determine
+    executable to run` 으로 죽어, 멀쩡한 설치를 '없음'으로 오판한다.
+    반대로 디렉터리가 없으면 **fail closed** — 다른 런타임으로 내려가지 않는다.
+    """
+
+    def test_composer_dir_is_a_named_constant_not_inline(self):
+        self.assertTrue(hasattr(vcm, "REMOTION_COMPOSER_DIR"))
+        self.assertTrue(str(vcm.REMOTION_COMPOSER_DIR).strip())
+        import inspect
+        src = inspect.getsource(vcm._subprocess_probe)
+        self.assertIn("REMOTION_COMPOSER_DIR", src)
+        self.assertNotIn("OpenMontage/remotion-composer", src,
+                         "경로를 함수 안에 직접 박지 않는다 — 상수를 쓴다")
+
+    def test_probe_passes_composer_dir_as_cwd(self):
+        seen = {}
+
+        class _Proc:
+            returncode = 0
+            stdout = "Remotion: 4.0.484\n"
+            stderr = ""
+
+        def fake_run(cmd, **kwargs):
+            seen["cmd"] = cmd
+            seen["cwd"] = kwargs.get("cwd")
+            return _Proc()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(vcm, "REMOTION_COMPOSER_DIR", tmp), \
+                    mock.patch.object(vcm.subprocess, "run", fake_run):
+                result = vcm._subprocess_probe()
+        self.assertEqual(seen["cmd"], ["npx", "remotion", "versions"])
+        self.assertEqual(seen["cwd"], tmp)
+        self.assertTrue(result["available"])
+        self.assertEqual(result["version"], "4.0.484")
+
+    def test_missing_composer_dir_fails_closed(self):
+        called = []
+
+        with mock.patch.object(vcm, "REMOTION_COMPOSER_DIR",
+                               "/nonexistent/remotion-composer"), \
+                mock.patch.object(vcm.subprocess, "run",
+                                  lambda *a, **k: called.append(a)):
+            with self.assertRaises(vcm.RuntimeUnavailableError):
+                vcm._subprocess_probe()
+        self.assertEqual(called, [],
+                         "디렉터리가 없으면 프로브를 실행조차 하지 않는다")
+
+    def test_missing_composer_dir_blocks_compose_without_fallback(self):
+        """계약: 디렉터리가 없으면 합성 자체가 거부된다 (대체 렌더 금지)."""
+        with mock.patch.object(vcm, "REMOTION_COMPOSER_DIR",
+                               "/nonexistent/remotion-composer"):
+            with self.assertRaises(vcm.RuntimeUnavailableError):
+                vcm.assert_remotion_available()
+
+    def test_real_remotion_versions_banner_yields_a_version(self):
+        """실측 출력 형태. 통일 버전이면 'On version:' 한 줄만 나온다 —
+        'remotion' 낱말만 찾으면 멀쩡한 설치가 버전 없음으로 막힌다."""
+
+        class _Proc:
+            returncode = 0
+            stdout = ("Node.JS = v22.23.2, OS = darwin\n\n"
+                      "On version: 4.0.484\n- @remotion/bundler\n- remotion\n")
+            stderr = ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(vcm, "REMOTION_COMPOSER_DIR", tmp), \
+                    mock.patch.object(vcm.subprocess, "run",
+                                      lambda *a, **k: _Proc()):
+                result = vcm._subprocess_probe()
+        self.assertEqual(result["version"], "4.0.484",
+                         "Node 버전(22.23.2)을 집어서도 안 된다")
 
 
 if __name__ == "__main__":
