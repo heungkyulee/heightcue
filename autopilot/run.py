@@ -25,6 +25,7 @@ import sys
 
 import analytics
 import comments as comments_mod
+import evidence
 import generate
 import improve
 import post_check
@@ -124,14 +125,33 @@ def make_and_publish_value(cfg, dry_run=False, country="KR"):
               if is_real_publication(p)][-10:]
     kind = "story" if (episodes and random.random() < 0.6) else "info"
     episode = random.choice(episodes) if (kind == "story" and episodes) else None
-    topic = None if episode else "성장기 수면·식사·검진 중 하나를 사실 위주로 정리"
+
+    # info 글은 증거 원장의 검증된 원자에서 주제를 받는다. 원장이 비면
+    # 지어낸 사실이 나가는 대신 story로 폴백한다(무근거 발행 금지).
+    atom = None
+    topic = None
+    if not episode:
+        atom = evidence.pick_atom(cfg, country=country, channel="threads")
+        if atom:
+            topic = evidence.to_generation_topic(atom)
+        elif episodes:
+            log("증거 원장 비어 있음 — story로 폴백")
+            kind, episode = "story", random.choice(episodes)
+        else:
+            topic = "성장기 수면·식사·검진 중 하나를 사실 위주로 정리"
 
     def build():
         result = generate.make_value_post(cfg, kind, episode=episode, topic=topic,
                                           recent=recent, dry_run=dry_run, country=country)
         return result["text"]
 
-    return _publish_with_retry(cfg, build, country, "value", dry_run=dry_run)
+    meta_extra = {"atom_id": atom["atom_id"], "topic": atom["topic"],
+                  "distance": atom["distance"]} if atom else None
+    media, reason = _publish_with_retry(cfg, build, country, "value",
+                                        dry_run=dry_run, meta_extra=meta_extra)
+    if atom and media and not dry_run:
+        evidence.mark_used(cfg, atom["atom_id"], "threads", country, media)
+    return media, reason
 
 
 def _kr_sales(cfg, hint, dry_run):
@@ -223,6 +243,14 @@ def daily(cfg, dry_run=False):
         analytics.collect(cfg, dry_run=dry_run)
     except Exception as e:
         record_error(cfg, "analytics.collect", e)
+
+    # 증거 원장 승격 — Aside 수집 워커가 쌓은 원본을 claim_gate에 태운다.
+    # 가치글 생성보다 반드시 먼저 실행되어야 당일 원자가 공급된다.
+    try:
+        evidence.promote_pending(cfg)
+    except Exception as e:
+        record_error(cfg, "evidence.promote_pending", e)
+
     hint = improve.playbook_hint(cfg)
 
     # KR 판매 1
