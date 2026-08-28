@@ -43,7 +43,9 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
+import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
 
@@ -79,6 +81,27 @@ CREDENTIAL_KEY_MARKERS = (
     "token", "secret", "password", "passwd", "api_key", "apikey",
     "cookie", "authorization", "credential", "private_key", "session_id",
 )
+
+#: 값 안에 숨은 자격증명. 키 이름만 보면 ``caption`` 에 박힌 토큰이 그대로
+#: 발행 워커에게 넘어간다 — 실제로 테스트는 직렬화된 패킷에서 "bearer " 를
+#: 찾고 있었고, 그래서 테스트가 구현보다 엄격했다.
+CREDENTIAL_VALUE_PATTERNS = (
+    re.compile(r"\bbearer\s+[A-Za-z0-9._\-]{8,}", re.I),
+    re.compile(r"\bauthorization\s*[:=]", re.I),
+    re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]+"),
+    re.compile(r"\b(?:api[_\-]?key|access[_\-]?token|secret|passwd|password)"
+               r"\s*[:=]\s*\S{6,}", re.I),
+    re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{8,}"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{16,}"),
+)
+
+#: 존재 확인 시임의 3상태 계약. ``found`` 는 dict 로 표현한다
+#: (``{"media_id", "post_url"}``).
+EXISTENCE_NOT_FOUND = "not_found"
+EXISTENCE_UNKNOWN = "unknown"
+
+#: 존재 확인이 이 시간 안에 답하지 않으면 **모름**으로 간주하고 막는다.
+DEFAULT_EXISTENCE_TIMEOUT_SECONDS = 30.0
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +180,13 @@ def assert_no_credentials(value: Any, _path: str = "packet") -> Any:
     elif isinstance(value, (list, tuple)):
         for i, sub in enumerate(value):
             assert_no_credentials(sub, f"{_path}[{i}]")
+    elif isinstance(value, str):
+        for pattern in CREDENTIAL_VALUE_PATTERNS:
+            if pattern.search(value):
+                raise CredentialLeak(
+                    f"{_path} 의 **값** 안에 자격증명처럼 보이는 문자열이 있다 "
+                    f"(패턴: {pattern.pattern!r}) — 무해한 키 아래 숨은 토큰도 "
+                    f"내보내지 않는다")
     return value
 
 
@@ -282,18 +312,6 @@ def build_packet(*, job: VideoJob, entry: Dict[str, Any], video_path: str,
 # ---------------------------------------------------------------------------
 
 
-def _attach_packet(ledger: vq.VideoLedger, job_id: str,
-                   packet: Dict[str, Any]) -> Dict[str, Any]:
-    """패킷을 원장 엔트리에 붙인다 (원장의 지정 락 아래에서)."""
-    with ledger._locked():                       # noqa: SLF001 — 지정 락 구현
-        data = ledger._read()                    # noqa: SLF001
-        entry = ledger._find(data, job_id)       # noqa: SLF001
-        entry["packet"] = packet
-        entry["updated_at"] = time.time()
-        ledger._write(data)                      # noqa: SLF001
-        return dict(entry)
-
-
 def promote_to_ready(ledger: vq.VideoLedger, *, job_id: str, worker_id: str,
                      manifest: vc.GenerationManifest,
                      qa_report: Optional[QAReport],
@@ -305,6 +323,12 @@ def promote_to_ready(ledger: vq.VideoLedger, *, job_id: str, worker_id: str,
     QA 게이트를 먼저 통과시키고, 그다음 패킷을 조립하고, 마지막에 원장을
     옮긴다. 앞 두 단계 중 하나라도 실패하면 원장은 손대지 않는다 — 잡은
     ``generating`` 에 남고 발행 대기열에는 아무것도 나타나지 않는다.
+
+    **원자성:** 상태 전이와 패킷 부착은 ``ledger.complete(..., packet=...)``
+    한 번의 락 획득·한 번의 쓰기로 함께 확정된다. 예전처럼 둘로 나누면 그
+    사이에서 죽은 잡이 패킷 없는 ``ready_to_publish`` 로 남는데, 그런 잡은
+    ``list_ready`` 에 보이지 않고 ``claim`` 이 조용히 되돌려 영원히 발행되지
+    않는다 — fail-safe 지만 잡 하나가 소리 없이 사라진다.
     """
     entry = ledger.get(job_id)
     job = VideoJob.from_dict(entry["job"])
@@ -340,9 +364,32 @@ def promote_to_ready(ledger: vq.VideoLedger, *, job_id: str, worker_id: str,
                           disclosure=disclosure, affiliate_link=affiliate_link,
                           qa_report_path=qa_report_path, account=account)
 
-    ledger.complete(job_id, worker_id, manifest=manifest,
-                    qa_report=qa_report, handoff=handoff)
-    return _attach_packet(ledger, job_id, packet)
+    return ledger.complete(job_id, worker_id, manifest=manifest,
+                           qa_report=qa_report, handoff=handoff,
+                           packet=packet)
+
+
+def _refund_attempt(ledger: vq.VideoLedger, job_id: str) -> None:
+    """방금 소모된 시도 한 번을 돌려준다 (원장의 지정 락 아래에서).
+
+    잡 자체는 멀쩡한데 원장 엔트리가 잘못 채워져 있는 경우에만 쓴다.
+    """
+    with ledger._locked():                       # noqa: SLF001 — 지정 락 구현
+        data = ledger._read()                    # noqa: SLF001
+        entry = ledger._find(data, job_id)       # noqa: SLF001
+        entry["attempts"] = max(0, int(entry.get("attempts", 0)) - 1)
+        ledger._write(data)                      # noqa: SLF001
+
+
+def _assert_owner(ledger: vq.VideoLedger, job_id: str, worker_id: str) -> None:
+    """``worker_id`` 가 이 잡의 살아 있는 리스 보유자인지 확인한다.
+
+    소유권 판정은 원장의 ``_require_holder`` 가 유일한 권위다 — 여기서 리스
+    규칙을 두 번째로 구현하지 않는다.
+    """
+    with ledger._locked():                       # noqa: SLF001 — 지정 락 구현
+        entry = ledger._find(ledger._read(), job_id)      # noqa: SLF001
+        ledger._require_holder(entry, worker_id)          # noqa: SLF001
 
 
 def list_ready(ledger: vq.VideoLedger) -> List[Dict[str, Any]]:
@@ -369,7 +416,10 @@ def claim(ledger: vq.VideoLedger, worker_id: str,
         return None
     packet = entry.get("packet")
     if not packet:
-        # QA 게이트를 우회해 원장에 직접 꽂힌 잡. 발행하지 않고 되돌린다.
+        # QA 게이트를 우회해 원장에 직접 꽂힌 잡. 발행하지 않고 되돌리되,
+        # **시도 예산은 돌려준다** — 잡의 잘못이 아니라 원장이 잘못 채워진
+        # 것이므로, 운영자가 반복해서 claim 한다고 데드레터로 밀려나면 안 된다.
+        _refund_attempt(ledger, entry["job_id"])
         ledger.retry(entry["job_id"], worker_id, reason="packet_missing")
         raise HandoffError(
             f"{entry['job_id']}: 핸드오프 패킷이 없다 — 발행 대기열에 들어올 수 없는 잡이다")
@@ -421,12 +471,16 @@ def mark_published(ledger: vq.VideoLedger, job_id: str, worker_id: str, *,
 
     다른 media_id 로 두 번째 확정을 시도하면 **글이 두 개 올라갔다는 뜻**이므로
     조용히 덮어쓰지 않고 ``DuplicatePublishRisk`` 로 죽는다.
+
+    선(先)조회는 **빠른 경로**일 뿐이다 — 조회와 확정 사이에 다른 확인이
+    끼어드는 경합(TOCTOU)이 있으므로, 진짜 판정은 ``publish_done`` 이
+    거절했을 때 다시 읽어서 내린다. 그래야 진 쪽이 ``StateError`` 가 아니라
+    의미가 맞는 ``DuplicatePublishRisk`` 로 죽는다.
     """
     _require_media_id(media_id)
     _require_post_url(post_url)
 
-    entry = ledger.get(job_id)
-    if entry["state"] == STATE_PUBLISHED:
+    def _already(entry: Dict[str, Any]) -> Dict[str, Any]:
         existing = entry.get("media_id")
         if existing == media_id:
             return dict(entry, idempotent=True, deduplicated=deduplicated)
@@ -434,24 +488,83 @@ def mark_published(ledger: vq.VideoLedger, job_id: str, worker_id: str, *,
             f"{job_id}: 이미 {existing!r} 로 발행 확정됐는데 {media_id!r} 로 다시 "
             f"확정하려 한다 — 글이 중복 발행됐을 수 있다. 사람이 확인해야 한다")
 
-    entry = ledger.publish_done(job_id, worker_id, media_id)
+    entry = ledger.get(job_id)
+    if entry["state"] == STATE_PUBLISHED:
+        return _already(entry)
+
+    try:
+        entry = ledger.publish_done(job_id, worker_id, media_id)
+    except vq.StateError:
+        # 경합에서 졌다 — 그 사이 누군가 확정했다. 상태를 다시 읽어 판정한다.
+        current = ledger.get(job_id)
+        if current["state"] == STATE_PUBLISHED:
+            return _already(current)
+        raise
     packet = entry.get("packet") or {}
     _record_evidence(ledger, entry, packet, media_id, post_url, deduplicated)
-    ledger._event(job_id=job_id, run_id=entry.get("run_id", ""),       # noqa: SLF001
-                  event="publish_evidence", media_id=media_id,
-                  post_url=post_url, deduplicated=deduplicated)
+    append_event(ledger.events_path, {
+        "job_id": job_id, "run_id": entry.get("run_id", ""),
+        "event": "publish_evidence", "media_id": media_id,
+        "post_url": post_url, "deduplicated": deduplicated,
+    })
     return dict(entry, idempotent=False, deduplicated=deduplicated)
+
+
+def _check_existence(packet: Dict[str, Any],
+                     existence_checker: Callable[[Dict[str, Any]], Any],
+                     timeout_seconds: float) -> Any:
+    """존재 확인 시임을 **3상태**로 읽는다: found / not_found / unknown.
+
+    시임이 예외를 던지거나, 제한 시간 안에 답하지 않거나, ``None`` 처럼
+    모호한 값을 돌려주면 전부 ``EXISTENCE_UNKNOWN`` 이다. 모르면 막는다 —
+    '자기 네트워크 오류를 삼키고 None 을 돌려주는' 가장 흔한 구현이
+    '글이 없다'로 읽히면 중복 발행이 그대로 나간다.
+    """
+    box: Dict[str, Any] = {}
+
+    def run() -> None:
+        try:
+            box["value"] = existence_checker(packet)
+        except BaseException as exc:             # noqa: BLE001 — 전부 '모름'
+            box["error"] = exc
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(timeout=float(timeout_seconds))
+    if thread.is_alive() or "error" in box:
+        return EXISTENCE_UNKNOWN
+
+    value = box.get("value")
+    if isinstance(value, dict) and value.get("media_id") and value.get("post_url"):
+        return value
+    if value == EXISTENCE_NOT_FOUND:
+        return EXISTENCE_NOT_FOUND
+    return EXISTENCE_UNKNOWN
 
 
 def publish_video(ledger: vq.VideoLedger, job_id: str, worker_id: str, *,
                   publisher: Callable[[Dict[str, Any]], Dict[str, Any]],
                   existence_checker: Optional[
-                      Callable[[Dict[str, Any]], Optional[Dict[str, Any]]]] = None
+                      Callable[[Dict[str, Any]], Any]] = None,
+                  existence_timeout_seconds: float =
+                      DEFAULT_EXISTENCE_TIMEOUT_SECONDS,
                   ) -> Dict[str, Any]:
     """실제 발행 한 번. 중복 발행 위험이 있으면 **호출 자체를 하지 않는다**.
 
     ``publisher`` 는 패킷을 받아 ``{"media_id", "post_url"}`` 을 돌려주는
     호출 가능 객체다. 이 모듈은 네트워크를 모른다.
+
+    ``existence_checker`` 계약(3상태, fail-closed)
+    ---------------------------------------------
+    * **발견**: ``{"media_id": ..., "post_url": ...}`` — 그 글을 채택한다.
+    * **없음**: ``EXISTENCE_NOT_FOUND`` 상수를 **명시적으로** 돌려준다.
+      이것만이 재발행을 허용한다.
+    * **모름**: ``EXISTENCE_UNKNOWN``, 예외, 제한 시간 초과, 그 밖의 모든 값
+      (``None`` 포함) — ``DuplicatePublishRisk`` 로 막는다.
+
+    ``None`` 을 '없음'으로 읽지 않는 이유: 자기 네트워크 오류를 삼키고
+    ``None`` 을 돌려주는 구현이 가장 흔하며, 그것이 '없음'이 되면 중복 글이
+    그대로 나간다. 모름은 사람이 확인해야 한다.
     """
     entry = ledger.get(job_id)
     if entry["state"] == STATE_PUBLISHED:
@@ -473,8 +586,14 @@ def publish_video(ledger: vq.VideoLedger, job_id: str, worker_id: str, *,
                 f"publish_attempted_at={entry.get('publish_attempted_at')!r}). "
                 f"발행 API 가 이미 성공했을 수 있으므로 existence_checker 없이는 "
                 f"재발행하지 않는다")
-        found = existence_checker(packet)
-        if found:
+        found = _check_existence(packet, existence_checker,
+                                 existence_timeout_seconds)
+        if found is EXISTENCE_UNKNOWN or found == EXISTENCE_UNKNOWN:
+            raise DuplicatePublishRisk(
+                f"{job_id}: 존재 확인이 '모름'으로 끝났다 (예외·시간초과·모호한 "
+                f"반환값). 이미 올라간 글이 있을 수 있으므로 재발행하지 않는다 — "
+                f"확실히 없다면 체커가 EXISTENCE_NOT_FOUND 를 돌려줘야 한다")
+        if found != EXISTENCE_NOT_FOUND:
             return mark_published(ledger, job_id, worker_id,
                                   media_id=_require_media_id(found["media_id"]),
                                   post_url=_require_post_url(found["post_url"]),
@@ -495,8 +614,17 @@ def mark_failed(ledger: vq.VideoLedger, job_id: str,
     기본 경로는 ``publishing -> retryable_failed -> queued|dead_letter`` 이며,
     전부 ``video_queue`` 가 계약을 통과시켜 수행한다. 종결 상태(published /
     dead_letter)에서 부르면 계약이 StateError 로 거절한다.
+
+    ``dead_letter=True`` 는 잡을 **종결**시키므로 소유권을 요구한다. 리스를
+    쥔 워커만 자기 잡을 데드레터로 보낼 수 있다 — 그러지 않으면 아무 프로세스나
+    CLI 한 줄로 남의 in-flight 잡을 죽일 수 있다.
     """
     if dead_letter:
+        if not worker_id:
+            raise vq.LeaseError(
+                f"{job_id}: dead-letter 는 잡을 종결시킨다 — 소유자 worker_id 를 "
+                f"밝히지 않으면 수행하지 않는다")
+        _assert_owner(ledger, job_id, worker_id)
         return ledger.dead_letter(job_id, reason=reason or "publish_failed")
     return ledger.retry(job_id, worker_id, reason=reason or "publish_failed")
 

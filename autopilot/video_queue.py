@@ -531,11 +531,16 @@ class VideoLedger:
     def complete(self, job_id: str, worker_id: str,
                  manifest: Optional[vc.GenerationManifest] = None,
                  qa_report: Optional[vc.QAReport] = None,
-                 handoff: Optional[vc.PublishingHandoff] = None) -> Dict[str, Any]:
+                 handoff: Optional[vc.PublishingHandoff] = None,
+                 packet: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """생성 완료. QA 통과면 ready_to_publish, 실패면 qa_failed 로 간다.
 
         저장되는 잡 문서는 ``VideoJob.validate()`` 를 다시 통과해야 하므로
         계보가 어긋난 산출물은 원장에 들어오지 못한다.
+
+        ``packet`` 은 발행 핸드오프 패킷이다. **상태 확정과 같은 락·같은 쓰기**
+        안에서 붙는다 — 두 번 나누면 그 사이에서 죽은 잡이 패킷 없는
+        ``ready_to_publish`` 로 남아 영원히 발행되지 않는다.
         """
         with self._locked():
             data = self._read()
@@ -554,8 +559,11 @@ class VideoLedger:
 
             entry["job"] = job.to_dict()
             entry["lease"] = None
+            if packet is not None and passed:
+                entry["packet"] = packet
             self._set_state(entry, target, worker_id=worker_id,
-                            qa_passed=passed)
+                            qa_passed=passed,
+                            packet_attached=bool(packet is not None and passed))
             self._write(data)
             return dict(entry)
 

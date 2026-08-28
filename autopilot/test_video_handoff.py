@@ -308,22 +308,46 @@ class ClaimTest(HandoffTestCase):
                          f"단독 소유가 깨졌다: {winners}")
 
     def test_concurrent_claims_across_processes(self):
-        """서브프로세스 경합 — 스레드 GIL 뒤에 숨는 경쟁을 배제한다."""
+        """서브프로세스 경합 — 스레드 GIL 뒤에 숨는 경쟁을 배제한다.
+
+        네 프로세스를 파일시스템 게이트로 **동시에 풀어준다**. 게이트가 없으면
+        인터프리터 기동 시간 차로 자연히 직렬화돼 ``wins == 1`` 이 공짜로
+        성립하고, 테스트가 아무것도 증명하지 못한다.
+        """
         self._ready()
+        gate = os.path.join(self.tmp, "GO")
+        runner = os.path.join(self.tmp, "gated_claim.py")
+        with open(runner, "w", encoding="utf-8") as fh:
+            fh.write(
+                "import os, sys, time\n"
+                "sys.path.insert(0, %r)\n"
+                "import video_handoff as vh, video_queue as vq\n"
+                "gate, root, worker = sys.argv[1], sys.argv[2], sys.argv[3]\n"
+                "import json\n"
+                "deadline = time.time() + 60\n"
+                "while not os.path.exists(gate) and time.time() < deadline:\n"
+                "    time.sleep(0.001)\n"
+                "try:\n"
+                "    claimed = vh.claim(vq.VideoLedger(root), worker)\n"
+                "except Exception as exc:\n"
+                "    claimed = None\n"
+                "print(json.dumps({'claimed': bool(claimed)}))\n" % BASE)
+
         procs = [
-            subprocess.Popen(
-                [PY, os.path.join(BASE, "video_handoff.py"), "--root", self.tmp,
-                 "claim", "--worker", f"proc-{i}", "--json"],
-                cwd=BASE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True)
+            subprocess.Popen([PY, runner, gate, self.tmp, f"proc-{i}"],
+                             cwd=BASE, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
             for i in range(4)
         ]
+        import time as _t
+        _t.sleep(1.0)                      # 전원이 게이트 앞에 도달할 시간
+        with open(gate, "w", encoding="utf-8") as fh:
+            fh.write("go")
         wins = 0
         for p in procs:
-            out, err = p.communicate(timeout=60)
+            out, err = p.communicate(timeout=90)
             self.assertEqual(p.returncode, 0, f"stderr={err}")
-            payload = json.loads(out)
-            if payload.get("claimed"):
+            if json.loads(out)["claimed"]:
                 wins += 1
         self.assertEqual(wins, 1, "서브프로세스 둘 이상이 같은 영상을 가져갔다")
 
@@ -506,9 +530,10 @@ class RecoveredJobTest(HandoffTestCase):
             return {"media_id": "MID-NEW",
                     "post_url": "https://www.threads.net/@heightcue/post/8"}
 
-        result = vh.publish_video(self.ledger, "job-1", "pub-2",
-                                  publisher=publisher,
-                                  existence_checker=lambda packet: None)
+        result = vh.publish_video(
+            self.ledger, "job-1", "pub-2", publisher=publisher,
+            # '없음'은 명시적이어야 한다 — None 은 '모름'으로 읽혀 막힌다.
+            existence_checker=lambda packet: vh.EXISTENCE_NOT_FOUND)
         self.assertEqual(calls, ["job-1"])
         self.assertFalse(result["deduplicated"])
         self.assertEqual(result["media_id"], "MID-NEW")
@@ -645,6 +670,313 @@ class AnalyticsCompatTest(unittest.TestCase):
         self.assertIn("qa_report_ref",
                       analytics.attribution_gaps(
                           {"post_type": analytics.VIDEO_POST_TYPE}))
+
+
+# ---------------------------------------------------------------------------
+# 9. 수정 라운드 1 — 원자성 · 존재확인 3상태 · 데드레터 소유권
+# ---------------------------------------------------------------------------
+
+
+class CrashDuringPromotionError(RuntimeError):
+    """테스트 전용: 원장 쓰기 도중 프로세스가 죽는 상황을 흉내낸다."""
+
+
+class AtomicPromotionTest(HandoffTestCase):
+    """승격은 **한 번의 락 획득 안에서** 끝나야 한다.
+
+    상태 확정과 패킷 부착이 두 번의 쓰기로 갈리면, 그 사이에서 죽은 잡이
+    ``ready_to_publish`` 인데 패킷이 없는 상태로 남는다 — ``list_ready`` 에
+    보이지 않고 ``claim`` 이 조용히 retry 로 되돌리는 유령 잡이다.
+    """
+
+    def _promote_crashing_at(self, nth_write):
+        """n 번째 원장 쓰기에서 프로세스가 죽는다고 가정하고 승격을 시도한다."""
+        job = self._job()
+        self.ledger.enqueue(job)
+        self.ledger.claim("gen-1")
+        real_write = self.ledger._write
+        state = {"n": 0}
+
+        def crashing_write(data):
+            state["n"] += 1
+            if state["n"] == nth_write:
+                real_write(data)                 # 디스크에는 반영된 뒤 죽는다
+                raise CrashDuringPromotionError(f"write#{nth_write}")
+            return real_write(data)
+
+        self.ledger._write = crashing_write
+        try:
+            vh.promote_to_ready(
+                self.ledger, job_id="job-1", worker_id="gen-1",
+                manifest=make_manifest(), qa_report=passing_qa(),
+                video_path=self.video_path, caption=CAPTION,
+                disclosure=DISCLOSURE, affiliate_link=AFFILIATE_LINK,
+                qa_report_path=self.qa_path, account="heightcue")
+        except CrashDuringPromotionError:
+            pass
+        finally:
+            self.ledger._write = real_write
+        return state["n"]
+
+    def test_promotion_writes_the_ledger_exactly_once(self):
+        job = self._job()
+        self.ledger.enqueue(job)
+        self.ledger.claim("gen-1")
+        writes = []
+        real_write = self.ledger._write
+
+        def counting_write(data):
+            writes.append(1)
+            return real_write(data)
+
+        self.ledger._write = counting_write
+        try:
+            vh.promote_to_ready(
+                self.ledger, job_id="job-1", worker_id="gen-1",
+                manifest=make_manifest(), qa_report=passing_qa(),
+                video_path=self.video_path, caption=CAPTION,
+                disclosure=DISCLOSURE, affiliate_link=AFFILIATE_LINK,
+                qa_report_path=self.qa_path, account="heightcue")
+        finally:
+            self.ledger._write = real_write
+        self.assertEqual(len(writes), 1,
+                         "승격이 원장을 두 번 이상 썼다 — 그 사이에서 죽으면 "
+                         "패킷 없는 ready 잡이 남는다")
+
+    def test_no_crash_point_can_leave_a_packetless_ready_job(self):
+        for nth in (1, 2, 3):
+            with self.subTest(write=nth):
+                self.setUp()
+                self._promote_crashing_at(nth)
+                for entry in self.ledger.list_jobs(vc.STATE_READY_TO_PUBLISH):
+                    self.assertTrue(
+                        entry.get("packet"),
+                        f"{nth}번째 쓰기에서 죽자 패킷 없는 ready 잡이 남았다")
+
+    def test_successful_promotion_still_attaches_the_packet(self):
+        entry = self._ready()
+        self.assertEqual(entry["state"], vc.STATE_READY_TO_PUBLISH)
+        self.assertTrue(entry["packet"]["video_sha256"])
+        self.assertEqual(len(vh.list_ready(self.ledger)), 1)
+
+    def test_packet_attachment_leaves_an_audit_trail(self):
+        self._ready()
+        with open(os.path.join(self.tmp, "events.jsonl"),
+                  encoding="utf-8") as fh:
+            events = [json.loads(l) for l in fh]
+        self.assertTrue(
+            any(e.get("packet_attached") for e in events),
+            "패킷 부착이 이벤트 로그에 아무 흔적도 남기지 않았다")
+
+
+class ExistenceCheckerContractTest(HandoffTestCase):
+    """존재 확인 시임은 **모른다**를 말할 수 있어야 하고, 모르면 막아야 한다."""
+
+    def _recovered_and_claimed(self):
+        self._ready()
+        vh.claim(self.ledger, "pub-dead", lease_seconds=0.01)
+        import time as _t
+        _t.sleep(0.05)
+        self.ledger.recover_stale()
+        self.ledger.claim("gen-2")
+        vh.promote_to_ready(
+            self.ledger, job_id="job-1", worker_id="gen-2",
+            manifest=make_manifest(), qa_report=passing_qa(),
+            video_path=self.video_path, caption=CAPTION, disclosure=DISCLOSURE,
+            affiliate_link=AFFILIATE_LINK, qa_report_path=self.qa_path,
+            account="heightcue")
+        vh.claim(self.ledger, "pub-2")
+        calls = []
+
+        def publisher(packet):
+            calls.append(packet["job_id"])
+            return {"media_id": "MID-NEW",
+                    "post_url": "https://www.threads.net/@heightcue/post/8"}
+
+        return publisher, calls
+
+    def test_none_is_unknown_not_absence_and_fails_closed(self):
+        """가장 흔히 작성될 구현 — 자기 예외를 삼키고 None 을 돌려주는 체커."""
+        publisher, calls = self._recovered_and_claimed()
+        with self.assertRaises(vh.DuplicatePublishRisk):
+            vh.publish_video(self.ledger, "job-1", "pub-2",
+                             publisher=publisher,
+                             existence_checker=lambda packet: None)
+        self.assertEqual(calls, [], "'모름'인데 발행 호출이 나갔다")
+
+    def test_explicit_unknown_fails_closed(self):
+        publisher, calls = self._recovered_and_claimed()
+        with self.assertRaises(vh.DuplicatePublishRisk):
+            vh.publish_video(
+                self.ledger, "job-1", "pub-2", publisher=publisher,
+                existence_checker=lambda packet: vh.EXISTENCE_UNKNOWN)
+        self.assertEqual(calls, [])
+
+    def test_raising_checker_fails_closed(self):
+        publisher, calls = self._recovered_and_claimed()
+
+        def boom(packet):
+            raise OSError("network down")
+
+        with self.assertRaises(vh.DuplicatePublishRisk):
+            vh.publish_video(self.ledger, "job-1", "pub-2",
+                             publisher=publisher, existence_checker=boom)
+        self.assertEqual(calls, [])
+
+    def test_explicit_not_found_is_the_only_thing_that_permits_publish(self):
+        publisher, calls = self._recovered_and_claimed()
+        result = vh.publish_video(
+            self.ledger, "job-1", "pub-2", publisher=publisher,
+            existence_checker=lambda packet: vh.EXISTENCE_NOT_FOUND)
+        self.assertEqual(calls, ["job-1"])
+        self.assertEqual(result["media_id"], "MID-NEW")
+
+    def test_slow_checker_times_out_as_unknown(self):
+        publisher, calls = self._recovered_and_claimed()
+
+        def slow(packet):
+            import time as _t
+            _t.sleep(5)
+            return vh.EXISTENCE_NOT_FOUND
+
+        with self.assertRaises(vh.DuplicatePublishRisk):
+            vh.publish_video(self.ledger, "job-1", "pub-2",
+                             publisher=publisher, existence_checker=slow,
+                             existence_timeout_seconds=0.2)
+        self.assertEqual(calls, [], "체커가 응답을 안 했는데 발행이 나갔다")
+
+
+class DeadLetterOwnershipTest(HandoffTestCase):
+    """남의 in-flight 잡을 CLI 한 줄로 죽일 수 없어야 한다."""
+
+    def test_dead_letter_requires_a_worker_id(self):
+        self._ready()
+        vh.claim(self.ledger, "pub-1")
+        with self.assertRaises(vc.ContractError):
+            vh.mark_failed(self.ledger, "job-1", None, reason="정책 위반",
+                           dead_letter=True)
+        self.assertEqual(self.ledger.get("job-1")["state"], vc.STATE_PUBLISHING)
+
+    def test_non_owner_cannot_dead_letter_an_in_flight_job(self):
+        self._ready()
+        vh.claim(self.ledger, "pub-1")
+        with self.assertRaises(vq.LeaseError):
+            vh.mark_failed(self.ledger, "job-1", "intruder", reason="hijack",
+                           dead_letter=True)
+        self.assertEqual(self.ledger.get("job-1")["state"], vc.STATE_PUBLISHING)
+
+    def test_owner_can_still_dead_letter(self):
+        self._ready()
+        vh.claim(self.ledger, "pub-1")
+        entry = vh.mark_failed(self.ledger, "job-1", "pub-1",
+                               reason="정책 위반", dead_letter=True)
+        self.assertEqual(entry["state"], vc.STATE_DEAD_LETTER)
+
+    def test_cli_refuses_dead_letter_without_worker(self):
+        self._ready()
+        proc = subprocess.run(
+            [PY, os.path.join(BASE, "video_handoff.py"), "--root", self.tmp,
+             "mark-failed", "job-1", "--reason", "x", "--dead-letter"],
+            cwd=BASE, capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertNotIn("Traceback", proc.stderr)
+
+
+class IdempotencyRaceTest(HandoffTestCase):
+    """두 확인이 동시에 들어와도 진 쪽은 **의미가 맞는** 예외로 죽어야 한다."""
+
+    def test_losing_acknowledgement_reports_duplicate_risk_not_state_error(self):
+        self._ready()
+        vh.claim(self.ledger, "pub-1")
+        barrier = threading.Barrier(2)
+        errors, wins = [], []
+
+        def ack(media_id):
+            barrier.wait()
+            try:
+                wins.append(vh.mark_published(
+                    self.ledger, "job-1", "pub-1", media_id=media_id,
+                    post_url=f"https://www.threads.net/@h/post/{media_id}"))
+            except Exception as exc:             # noqa: BLE001 — 종류를 검사한다
+                errors.append(exc)
+
+        threads = [threading.Thread(target=ack, args=(m,))
+                   for m in ("MID-A", "MID-B")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+        self.assertEqual(len(wins), 1, f"둘 다 확정됐다: {wins}")
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], vh.DuplicatePublishRisk)
+
+
+class CredentialValueScanTest(HandoffTestCase):
+    """키 이름만 보면, 무해한 키의 **값**에 숨은 토큰이 그대로 나간다."""
+
+    def test_bearer_token_in_a_value_is_rejected(self):
+        with self.assertRaises(vh.CredentialLeak):
+            vh.assert_no_credentials(
+                {"caption": "키 크는 법\nAuthorization: Bearer abc123def456ghi"})
+
+    def test_jwt_in_a_value_is_rejected(self):
+        with self.assertRaises(vh.CredentialLeak):
+            vh.assert_no_credentials(
+                {"note": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhIjoxfQ.sig"})
+
+    def test_ordinary_caption_and_links_still_pass(self):
+        vh.assert_no_credentials({
+            "caption": CAPTION,
+            "affiliate_link": AFFILIATE_LINK,
+            "post_url": "https://www.threads.net/@heightcue/post/1",
+        })
+
+
+class ClaimRetryBudgetTest(HandoffTestCase):
+    """운영자가 망가진 잡을 여러 번 claim 해도 시도 예산을 태우지 않는다."""
+
+    def test_packet_missing_claim_does_not_consume_an_attempt(self):
+        self._ready()
+        # QA 게이트를 우회해 원장에 직접 꽂힌 잡을 흉내낸다: 패킷만 제거.
+        with self.ledger._locked():
+            data = self.ledger._read()
+            self.ledger._find(data, "job-1").pop("packet", None)
+            self.ledger._write(data)
+        before = self.ledger.get("job-1").get("attempts", 0)
+        for _ in range(5):
+            with self.assertRaises(vh.HandoffError):
+                vh.claim(self.ledger, "pub-1")
+            # 운영자가 다시 발행 대기열로 올려놓고 또 claim 하는 상황.
+            with self.ledger._locked():
+                data = self.ledger._read()
+                entry = self.ledger._find(data, "job-1")
+                entry["state"] = vc.STATE_READY_TO_PUBLISH
+                entry["lease"] = None
+                self.ledger._write(data)
+        entry = self.ledger.get("job-1")
+        self.assertEqual(entry.get("attempts", 0), before,
+                         "망가진 잡을 claim 할 때마다 시도가 소모됐다")
+        self.assertNotEqual(entry["state"], vc.STATE_DEAD_LETTER,
+                            "운영자의 claim 반복이 잡을 데드레터로 밀어냈다")
+        self.assertEqual(entry.get("attempts", 0), before,
+                         "망가진 잡을 claim 할 때마다 시도가 소모됐다")
+        self.assertNotEqual(entry["state"], vc.STATE_DEAD_LETTER,
+                            "운영자의 claim 반복이 잡을 데드레터로 밀어냈다")
+
+
+class VideoRowDetectionTest(unittest.TestCase):
+
+    def test_video_row_without_post_type_is_still_a_video_row(self):
+        row = {"country": "KR", "product_id": "p-1", "video_job_id": "job-1",
+               "video_run_id": "run-1", "qa_report_ref": "/tmp/qa.json",
+               "media_id": "MID-1"}
+        self.assertTrue(analytics.is_video_row(row),
+                        "post_type 가 빠진 영상 행이 텍스트 표로 채점됐다")
+        self.assertEqual(analytics.attribution_gaps(row), ["post_type"])
+
+    def test_text_row_is_not_mistaken_for_video(self):
+        self.assertFalse(analytics.is_video_row(
+            {"post_type": "sales", "product_id": "c"}))
 
 
 if __name__ == "__main__":

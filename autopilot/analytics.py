@@ -32,8 +32,16 @@ REQUIRED_VIDEO_ATTRIBUTION_FIELDS = (
 )
 
 
+#: post_type 가 빠져도 영상 행임을 알아볼 수 있는 표식. 영상 행을 텍스트
+#: 필수 필드표로 재면 없던 '귀속 불완전'이 무더기로 잡힌다.
+VIDEO_ROW_MARKERS = ("video_job_id", "video_run_id", "video_sha256")
+
+
 def is_video_row(row):
-    return (row or {}).get("post_type") == VIDEO_POST_TYPE
+    row = row or {}
+    if row.get("post_type") == VIDEO_POST_TYPE:
+        return True
+    return any(row.get(marker) for marker in VIDEO_ROW_MARKERS)
 
 
 def attribution_gaps(row):
