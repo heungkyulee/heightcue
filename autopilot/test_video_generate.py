@@ -947,9 +947,19 @@ class TestImageUrlGate(CutBase):
                          "https://cdn.example.test/a.png")
 
     def test_generate_cuts_refuses_without_uploader_before_any_request(self):
+        """어댑터를 주지 않아도 지출은 0건이다.
+
+        이제 기본값은 프로덕션 fal 업로더(무료 스토리지)다. 자격증명이 없으면
+        업로드 단계에서 죽는데, 그 시점은 여전히 fal 생성 요청 **이전**이므로
+        지출 0건이라는 성질은 그대로다 — 게이트를 약화하지 않았다.
+        """
+        import fal_upload
+        from unittest import mock
         client = FakeFalClient()
-        with self.assertRaises(vg.CutRequestError):
-            self.run_cuts(client=client, image_url_for=None)
+        with mock.patch.dict(os.environ, {"FAL_KEY": ""}, clear=False):
+            with self.assertRaises((vg.CutRequestError,
+                                    fal_upload.FalUploadError)):
+                self.run_cuts(client=client, image_url_for=None)
         self.assertEqual(client.requests, [])
 
     def test_every_dispatched_request_carries_an_https_image_url(self):
@@ -1046,6 +1056,74 @@ class TestResolveCostSignature(unittest.TestCase):
                          (None, vg.COST_SOURCE_PROVIDER_ESTIMATE, 0.2))
         self.assertEqual(vg._resolve_cost(None),
                          (None, vg.COST_SOURCE_LOCAL_ESTIMATE, None))
+
+
+class TestExplicitSourceAssetSelection(unittest.TestCase):
+    """자산이 여러 장일 때 '첫 번째'를 조용히 집지 않는다.
+
+    us-ddrops-kids-600iu 는 공식 자산 3장 중 1장만 깨끗한 히어로 컷이고
+    나머지는 A+ 마케팅 합성물과 성분표 뒷면이다. 순서에 기대면 I2V 레퍼런스로
+    성분표가 들어갈 수 있다. 운영자가 sha256 으로 명시하게 만든다.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.paths, self.digests = [], []
+        for i in range(3):
+            p = os.path.join(self.tmp, f"a{i}.png")
+            with open(p, "wb") as fh:
+                fh.write(b"asset-bytes-%d" % i)
+            self.paths.append(p)
+            self.digests.append(vg.sha256_file(p))
+
+    def manifest(self):
+        return {"product_id": "p-1", "market": "US",
+                "assets": [{"local_path": p, "sha256": d,
+                            "rights_basis": "official_product_page"}
+                           for p, d in zip(self.paths, self.digests)]}
+
+    def test_explicit_sha256_selects_that_asset_not_the_first(self):
+        got = vg.select_source_asset(self.manifest(), product_id="p-1",
+                                     market="US",
+                                     asset_sha256=self.digests[2])
+        self.assertEqual(got["path"], self.paths[2])
+        self.assertEqual(got["sha256"], self.digests[2])
+        self.assertEqual(got["selection_basis"], "operator_explicit_sha256")
+
+    def test_unknown_sha256_is_rejected_not_silently_defaulted(self):
+        with self.assertRaises(vg.SourceAssetError) as ctx:
+            vg.select_source_asset(self.manifest(), product_id="p-1",
+                                   market="US", asset_sha256="deadbeef")
+        self.assertIn("deadbeef", str(ctx.exception))
+
+    def test_ambiguous_multi_asset_manifest_refuses_to_guess(self):
+        with self.assertRaises(vg.SourceAssetError) as ctx:
+            vg.select_source_asset(self.manifest(), product_id="p-1",
+                                   market="US")
+        self.assertIn("3", str(ctx.exception))
+
+    def test_single_asset_manifest_still_works_without_explicit_choice(self):
+        m = self.manifest()
+        m["assets"] = m["assets"][:1]
+        got = vg.select_source_asset(m, product_id="p-1", market="US")
+        self.assertEqual(got["path"], self.paths[0])
+        self.assertEqual(got["selection_basis"], "sole_asset")
+
+
+class TestFalUploadAdapterFitsTheSeam(unittest.TestCase):
+    """fal_upload.make_image_url_for 가 generate_cuts 시드와 실제로 맞물리는가."""
+
+    def test_frame_manifest_keys_match_the_uploader_contract(self):
+        import fal_upload
+        src = inspect.getsource(fal_upload.make_image_url_for)
+        for key in ("output_path", "output_sha256", "cut_index"):
+            self.assertIn(key, src)
+
+    def test_default_uploader_is_the_fal_adapter(self):
+        self.assertIsNotNone(getattr(vg, "default_image_url_for", None))
+        import fal_upload
+        self.assertIs(vg.default_image_url_for, fal_upload.make_image_url_for)
 
 
 if __name__ == "__main__":

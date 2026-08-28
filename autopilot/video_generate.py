@@ -95,6 +95,13 @@ MAX_FIRST_FRAME_CANDIDATES = 3
 #: truth layer 에 허용되는 유일한 권리 근거.
 ALLOWED_RIGHTS_BASES = ("official_product_page",)
 
+#: 프로덕션 첫프레임 업로드 어댑터 팩토리. fal 은 로컬 경로를 읽을 수 없으므로
+#: 첫 프레임을 fetchable https URL 로 올려야 한다 (업로드는 무료 스토리지).
+try:  # pragma: no cover - 임포트 실패는 어댑터 부재로 페일클로즈
+    from fal_upload import make_image_url_for as default_image_url_for
+except Exception:  # pragma: no cover
+    default_image_url_for = None
+
 DEFAULT_PROJECTS_ROOT = os.path.expanduser("~/OpenMontage/projects")
 
 PREFLIGHT_TIMEOUT = 60
@@ -384,8 +391,16 @@ def preflight_codex(*, runner: Optional[Callable] = None) -> Dict[str, Any]:
 
 
 def select_source_asset(asset_manifest: Any, *, product_id: str,
-                        market: str) -> Dict[str, Any]:
-    """검증된 공식 상품 자산 하나를 고른다. 아니면 SourceAssetError."""
+                        market: str,
+                        asset_sha256: Optional[str] = None) -> Dict[str, Any]:
+    """검증된 공식 상품 자산 하나를 고른다. 아니면 SourceAssetError.
+
+    자산이 여러 장이면 **순서로 고르지 않는다.** 공식 상품 페이지는 히어로 컷,
+    A+ 마케팅 합성물, 성분표 뒷면을 한 매니페스트에 섞어 담는다 (실제 사례:
+    us-ddrops-kids-600iu 는 3장 중 1장만 I2V 레퍼런스로 쓸 수 있는 깨끗한
+    제품 사진이다). 여기에는 샷 타입 분류기가 없고, 있는 척 하지도 않는다 —
+    운영자가 ``asset_sha256`` 으로 명시하게 하고 그 선택을 계보에 남긴다.
+    """
     if not isinstance(asset_manifest, dict):
         raise SourceAssetError(
             f"asset_manifest 는 product_assets 매니페스트 dict 여야 한다: "
@@ -408,9 +423,31 @@ def select_source_asset(asset_manifest: Any, *, product_id: str,
             "자산 매니페스트에 자산이 없다 — 검증된 공식 상품 이미지 없이는 "
             "첫 프레임을 만들 수 없다 (스톡·생성 이미지로 대체 금지)")
 
-    asset = assets[0]
+    wanted = str(asset_sha256 or "").strip().lower()
+    if wanted:
+        matches = [a for a in assets
+                   if isinstance(a, dict)
+                   and str(a.get("sha256")
+                           or a.get("source_sha256") or "").lower() == wanted]
+        if not matches:
+            raise SourceAssetError(
+                f"asset_sha256={wanted!r} 인 자산이 매니페스트에 없다 — "
+                "운영자가 지정한 그 바이트가 아니면 대신 고르지 않는다")
+        if len(matches) > 1:
+            raise SourceAssetError(
+                f"asset_sha256={wanted!r} 가 {len(matches)}건과 일치한다")
+        asset, selection_basis = matches[0], "operator_explicit_sha256"
+    elif len(assets) > 1:
+        raise SourceAssetError(
+            f"자산이 {len(assets)}장이라 어느 것이 I2V 레퍼런스인지 모른다 — "
+            "샷 타입 분류기가 없으므로 순서로 추측하지 않는다. "
+            "asset_sha256= 로 명시할 것 "
+            f"(후보: {[str((a or {}).get('sha256'))[:12] for a in assets]})")
+    else:
+        asset, selection_basis = assets[0], "sole_asset"
+
     if not isinstance(asset, dict):
-        raise SourceAssetError(f"assets[0] 는 dict 여야 한다: {asset!r}")
+        raise SourceAssetError(f"선택된 자산은 dict 여야 한다: {asset!r}")
 
     basis = str(asset.get("rights_basis")
                 or (asset.get("rights") or {}).get("basis") or "")
@@ -434,7 +471,8 @@ def select_source_asset(asset_manifest: Any, *, product_id: str,
             f"소스 자산 해시가 매니페스트와 다르다: {actual} != {declared} "
             f"({path}) — product_assets 가 검증한 그 바이트가 아니다")
 
-    return {"path": path, "sha256": actual, "rights_basis": basis}
+    return {"path": path, "sha256": actual, "rights_basis": basis,
+            "selection_basis": selection_basis}
 
 
 # ---------------------------------------------------------------------------
@@ -461,6 +499,7 @@ def generate_first_frames(storyboard: Any, asset_manifest: Dict[str, Any], *,
                           projects_root: Optional[str] = None,
                           bridge: Optional[Callable] = None,
                           preflight_runner: Optional[Callable] = None,
+                          asset_sha256: Optional[str] = None,
                           ) -> Dict[str, Any]:
     """컷마다 정확히 한 장씩 첫 프레임을 만든다.
 
@@ -492,7 +531,7 @@ def generate_first_frames(storyboard: Any, asset_manifest: Dict[str, Any], *,
 
     # 2) 소스 자산이 검증된 공식 이미지인지 (역시 지출 전에).
     source = select_source_asset(asset_manifest, product_id=product_id,
-                                 market=market)
+                                 market=market, asset_sha256=asset_sha256)
 
     # 3) 프롬프트를 전부 먼저 만든다 — 하나라도 비면 아무것도 생성하지 않는다.
     #    컷 인덱스가 겹치면 같은 output_path 를 두 번 쓰게 되고, 뒤 컷이 앞
@@ -549,6 +588,7 @@ def generate_first_frames(storyboard: Any, asset_manifest: Dict[str, Any], *,
                 "source_path": source["path"],
                 "source_sha256": source["sha256"],
                 "source_rights_basis": source["rights_basis"],
+                "source_selection_basis": source["selection_basis"],
                 "output_path": output_path,
                 "output_sha256": sha256_file(output_path),
                 "output_bytes": os.path.getsize(output_path),
@@ -1146,12 +1186,16 @@ def generate_cuts(storyboard: Any, frames_manifest: Dict[str, Any], *,
     failure: Optional[str] = None
 
     # 요청을 **전부 먼저** 조립한다 — image_url 하나라도 못 만들면 지출 0건.
+    # 어댑터를 주지 않으면 프로덕션 fal 업로더를 쓴다 (업로드는 무료 스토리지).
+    # 그래도 fal 은 로컬 경로를 읽을 수 없으므로 어댑터 자체는 필수다.
     uploader = image_url_for
     ordered = sorted(frames, key=lambda f: int(f.get("cut_index") or 0))
     if uploader is None:
-        raise CutRequestError(
-            "image_url_for 업로드 어댑터가 없다 — fal 은 로컬 경로를 읽을 수 "
-            "없고 file:// 은 4xx 로 실패한다. 요청을 한 건도 보내지 않는다")
+        if default_image_url_for is None:  # pragma: no cover - 모듈 부재
+            raise CutRequestError(
+                "image_url_for 업로드 어댑터가 없다 — fal 은 로컬 경로를 읽을 수 "
+                "없고 file:// 은 4xx 로 실패한다. 요청을 한 건도 보내지 않는다")
+        uploader = default_image_url_for()
     requests_by_index: Dict[int, Dict[str, Any]] = {}
     for frame in ordered:
         index = int(frame.get("cut_index") or 0)
