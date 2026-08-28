@@ -340,6 +340,17 @@ def daily(cfg, dry_run=False):
     except Exception as e:
         record_error(cfg, "evidence.promote_pending", e)
 
+    # 콘텐츠 팀용 소재 브리프 갱신 (state/content-brief.md).
+    # 봇이 쓰는 원장과 같은 원자를 사람이 읽는 카드로 렌더링한다.
+    try:
+        import briefing
+        path = state_path(cfg, "content-brief.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(briefing.build(cfg))
+        log(f"콘텐츠 브리프 갱신: {path}")
+    except Exception as e:
+        record_error(cfg, "briefing.build", e)
+
     hint = improve.playbook_hint(cfg)
 
     # KR 판매 1
@@ -850,10 +861,24 @@ def main():
         except Exception as e:
             record_error(cfg, f"post_{country.lower()}_{ptype}", e)
     elif cmd == "comments":
+        # 매시간 실행이라 앞 실행이 LLM 대기로 길어지면 겹칠 수 있다.
+        # 겹치면 같은 댓글을 두 프로세스가 각각 '미응답'으로 보고 두 번 답할 위험이 있어
+        # 파일 락으로 직렬화한다. 이미 돌고 있으면 조용히 건너뛴다.
+        import fcntl
+        lock_path = state_path(cfg, "comments.lock")
+        lock_fd = open(lock_path, "w")
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            log("댓글 응대 건너뜀: 이전 실행이 아직 진행 중")
+            return
         try:
             comments_mod.run(cfg, dry_run=dry)
         except Exception as e:
             record_error(cfg, "comments", e)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            lock_fd.close()
     elif cmd == "weekly":
         improve.run(cfg, dry_run=dry)
     elif cmd == "rehearsal":
