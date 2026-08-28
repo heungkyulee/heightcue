@@ -36,8 +36,10 @@ import json
 import os
 import re
 import struct
+import zlib
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 from video_contracts import (MARKETS, ProductEvidence, atomic_write_json,
                              append_event)
@@ -56,7 +58,21 @@ MAX_ASSETS_PER_PRODUCT = 6
 MIN_ASSET_DIMENSION = 200
 
 #: 허용 포맷 (매직 바이트로 확인된 것만).
-ALLOWED_FORMATS = ("png", "jpeg")
+ALLOWED_FORMATS = ("png", "jpeg", "webp")
+
+#: 시장별 공식 상품 이미지 CDN allowlist.
+#: `rights_basis` 는 호출자가 적어 넣는 문자열이라 그 자체로는 증거가 되지 못한다.
+#: 이미지가 **실제로** 공식 CDN 에서 왔는지는 호스트로만 확인할 수 있다.
+#: 여기 없는 호스트(크리에이터 인스타 CDN·경쟁사 서버·스톡)는 크게 거부한다.
+OFFICIAL_IMAGE_HOSTS: Dict[str, Tuple[str, ...]] = {
+    "KR": ("coupangcdn.com", "coupang.com"),
+    "US": ("media-amazon.com", "ssl-images-amazon.com", "images-amazon.com",
+           "amazon.com"),
+}
+
+#: CDN 콘텐츠 협상을 고정한다. requests 기본값 `Accept: */*` 를 그대로 두면
+#: 쿠팡 CDN 정책이 바뀌는 순간 WebP 가 돌아와 KR 트랙이 통째로 실패한다.
+IMAGE_ACCEPT_HEADER = "image/png,image/jpeg,image/webp"
 
 #: truth layer 에 들어올 수 있는 유일한 권리 근거.
 #: 크리에이터 사진·스톡·경쟁사·생성 이미지는 전부 여기 없다 — 곧 거부된다.
@@ -119,6 +135,43 @@ class AssetDimensionError(ProductAssetError):
     """관측된 픽셀 크기가 MIN_ASSET_DIMENSION 미만."""
 
 
+class AssetTakedownError(ProductAssetError):
+    """삭제 요청된 자산을 다시 수집하려 했다 — takedown 대장은 denylist 다."""
+
+
+# ---------------------------------------------------------------------------
+# 공식 CDN 호스트 검증
+# ---------------------------------------------------------------------------
+
+
+def _host_of(url: str) -> str:
+    return (urlsplit(url).hostname or "").lower().rstrip(".")
+
+
+def is_official_image_host(url: str, market: str) -> bool:
+    """URL 의 호스트가 해당 시장 공식 CDN allowlist 에 속하는가.
+
+    라벨 경계로만 매칭한다 — `evil-coupangcdn.com.attacker.example` 같은
+    유사 접미사 호스트는 통과하지 못한다.
+    """
+    host = _host_of(url)
+    if not host:
+        return False
+    for allowed in OFFICIAL_IMAGE_HOSTS.get(market, ()):
+        if host == allowed or host.endswith("." + allowed):
+            return True
+    return False
+
+
+def require_official_image_host(url: str, market: str, *, what: str) -> None:
+    if not is_official_image_host(url, market):
+        raise AssetProvenanceError(
+            f"{what} 의 호스트 {_host_of(url)!r} 가 {market} 공식 이미지 CDN "
+            f"allowlist {OFFICIAL_IMAGE_HOSTS.get(market, ())} 에 없다: {url!r} — "
+            "rights_basis 문자열은 호출자가 적어 넣을 뿐 증거가 아니다. "
+            "공식 CDN 이 아닌 이미지는 truth layer 에 들어올 수 없다")
+
+
 # ---------------------------------------------------------------------------
 # 매직 바이트 스니핑 — 확장자도 Content-Type 도 믿지 않는다
 # ---------------------------------------------------------------------------
@@ -127,15 +180,79 @@ _PNG_SIG = b"\x89PNG\r\n\x1a\n"
 
 
 def _sniff_png(data: bytes) -> Tuple[int, int]:
-    # IHDR 은 시그니처 직후 고정 위치에 온다: len(4) + 'IHDR'(4) + w(4) + h(4)
-    if len(data) < 33:
+    """PNG 청크 목록을 실제로 순회해 검증한다.
+
+    시그니처만 보고 넘어가면 헤더로 감싼 HTML 오류 페이지가 "공식 상품 사진"
+    으로 저장되고, IHDR 이 주장하는 크기를 그대로 믿으면 **관측이 아니라 선언**
+    을 기록하게 된다. 그래서 여기서는:
+
+    * 청크 (길이/태그/데이터/CRC) 를 끝까지 걸어가고,
+    * IHDR CRC 를 검증하고,
+    * IDAT(실제 픽셀 데이터) 가 최소 1개 있어야 하며,
+    * 청크 길이 합이 페이로드를 **정확히** 소비해야 한다
+      (뒤에 쓰레기가 붙어도, 모자라도 거부).
+
+    길이는 매 반복마다 남은 바이트로 검증하므로 무한 루프가 불가능하다.
+    """
+    if len(data) < 8 + 25:
         raise TruncatedAssetError(
-            f"PNG 헤더가 잘렸다: {len(data)} 바이트 (IHDR 최소 33 필요)")
+            f"PNG 헤더가 잘렸다: {len(data)} 바이트 (시그니처+IHDR 최소 33 필요)")
     if data[12:16] != b"IHDR":
         raise NotAnImageError("PNG 시그니처는 맞지만 IHDR 청크가 없다")
-    width, height = struct.unpack(">II", data[16:24])
-    if not data.rstrip().endswith(b"IEND\xae\x42\x60\x82"):
+
+    total = len(data)
+    pos = 8
+    width = height = 0
+    seen_ihdr = seen_idat = seen_iend = False
+
+    while pos < total:
+        if total - pos < 12:  # 길이(4)+태그(4)+CRC(4)
+            raise TruncatedAssetError(
+                f"PNG 청크 헤더가 잘렸다: 오프셋 {pos} 에 {total - pos} 바이트만 남음")
+        (length,) = struct.unpack(">I", data[pos:pos + 4])
+        tag = data[pos + 4:pos + 8]
+        if length > total - pos - 12:
+            raise TruncatedAssetError(
+                f"PNG {tag!r} 청크가 길이 {length} 를 주장하지만 남은 바이트는 "
+                f"{total - pos - 12} 다 — 잘렸거나 위조된 길이")
+        body = data[pos + 8:pos + 8 + length]
+        (declared_crc,) = struct.unpack(
+            ">I", data[pos + 8 + length:pos + 12 + length])
+
+        if tag in (b"IHDR", b"IEND", b"IDAT"):
+            actual = zlib.crc32(tag + body) & 0xFFFFFFFF
+            if actual != declared_crc:
+                raise NotAnImageError(
+                    f"PNG {tag!r} 청크 CRC 불일치 (선언 {declared_crc:#010x} != "
+                    f"실제 {actual:#010x}) — 손상되었거나 이미지가 아니다")
+
+        if tag == b"IHDR":
+            if seen_ihdr or pos != 8 or length != 13:
+                raise NotAnImageError("PNG IHDR 청크가 유효하지 않다")
+            width, height = struct.unpack(">II", body[0:8])
+            seen_ihdr = True
+        elif tag == b"IDAT":
+            if length > 0:
+                seen_idat = True
+        elif tag == b"IEND":
+            seen_iend = True
+
+        pos += 12 + length
+        if seen_iend:
+            break
+
+    if not seen_ihdr:
+        raise NotAnImageError("PNG 에 IHDR 청크가 없다")
+    if not seen_iend:
         raise TruncatedAssetError("PNG 가 IEND 로 끝나지 않는다 — 잘린 다운로드")
+    if pos != total:
+        raise NotAnImageError(
+            f"PNG IEND 뒤에 {total - pos} 바이트의 잉여 데이터가 있다 — "
+            "청크 길이가 페이로드를 정확히 소비해야 한다")
+    if not seen_idat:
+        raise NotAnImageError(
+            "PNG 에 IDAT(실제 픽셀 데이터) 청크가 없다 — 래퍼만 있고 이미지가 없다. "
+            "IHDR 이 주장하는 크기는 관측된 값이 아니므로 신뢰하지 않는다")
     return width, height
 
 
@@ -144,7 +261,9 @@ _JPEG_SOF = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
 
 
 def _sniff_jpeg(data: bytes) -> Tuple[int, int]:
-    if not data.rstrip(b"\x00").endswith(b"\xff\xd9"):
+    # 관용(rstrip) 없이 정확히 EOI 로 끝나야 한다 — 임의의 트레일러를 허용하면
+    # 잘림 탐지 자체가 헐거워진다.
+    if not data.endswith(b"\xff\xd9"):
         raise TruncatedAssetError("JPEG 가 EOI(FFD9) 로 끝나지 않는다 — 잘린 다운로드")
     stream = io.BytesIO(data)
     stream.read(2)  # SOI
@@ -175,11 +294,53 @@ def _sniff_jpeg(data: bytes) -> Tuple[int, int]:
         stream.seek(max(length - 2, 0), os.SEEK_CUR)
 
 
+_WEBP_MIN = 12 + 8
+
+
+def _sniff_webp(data: bytes) -> Tuple[int, int]:
+    """RIFF/WEBP 의 VP8 / VP8L / VP8X 헤더에서 캔버스 크기를 읽는다."""
+    if len(data) < _WEBP_MIN:
+        raise TruncatedAssetError(f"WebP 헤더가 잘렸다: {len(data)} 바이트")
+    (riff_size,) = struct.unpack("<I", data[4:8])
+    if data[8:12] != b"WEBP":
+        raise NotAnImageError("RIFF 컨테이너지만 WEBP 가 아니다")
+    if riff_size + 8 != len(data):
+        raise TruncatedAssetError(
+            f"WebP RIFF 길이 {riff_size} 가 실제 {len(data) - 8} 와 다르다 — 잘린 다운로드")
+
+    tag = data[12:16]
+    (chunk_size,) = struct.unpack("<I", data[16:20])
+    body = data[20:20 + chunk_size]
+    if len(body) < chunk_size:
+        raise TruncatedAssetError(f"WebP {tag!r} 청크 본문이 잘렸다")
+
+    if tag == b"VP8 ":
+        if len(body) < 10 or body[3:6] != b"\x9d\x01\x2a":
+            raise NotAnImageError("WebP VP8 키프레임 시작 코드가 없다")
+        width = struct.unpack("<H", body[6:8])[0] & 0x3FFF
+        height = struct.unpack("<H", body[8:10])[0] & 0x3FFF
+        return width, height
+    if tag == b"VP8L":
+        if len(body) < 5 or body[0] != 0x2F:
+            raise NotAnImageError("WebP VP8L 시그니처 바이트가 없다")
+        (bits,) = struct.unpack("<I", body[1:5])
+        return (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+    if tag == b"VP8X":
+        if len(body) < 10:
+            raise TruncatedAssetError("WebP VP8X 헤더가 잘렸다")
+        width = int.from_bytes(body[4:7], "little") + 1
+        height = int.from_bytes(body[7:10], "little") + 1
+        return width, height
+    raise NotAnImageError(f"알 수 없는 WebP 청크 타입: {tag!r}")
+
+
 def sniff_image(data: bytes) -> Tuple[str, int, int]:
     """바이트에서 (포맷, 너비, 높이) 를 직접 읽는다.
 
     확장자와 Content-Type 헤더는 전혀 보지 않는다 — 오직 실제 바이트만 본다.
     이미지가 아니면 NotAnImageError, 잘렸으면 TruncatedAssetError.
+    관측된 크기가 0 이면(픽셀이 없으면) 여기서 바로 거부한다 —
+    하류의 MIN_ASSET_DIMENSION 에 떠넘기지 않는다.
     """
     if not isinstance(data, (bytes, bytearray)):
         raise NotAnImageError(f"바이트가 아니다: {type(data)}")
@@ -187,14 +348,22 @@ def sniff_image(data: bytes) -> Tuple[str, int, int]:
     if not data:
         raise NotAnImageError("빈 페이로드 — 이미지가 아니다")
     if data.startswith(_PNG_SIG):
-        return ("png",) + _sniff_png(data)
-    if data.startswith(b"\xff\xd8\xff"):
-        return ("jpeg",) + _sniff_jpeg(data)
-    head = data[:64]
-    raise NotAnImageError(
-        "매직 바이트가 허용 이미지 포맷"
-        f"{ALLOWED_FORMATS} 이 아니다 (확장자/Content-Type 은 신뢰하지 않는다). "
-        f"선두 바이트: {head!r}")
+        fmt, (width, height) = "png", _sniff_png(data)
+    elif data.startswith(b"\xff\xd8\xff"):
+        fmt, (width, height) = "jpeg", _sniff_jpeg(data)
+    elif data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        fmt, (width, height) = "webp", _sniff_webp(data)
+    else:
+        head = data[:64]
+        raise NotAnImageError(
+            "매직 바이트가 허용 이미지 포맷"
+            f"{ALLOWED_FORMATS} 이 아니다 (확장자/Content-Type 은 신뢰하지 않는다). "
+            f"선두 바이트: {head!r}")
+    if width <= 0 or height <= 0:
+        raise AssetDimensionError(
+            f"관측된 픽셀 크기가 {width}x{height} 다 — 픽셀이 없는 이미지는 "
+            "공식 상품 사진이 될 수 없다")
+    return fmt, width, height
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -264,6 +433,13 @@ def validate_provenance(spec: Any, index: int, *, product_id: str,
             f"다르다: {clean['option']!r} != {marketed_option!r} — "
             "실제 판매 옵션과 다른 사진은 하류 영상을 전부 틀리게 만든다")
 
+    # 시장 계보가 확정된 뒤에 호스트를 검증한다.
+    # rights_basis 는 호출자가 적어 넣는 문자열이라 그 자체로는 증거가 아니다 —
+    # 이미지가 실제로 공식 CDN 에서 왔는지는 호스트로만 확인된다.
+    require_official_image_host(
+        clean["source_url"], market,
+        what=f"official_image_provenance[{index}].source_url")
+
     return clean
 
 
@@ -288,8 +464,11 @@ def safe_filename(product_id: str, digest: str, fmt: str) -> str:
 def _requests_fetcher(url: str, timeout: Optional[int] = None) -> Dict[str, Any]:
     import requests  # 지연 import — 테스트 경로는 여기 오지 않는다
 
+    # Accept 를 명시해 CDN 콘텐츠 협상을 고정한다. 기본 `*/*` 를 두면
+    # CDN 정책 변경만으로 예고 없이 포맷이 바뀐다.
     resp = requests.get(url, timeout=timeout or DEFAULT_TIMEOUT,
-                        stream=True, allow_redirects=True)
+                        stream=True, allow_redirects=True,
+                        headers={"Accept": IMAGE_ACCEPT_HEADER})
     chunks, total = [], 0
     for chunk in resp.iter_content(64 * 1024):
         total += len(chunk)
@@ -314,6 +493,37 @@ def _requests_fetcher(url: str, timeout: Optional[int] = None) -> Dict[str, Any]
 
 def _now() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat()
+
+
+def _existing_takedowns(manifest_path: str) -> List[Dict[str, Any]]:
+    """이전 매니페스트의 takedown 대장을 읽어온다.
+
+    삭제 요청 기록은 법적 기록이다 — 재수집이 덮어써서 지워버리면 안 된다.
+    """
+    if not os.path.isfile(manifest_path):
+        return []
+    try:
+        prior = load_manifest(manifest_path)
+    except (OSError, ValueError):
+        return []
+    entries = prior.get("takedowns")
+    return list(entries) if isinstance(entries, list) else []
+
+
+def _takedown_denylist(takedowns: List[Dict[str, Any]]) -> Tuple[set, set]:
+    """takedown 대장에서 (URL 집합, sha256 집합) denylist 를 만든다."""
+    urls, digests = set(), set()
+    for entry in takedowns:
+        if not isinstance(entry, dict):
+            continue
+        for key in ("source_url", "final_url"):
+            value = entry.get(key)
+            if value:
+                urls.add(value)
+        digest = entry.get("sha256")
+        if digest:
+            digests.add(digest)
+    return urls, digests
 
 
 def acquire_product_assets(product: Dict[str, Any], workspace: str, *,
@@ -362,6 +572,22 @@ def acquire_product_assets(product: Dict[str, Any], workspace: str, *,
                                    marketed_option=marketed_option)
                for i, spec in enumerate(specs)]
 
+    # 저장 위치는 provenance 검증 뒤에 확정한다 (계보 없는 디렉터리 생성 금지).
+    asset_dir = os.path.join(os.path.abspath(workspace),
+                             _SAFE.sub("-", product_id).strip("-.") or "product")
+    manifest_path = os.path.join(asset_dir, MANIFEST_FILENAME)
+
+    # 이전 takedown 대장 = denylist. 삭제 요청된 자산은 절대 다시 받지 않는다.
+    prior_takedowns = _existing_takedowns(manifest_path)
+    denied_urls, denied_sha256 = _takedown_denylist(prior_takedowns)
+
+    for i, clean in enumerate(cleaned):
+        if clean["source_url"] in denied_urls:
+            raise AssetTakedownError(
+                f"official_image_provenance[{i}].source_url "
+                f"{clean['source_url']!r} 는 이미 삭제 요청된(takedown) 자산이다 — "
+                "다시 수집하지 않는다")
+
     dispatch = fetcher or _requests_fetcher
     staged: List[Tuple[Dict[str, Any], bytes]] = []
 
@@ -387,6 +613,17 @@ def acquire_product_assets(product: Dict[str, Any], workspace: str, *,
             raise AssetFetchError(f"{url} 응답에 바이트가 없다")
         data = bytes(data)
 
+        final_url = resp.get("final_url") or url
+        # 리다이렉트 대상도 같은 allowlist 로 검증한다 — 선언된 URL 만 보면
+        # CDN 에서 임의 호스트로 튕겨나가는 경로가 열린다.
+        require_official_image_host(
+            final_url, market,
+            what=f"official_image_provenance[{i}] 의 리다이렉트 최종 URL")
+        for hop in (resp.get("redirect_chain") or []):
+            require_official_image_host(
+                hop, market,
+                what=f"official_image_provenance[{i}] 의 리다이렉트 경유 URL")
+
         if len(data) > MAX_ASSET_BYTES:
             raise AssetSizeError(
                 f"{url} 은 {len(data)} 바이트로 MAX_ASSET_BYTES"
@@ -402,6 +639,10 @@ def acquire_product_assets(product: Dict[str, Any], workspace: str, *,
                 f"{MIN_ASSET_DIMENSION}px 미만이다")
 
         digest = sha256_bytes(data)
+        if digest in denied_sha256:
+            raise AssetTakedownError(
+                f"{url} 의 바이트 sha256 {digest} 는 이미 삭제 요청된 자산이다 — "
+                "URL 을 바꿔도 동일한 바이트는 다시 수집하지 않는다")
         asset = dict(clean)
         asset.update({
             "sha256": digest,
@@ -412,7 +653,7 @@ def acquire_product_assets(product: Dict[str, Any], workspace: str, *,
             "height": height,
             "bytes": len(data),
             "fetched_at": _now(),
-            "final_url": resp.get("final_url") or url,
+            "final_url": final_url,
             "redirect_chain": list(resp.get("redirect_chain") or []),
             "declared_content_type": resp.get("content_type") or "",
             "rights": {
@@ -425,8 +666,6 @@ def acquire_product_assets(product: Dict[str, Any], workspace: str, *,
         staged.append((asset, data))
 
     # 여기까지 왔으면 전부 검증됐다 — 이제서야 디스크에 쓴다.
-    asset_dir = os.path.join(os.path.abspath(workspace),
-                             _SAFE.sub("-", product_id).strip("-.") or "product")
     os.makedirs(asset_dir, exist_ok=True)
 
     assets: List[Dict[str, Any]] = []
@@ -441,7 +680,6 @@ def acquire_product_assets(product: Dict[str, Any], workspace: str, *,
         asset["local_filename"] = name
         assets.append(asset)
 
-    manifest_path = os.path.join(asset_dir, MANIFEST_FILENAME)
     manifest = {
         "product_id": product_id,
         "market": market,
@@ -451,7 +689,8 @@ def acquire_product_assets(product: Dict[str, Any], workspace: str, *,
         "asset_dir": asset_dir,
         "manifest_path": manifest_path,
         "assets": assets,
-        "takedowns": [],
+        # 재수집이 법적 삭제 기록을 지우지 않는다 — 대장은 누적된다.
+        "takedowns": prior_takedowns,
     }
     atomic_write_json(manifest_path, manifest)
     append_event(os.path.join(asset_dir, EVENTS_FILENAME), {
@@ -470,10 +709,18 @@ def load_manifest(manifest_path: str) -> Dict[str, Any]:
 
 
 def takedown(manifest_path: str, *, source_url: str,
-             reason: str) -> List[Dict[str, Any]]:
-    """출처 URL 로 자산을 역추적해 삭제하고 계보를 남긴다.
+             reason: str) -> Dict[str, Any]:
+    """출처 URL 로 **저장된 원본 자산** 을 역추적해 삭제하고 계보를 남긴다.
 
-    권리자 삭제 요청 시 그 자산과 파생물을 전부 제거할 수 있어야 한다.
+    범위를 정확히 밝힌다: 이 함수는 이 매니페스트가 소유한 바이트와 자산 행만
+    제거한다. **하류 파생물(프레임·영상)은 쓸어내지 않는다** — 이 모듈에는
+    파생물 역인덱스가 없기 때문이다. 그래서 완료를 조용히 참칭하지 않고,
+    반환값에 ``derivatives_swept=False`` 와 ``sweep_sha256`` (파생물 스윕에
+    사용해야 할 해시 목록) 을 실어 호출자가 반드시 처리하게 만든다.
+
+    기록된 takedown 은 이후 ``acquire_product_assets`` 에서 denylist 로
+    작동한다 — 같은 URL 도, 같은 바이트도 다시 수집되지 않는다.
+
     매칭되는 자산이 없으면 조용한 성공 대신 AssetLineageError.
     """
     manifest = load_manifest(manifest_path)
@@ -506,6 +753,7 @@ def takedown(manifest_path: str, *, source_url: str,
 
     manifest["assets"] = keep
     atomic_write_json(manifest_path, manifest)
+    sweep_sha256 = [a.get("sha256") for a in removed if a.get("sha256")]
     append_event(
         os.path.join(os.path.dirname(manifest_path), EVENTS_FILENAME), {
             "event": "assets_takedown",
@@ -513,8 +761,17 @@ def takedown(manifest_path: str, *, source_url: str,
             "source_url": source_url,
             "reason": reason,
             "removed": [a.get("sha256") for a in removed],
+            "derivatives_swept": False,
+            "derivative_sweep": "not_swept",
         })
-    return removed
+    return {
+        "removed": removed,
+        "sweep_sha256": sweep_sha256,
+        # 파생물은 지우지 않았다 — 호출자가 이 해시로 직접 스윕해야 한다.
+        "derivatives_swept": False,
+        "derivative_sweep": "not_swept",
+        "manifest_path": manifest_path,
+    }
 
 
 def to_product_evidence(manifest: Dict[str, Any]) -> ProductEvidence:

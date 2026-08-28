@@ -54,6 +54,50 @@ def make_jpeg(width=600, height=800):
         + b"\xff\xd9"
 
 
+def png_chunk(tag, data):
+    return (struct.pack(">I", len(data)) + tag + data
+            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
+
+
+PNG_SIG = b"\x89PNG\r\n\x1a\n"
+
+
+def png_ihdr(width=600, height=800):
+    return png_chunk(b"IHDR",
+                     struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+
+
+PNG_IEND = png_chunk(b"IEND", b"")
+
+
+def make_webp_vp8(width=600, height=800):
+    """최소 VP8(손실) WebP 바이트 — 헤더 파서용."""
+    body = (b"\x00\x00\x00" + b"\x9d\x01\x2a"
+            + struct.pack("<HH", width, height))
+    chunk = b"VP8 " + struct.pack("<I", len(body)) + body
+    payload = b"WEBP" + chunk
+    return b"RIFF" + struct.pack("<I", len(payload)) + payload
+
+
+def make_webp_vp8l(width=600, height=800):
+    """최소 VP8L(무손실) WebP 바이트."""
+    bits = (width - 1) | ((height - 1) << 14)
+    body = b"\x2f" + struct.pack("<I", bits)[:4]
+    chunk = b"VP8L" + struct.pack("<I", len(body)) + body
+    payload = b"WEBP" + chunk
+    return b"RIFF" + struct.pack("<I", len(payload)) + payload
+
+
+def make_webp_vp8x(width=600, height=800):
+    """VP8X(확장) 캔버스 헤더를 가진 WebP."""
+    body = (b"\x00\x00\x00\x00"
+            + (width - 1).to_bytes(3, "little")
+            + (height - 1).to_bytes(3, "little"))
+    chunk = b"VP8X" + struct.pack("<I", len(body)) + body
+    payload = b"WEBP" + chunk
+    return b"RIFF" + struct.pack("<I", len(payload)) + payload
+
+
 HTML_ERROR = (b"<!DOCTYPE html>\n<html><head><title>404 Not Found</title>"
               b"</head><body><h1>Not Found</h1></body></html>\n")
 
@@ -408,9 +452,9 @@ class TestTakedownLineage(BaseCase):
         local = m["assets"][0]["local_path"]
         self.assertTrue(os.path.isfile(local))
 
-        removed = pa.takedown(m["manifest_path"], source_url=IMG1,
-                              reason="rights holder request")
-        self.assertEqual(len(removed), 1)
+        result = pa.takedown(m["manifest_path"], source_url=IMG1,
+                             reason="rights holder request")
+        self.assertEqual(len(result["removed"]), 1)
         self.assertFalse(os.path.isfile(local))
 
         reloaded = pa.load_manifest(m["manifest_path"])
@@ -419,7 +463,7 @@ class TestTakedownLineage(BaseCase):
         self.assertEqual(reloaded["takedowns"][0]["source_url"], IMG1)
         self.assertEqual(reloaded["takedowns"][0]["sha256"], sha256(self.png))
 
-    def test_takedown_by_unknown_url_is_a_noop_not_a_silent_success(self):
+    def test_takedown_by_unknown_url_raises_instead_of_silent_success(self):
         m = pa.acquire_product_assets(product(), self.ws,
                                       fetcher=self.fetcher_ok())
         with self.assertRaises(pa.AssetLineageError):
@@ -471,6 +515,259 @@ class TestSourcingExposure(unittest.TestCase):
         self.assertFalse(sourcing.is_audit_approved({}))
         # 이미지가 잘 갖춰진 결과라도 감사 미승인이면 여전히 승인되지 않는다.
         self.assertFalse(sourcing.is_audit_approved(product()))
+
+
+# ---------------------------------------------------------------------------
+# 8. PNG 청크 검증 — 래퍼가 아니라 실제 이미지 바이트를 본다
+# ---------------------------------------------------------------------------
+
+
+class TestPngChunkVerification(BaseCase):
+    def test_png_without_idat_is_rejected(self):
+        """시그니처+IHDR+IEND 만으로는 이미지가 아니다 — 픽셀 데이터가 없다."""
+        payload = PNG_SIG + png_ihdr() + PNG_IEND
+        with self.assertRaises(pa.NotAnImageError):
+            pa.sniff_image(payload)
+
+    def test_png_wrapping_html_body_is_rejected(self):
+        """PNG 헤더로 감싼 HTML 오류 페이지는 공식 사진이 아니다."""
+        payload = PNG_SIG + png_ihdr() + b"<html>" * 100 + PNG_IEND
+        with self.assertRaises(pa.ProductAssetError):
+            pa.sniff_image(payload)
+
+    def test_png_lying_about_dimensions_is_rejected(self):
+        """IHDR 이 99999x99999 라 주장해도 실제 데이터가 없으면 거부."""
+        payload = PNG_SIG + png_ihdr(99999, 99999) + PNG_IEND
+        with self.assertRaises(pa.ProductAssetError):
+            pa.sniff_image(payload)
+
+    def test_png_with_corrupt_ihdr_crc_is_rejected(self):
+        good = make_png()
+        # IHDR CRC 는 시그니처(8)+길이(4)+태그(4)+본문(13) 뒤 4바이트.
+        bad = bytearray(good)
+        bad[29] ^= 0xFF
+        with self.assertRaises(pa.ProductAssetError):
+            pa.sniff_image(bytes(bad))
+
+    def test_png_with_trailing_garbage_is_rejected(self):
+        """청크 길이가 페이로드를 정확히 소비해야 한다."""
+        with self.assertRaises(pa.ProductAssetError):
+            pa.sniff_image(make_png() + b"GARBAGE")
+
+    def test_png_with_lying_chunk_length_is_rejected(self):
+        """청크 길이가 남은 바이트를 넘어서면 잘린 다운로드다."""
+        good = bytearray(make_png())
+        struct.pack_into(">I", good, 8, 0x7FFFFFF0)  # IHDR 길이 위조
+        with self.assertRaises(pa.ProductAssetError):
+            pa.sniff_image(bytes(good))
+
+    def test_valid_png_still_accepted_with_observed_dimensions(self):
+        self.assertEqual(pa.sniff_image(make_png(640, 480)), ("png", 640, 480))
+
+    def test_hostile_payloads_never_hang_or_crash_uncaught(self):
+        """적대적 입력은 전부 ProductAssetError 로만 나온다 (크래시·무한루프 금지)."""
+        hostile = [
+            PNG_SIG,
+            PNG_SIG + b"\x00" * 25,
+            PNG_SIG + png_ihdr() + png_chunk(b"IDAT", b""),
+            PNG_SIG + png_ihdr() + b"\xff\xff\xff\xffIDAT",
+            b"RIFF\x00\x00\x00\x00WEBP",
+            b"RIFF" + struct.pack("<I", 4) + b"WEBP",
+            b"\xff\xd8\xff" + b"\xff" * 200,
+        ]
+        for i, payload in enumerate(hostile):
+            with self.subTest(i=i):
+                with self.assertRaises(pa.ProductAssetError):
+                    pa.sniff_image(payload)
+
+    def test_sniff_rejects_zero_dimension_jpeg_itself(self):
+        """0x0 은 MIN_ASSET_DIMENSION 하류가 아니라 스니퍼가 직접 거부한다."""
+        zero = (b"\xff\xd8\xff\xc0" + struct.pack(">H", 17) + b"\x08"
+                + struct.pack(">HH", 0, 0) + b"\x03"
+                + b"\x01\x11\x00\x02\x11\x01\x03\x11\x01" + b"\xff\xd9")
+        with self.assertRaises(pa.ProductAssetError):
+            pa.sniff_image(zero)
+
+
+# ---------------------------------------------------------------------------
+# 9. WebP 헤더 파서 (KR CDN 대비)
+# ---------------------------------------------------------------------------
+
+
+class TestWebp(BaseCase):
+    def test_webp_vp8_dimensions(self):
+        self.assertEqual(pa.sniff_image(make_webp_vp8(600, 800)),
+                         ("webp", 600, 800))
+
+    def test_webp_vp8l_dimensions(self):
+        self.assertEqual(pa.sniff_image(make_webp_vp8l(640, 480)),
+                         ("webp", 640, 480))
+
+    def test_webp_vp8x_dimensions(self):
+        self.assertEqual(pa.sniff_image(make_webp_vp8x(1200, 1200)),
+                         ("webp", 1200, 1200))
+
+    def test_webp_is_an_allowed_format(self):
+        self.assertIn("webp", pa.ALLOWED_FORMATS)
+
+    def test_webp_asset_is_acquired(self):
+        f = FakeFetcher({IMG1: {"bytes": make_webp_vp8(600, 800),
+                                "content_type": "image/webp"}})
+        m = pa.acquire_product_assets(product(), self.ws, fetcher=f)
+        self.assertEqual(m["assets"][0]["format"], "webp")
+        self.assertEqual((m["assets"][0]["width"], m["assets"][0]["height"]),
+                         (600, 800))
+
+    def test_truncated_webp_rejected(self):
+        with self.assertRaises(pa.ProductAssetError):
+            pa.sniff_image(make_webp_vp8()[:-4])
+
+    def test_fetcher_pins_image_accept_header(self):
+        """CDN 콘텐츠 협상을 고정한다 — Accept 를 비워두지 않는다."""
+        self.assertIn("image/png", pa.IMAGE_ACCEPT_HEADER)
+        self.assertIn("image/jpeg", pa.IMAGE_ACCEPT_HEADER)
+
+
+# ---------------------------------------------------------------------------
+# 10. 공식 CDN 호스트 강제
+# ---------------------------------------------------------------------------
+
+
+class TestOfficialCdnHosts(BaseCase):
+    def test_allowlist_constants_exist_per_market(self):
+        self.assertIn("KR", pa.OFFICIAL_IMAGE_HOSTS)
+        self.assertIn("US", pa.OFFICIAL_IMAGE_HOSTS)
+        self.assertTrue(any("coupangcdn.com" in h
+                            for h in pa.OFFICIAL_IMAGE_HOSTS["KR"]))
+        self.assertTrue(any("media-amazon.com" in h
+                            for h in pa.OFFICIAL_IMAGE_HOSTS["US"]))
+
+    def test_off_allowlist_image_host_rejected(self):
+        """rights_basis 문자열만 맞다고 임의 호스트를 신뢰하지 않는다."""
+        evil = "https://scontent.cdninstagram.com/creator/photo.png"
+        p = product(official_image_provenance=[image_spec(source_url=evil)])
+        f = FakeFetcher({evil: {"bytes": self.png}})
+        with self.assertRaises(pa.AssetProvenanceError) as cm:
+            pa.acquire_product_assets(p, self.ws, fetcher=f)
+        self.assertIn("호스트", str(cm.exception))
+        self.assertEqual(f.calls, [], "허용되지 않은 호스트는 fetch 전에 막는다")
+        self.assertEqual(os.listdir(self.ws), [])
+
+    def test_lookalike_suffix_host_rejected(self):
+        evil = "https://evil-coupangcdn.com.attacker.example/main.png"
+        p = product(official_image_provenance=[image_spec(source_url=evil)])
+        f = FakeFetcher({evil: {"bytes": self.png}})
+        with self.assertRaises(pa.AssetProvenanceError):
+            pa.acquire_product_assets(p, self.ws, fetcher=f)
+
+    def test_redirect_target_off_allowlist_rejected(self):
+        """선언된 source_url 만이 아니라 최종 URL 도 검증한다."""
+        f = FakeFetcher({IMG1: {
+            "bytes": self.png,
+            "final_url": "https://attacker.example/x.png",
+            "redirect_chain": [IMG1, "https://attacker.example/x.png"]}})
+        with self.assertRaises(pa.AssetProvenanceError) as cm:
+            pa.acquire_product_assets(product(), self.ws, fetcher=f)
+        self.assertIn("리다이렉트", str(cm.exception))
+        self.assertEqual(os.listdir(self.ws), [])
+
+    def test_us_market_amazon_cdn_accepted(self):
+        us_page = "https://www.amazon.com/dp/B00TEST"
+        us_img = "https://m.media-amazon.com/images/I/main.png"
+        p = {
+            "product_key": "az-B00TEST", "country": "US",
+            "product_url": us_page, "marketed_option": "60 count",
+            "official_image_provenance": [image_spec(
+                source_url=us_img, market="US", product_id="az-B00TEST",
+                option="60 count", official_page_url=us_page)],
+        }
+        f = FakeFetcher({us_img: {"bytes": self.png}})
+        m = pa.acquire_product_assets(p, self.ws, fetcher=f)
+        self.assertEqual(m["assets"][0]["source_url"], us_img)
+
+    def test_kr_image_on_us_cdn_rejected(self):
+        """시장별 allowlist — KR 상품이 아마존 CDN 을 쓰면 거부."""
+        img = "https://m.media-amazon.com/images/I/main.png"
+        p = product(official_image_provenance=[image_spec(source_url=img)])
+        f = FakeFetcher({img: {"bytes": self.png}})
+        with self.assertRaises(pa.AssetProvenanceError):
+            pa.acquire_product_assets(p, self.ws, fetcher=f)
+
+
+# ---------------------------------------------------------------------------
+# 11. takedown 은 내구성 있고 denylist 로 작동한다
+# ---------------------------------------------------------------------------
+
+
+class TestTakedownDurability(BaseCase):
+    def _acquire(self):
+        return pa.acquire_product_assets(product(), self.ws,
+                                         fetcher=self.fetcher_ok())
+
+    def test_takedown_ledger_survives_reacquisition(self):
+        m = self._acquire()
+        pa.takedown(m["manifest_path"], source_url=IMG1, reason="rights holder")
+
+        p = product(official_image_provenance=[image_spec(source_url=IMG2)])
+        f = FakeFetcher({IMG2: {"bytes": self.jpg, "content_type": "image/jpeg"}})
+        again = pa.acquire_product_assets(p, self.ws, fetcher=f)
+
+        self.assertTrue(again["takedowns"],
+                        "재수집이 법적 삭제 기록을 지워서는 안 된다")
+        self.assertEqual(again["takedowns"][0]["source_url"], IMG1)
+        reloaded = pa.load_manifest(again["manifest_path"])
+        self.assertTrue(reloaded["takedowns"])
+
+    def test_taken_down_url_is_never_reacquired(self):
+        m = self._acquire()
+        pa.takedown(m["manifest_path"], source_url=IMG1, reason="rights holder")
+
+        f = self.fetcher_ok()
+        with self.assertRaises(pa.AssetTakedownError):
+            pa.acquire_product_assets(product(), self.ws, fetcher=f)
+        self.assertEqual(f.calls, [], "삭제된 URL 은 다시 내려받지 않는다")
+
+    def test_taken_down_sha256_is_never_reacquired_under_a_new_url(self):
+        """URL 을 바꿔 우회해도 동일 바이트면 거부된다."""
+        m = self._acquire()
+        pa.takedown(m["manifest_path"], source_url=IMG1, reason="rights holder")
+
+        p = product(official_image_provenance=[image_spec(source_url=IMG2)])
+        f = FakeFetcher({IMG2: {"bytes": self.png}})
+        with self.assertRaises(pa.AssetTakedownError):
+            pa.acquire_product_assets(p, self.ws, fetcher=f)
+
+    def test_takedown_reports_derivatives_not_swept(self):
+        """파생물까지 지웠다고 조용히 주장하지 않는다."""
+        m = self._acquire()
+        result = pa.takedown(m["manifest_path"], source_url=IMG1,
+                             reason="rights holder")
+        self.assertIsInstance(result, dict)
+        self.assertEqual(len(result["removed"]), 1)
+        self.assertFalse(result["derivatives_swept"])
+        self.assertEqual(result["derivative_sweep"], "not_swept")
+        self.assertIn(sha256(self.png), result["sweep_sha256"])
+
+
+# ---------------------------------------------------------------------------
+# 12. provenance 필수 키 — 나머지 2개
+# ---------------------------------------------------------------------------
+
+
+class TestRemainingProvenanceKeys(BaseCase):
+    def test_missing_option_rejected(self):
+        p = product(official_image_provenance=[image_spec(option="")])
+        with self.assertRaises(pa.AssetProvenanceError) as cm:
+            pa.acquire_product_assets(p, self.ws, fetcher=self.fetcher_ok())
+        self.assertIn("option", str(cm.exception))
+        self.assertEqual(os.listdir(self.ws), [])
+
+    def test_missing_rights_holder_rejected(self):
+        p = product(official_image_provenance=[image_spec(rights_holder="")])
+        with self.assertRaises(pa.AssetProvenanceError) as cm:
+            pa.acquire_product_assets(p, self.ws, fetcher=self.fetcher_ok())
+        self.assertIn("rights_holder", str(cm.exception))
+        self.assertEqual(os.listdir(self.ws), [])
 
 
 if __name__ == "__main__":
