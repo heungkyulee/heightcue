@@ -72,13 +72,13 @@
 로 백엔드를 실제 import 해 보고, 하나도 되지 않으면 `[미충족]` 으로 exit 1 한다. 프로브
 실패·타임아웃·해석 불가 출력도 전부 미충족이다(확인 못 한 것은 충족으로 세지 않는다).
 
-**2026-08-28 현재 이 머신 상태: 미충족.** `faster_whisper`·`whisperx` 어느 것도 설치돼
-있지 않다. 운영자가 실행할 명령:
+**2026-08-28 현재 이 머신 상태: 충족.** OpenMontage venv 에 `faster-whisper 1.2.1`
+(+`ctranslate2 4.8.1`)이 설치돼 있고 `run.py video rehearsal` 이 `[충족]` · EXIT=0 이다.
+설치가 필요할 때 운영자가 실행할 명령:
 
 ```bash
 cd /Users/leeheungkyu/OpenMontage && .venv/bin/python -m pip install faster-whisper
-# QA 가 autopilot 인터프리터로 돌면 그쪽에도 설치한다:
-~/heightcue-autopilot/.venv/bin/python -m pip install faster-whisper
+# 반드시 OpenMontage 자기 venv 다 — QA 전사는 이 인터프리터로만 돈다.
 ```
 
 **남은 한계(초록도 최종 판정은 아니다).** 프로브는 백엔드 import 까지만 확인한다 — 모델

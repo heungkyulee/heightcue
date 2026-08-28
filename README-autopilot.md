@@ -138,8 +138,8 @@ QA 게이트(`video_qa.py`)는 **fail-closed** 다. 돌지 못한 검사는 통�
 
 ```bash
 cd ~/OpenMontage && .venv/bin/python -m pip install faster-whisper
-# QA 가 autopilot 인터프리터로 돌면 그쪽에도 설치한다:
-~/heightcue-autopilot/.venv/bin/python -m pip install faster-whisper
+# 반드시 OpenMontage 자기 venv 다. QA 전사는 이 인터프리터로만 돈다
+# (autopilot venv 에 설치해도 프로브·QA 어느 쪽도 보지 않는다).
 export OPENMONTAGE_ROOT=/path/to/OpenMontage      # 다른 위치에 있다면
 ```
 

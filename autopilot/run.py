@@ -476,8 +476,8 @@ TRANSCRIBER_BACKENDS = ("faster_whisper", "whisperx")
 #: 백엔드가 없을 때 운영자가 그대로 복사해 실행할 명령.
 TRANSCRIBER_INSTALL_HINT = (
     "cd /Users/leeheungkyu/OpenMontage && .venv/bin/python -m pip install "
-    "faster-whisper   # (autopilot 인터프리터로 QA 가 돌면 "
-    "~/heightcue-autopilot/.venv/bin/python -m pip install faster-whisper)")
+    "faster-whisper   # 반드시 OpenMontage 자기 venv 에 설치한다 "
+    "(QA 전사는 이 인터프리터로만 돈다)")
 
 #: 프로브 자체는 import 만 하므로 초 단위다. 모델은 절대 로드하지 않는다.
 TRANSCRIBER_PROBE_TIMEOUT = 60
@@ -501,7 +501,14 @@ def _probe_openmontage_transcriber():
         return False, f"transcriber 엔트리포인트가 없다: {entry}"
 
     # video_qa._openmontage_call 과 **같은 인터프리터·같은 cwd·같은 sys.path**.
-    # 다른 인터프리터를 보면 그 자체가 거짓 초록의 원인이 된다.
+    # 인터프리터 해석은 video_qa 의 헬퍼를 그대로 재사용한다 — 여기에 경로
+    # 로직을 복제하면 프로브와 실제 호출부가 갈라지고, 그 드리프트가 바로
+    # 거짓 초록(예전)과 거짓 빨강(이번)을 만든 원인이다.
+    try:
+        exe = video_qa._openmontage_python(root)
+    except Exception as exc:
+        return False, (f"{exc} · 설치: {TRANSCRIBER_INSTALL_HINT}")
+
     script = (
         "import json, sys\n"
         f"sys.path.insert(0, {root!r})\n"
@@ -515,7 +522,7 @@ def _probe_openmontage_transcriber():
         "print(json.dumps({'backends': out}))\n"
     )
     try:
-        proc = subprocess.run([sys.executable, "-c", script],
+        proc = subprocess.run([exe, "-c", script],
                               capture_output=True, text=True,
                               timeout=TRANSCRIBER_PROBE_TIMEOUT, cwd=root)
     except Exception as exc:
@@ -538,11 +545,11 @@ def _probe_openmontage_transcriber():
         missing = ", ".join(TRANSCRIBER_BACKENDS)
         return False, (
             f"transcriber.py 는 있으나 전사 백엔드가 없다 ({missing} 모두 "
-            f"import 실패, 인터프리터 {sys.executable}). 파일 존재는 실행 "
+            f"import 실패, 인터프리터 {exe}). 파일 존재는 실행 "
             f"가능을 뜻하지 않는다 — 지금 유료 실행하면 모든 영상이 QA 에서 "
             f"fail-closed 로 떨어진다. 설치: {TRANSCRIBER_INSTALL_HINT}")
     return True, (f"전사 백엔드 실행 가능: {', '.join(live)} "
-                  f"(인터프리터 {sys.executable}, 루트 {root})")
+                  f"(인터프리터 {exe}, 루트 {root})")
 
 
 VIDEO_PREREQUISITES = (

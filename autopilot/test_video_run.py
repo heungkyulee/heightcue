@@ -39,6 +39,24 @@ import video_queue as vq  # noqa: E402
 SHA_A = "a" * 64
 
 
+class _StubCtx:
+    """여러 mock.patch 를 하나의 with 로 묶는다 (+ 관찰값 seen 노출)."""
+
+    def __init__(self, *patches):
+        self._patches = patches
+        self.seen = {}
+
+    def __enter__(self):
+        for p in self._patches:
+            p.start()
+        return self
+
+    def __exit__(self, *exc):
+        for p in reversed(self._patches):
+            p.stop()
+        return False
+
+
 def make_job(job_id="job-1", run_id="run-1", product_id="p-1", market="KR"):
     evidence = vc.ProductEvidence(
         product_id=product_id, market=market,
@@ -520,8 +538,15 @@ class TestVideoRehearsal(VideoRunTestCase):
     # 아래 테스트들은 이 머신의 실제 패키지 상태에 의존하지 않도록
     # 인터프리터 프로브(subprocess)를 고정한다.
 
+    #: 스텁 인터프리터 경로 — 이 머신의 실제 패키지/venv 상태에 의존하지 않는다.
+    FAKE_OM_PYTHON = "/fake/openmontage/.venv/bin/python"
+
     def _fake_om(self, payload=None, returncode=0, stdout=None, exc=None):
-        """OpenMontage 루트를 만들고 인터프리터 프로브를 고정한다."""
+        """OpenMontage 루트를 만들고 인터프리터·subprocess 를 모두 고정한다.
+
+        인터프리터 해석까지 스텁해야 오프라인·결정적이다 (실제 OpenMontage
+        venv 가 있든 없든 같은 결과가 나와야 한다).
+        """
         fake = os.path.join(self.tmp, "om-run")
         os.makedirs(os.path.join(fake, "tools", "analysis"), exist_ok=True)
         with open(os.path.join(fake, "tools", "analysis", "transcriber.py"),
@@ -530,15 +555,70 @@ class TestVideoRehearsal(VideoRunTestCase):
         if stdout is None:
             stdout = json.dumps(payload or {})
 
+        seen = {}
+
         def fake_run(*a, **kw):
+            seen["cmd"] = a[0] if a else kw.get("args")
+            seen["cwd"] = kw.get("cwd")
             if exc is not None:
                 raise exc
             return subprocess.CompletedProcess(a[0] if a else [], returncode,
                                                stdout=stdout, stderr="boom")
         import video_qa
-        return fake, mock.patch.object(video_qa, "DEFAULT_OPENMONTAGE_ROOT",
-                                       fake), mock.patch.object(
-            run.subprocess, "run", side_effect=fake_run)
+        stub = _StubCtx(
+            mock.patch.object(video_qa, "_openmontage_python",
+                              return_value=self.FAKE_OM_PYTHON),
+            mock.patch.object(run.subprocess, "run", side_effect=fake_run))
+        stub.seen = seen
+        return (fake,
+                mock.patch.object(video_qa, "DEFAULT_OPENMONTAGE_ROOT", fake),
+                stub)
+
+    # -- 인터프리터 일치 (거짓 빨강 방지) ----------------------------------
+    #
+    # 프로브는 자기가 대변하는 코드(video_qa)와 **같은 인터프리터**를 봐야
+    # 한다. sys.executable 을 보면 OpenMontage venv 에 전사기가 설치돼
+    # 있어도 [미충족] 을 찍어 정당한 유료 실행을 막는다 (거짓 빨강).
+
+    def test_prereq_probes_the_interpreter_video_qa_actually_uses(self):
+        """프로브 인터프리터 == video_qa._openmontage_python 결과."""
+        fake, root_patch, stub = self._fake_om(
+            {"backends": {"faster_whisper": True, "whisperx": False}})
+        with root_patch, stub:
+            ok, detail = run._probe_openmontage_transcriber()
+        self.assertTrue(ok)
+        self.assertEqual(stub.seen["cmd"][0], self.FAKE_OM_PYTHON)
+        self.assertNotEqual(stub.seen["cmd"][0], sys.executable)
+        self.assertIn(self.FAKE_OM_PYTHON, detail)
+
+    def test_prereq_unmet_message_names_the_probed_interpreter(self):
+        """미충족 사유는 실제로 프로브한 인터프리터를 적어야 한다."""
+        fake, root_patch, stub = self._fake_om(
+            {"backends": {"faster_whisper": False, "whisperx": False}})
+        with root_patch, stub:
+            ok, detail = run._probe_openmontage_transcriber()
+        self.assertFalse(ok)
+        self.assertIn(self.FAKE_OM_PYTHON, detail)
+        self.assertNotIn(sys.executable, detail)
+
+    def test_prereq_unmet_when_openmontage_interpreter_missing(self):
+        """OpenMontage 인터프리터가 없으면 fail closed + 경로를 명시한다."""
+        import video_qa
+        fake = os.path.join(self.tmp, "om-nopy")
+        os.makedirs(os.path.join(fake, "tools", "analysis"), exist_ok=True)
+        open(os.path.join(fake, "tools", "analysis", "transcriber.py"),
+             "w").close()
+        missing = os.path.join(fake, ".venv", "bin", "python")
+        with mock.patch.object(video_qa, "DEFAULT_OPENMONTAGE_ROOT", fake):
+            ok, detail = run._probe_openmontage_transcriber()
+        self.assertFalse(ok, "인터프리터가 없는데 충족으로 보고했다")
+        self.assertIn(missing, detail)
+
+    def test_install_hint_names_the_openmontage_venv_only(self):
+        """설치 안내는 OpenMontage venv 만 가리킨다 (구식 괄호 제거)."""
+        self.assertIn("OpenMontage", run.TRANSCRIBER_INSTALL_HINT)
+        self.assertNotIn("heightcue-autopilot/.venv",
+                         run.TRANSCRIBER_INSTALL_HINT)
 
     def test_prereq_unmet_when_no_transcription_backend_imports(self):
         """전사 백엔드가 하나도 import 되지 않으면 [미충족] 이어야 한다."""
@@ -586,22 +666,11 @@ class TestVideoRehearsal(VideoRunTestCase):
 
     def test_prereq_probe_runs_in_the_openmontage_root(self):
         """autopilot venv 가 아니라 OpenMontage 쪽에서 돌아야 한다."""
-        fake = os.path.join(self.tmp, "om-cwd")
-        os.makedirs(os.path.join(fake, "tools", "analysis"))
-        open(os.path.join(fake, "tools", "analysis", "transcriber.py"),
-             "w").close()
-        seen = {}
-
-        def fake_run(cmd, **kw):
-            seen["cwd"] = kw.get("cwd")
-            seen["cmd"] = cmd
-            return subprocess.CompletedProcess(
-                cmd, 0, stdout=json.dumps({"backends": {}}), stderr="")
-        import video_qa
-        with mock.patch.object(video_qa, "DEFAULT_OPENMONTAGE_ROOT", fake), \
-                mock.patch.object(run.subprocess, "run", side_effect=fake_run):
+        fake, root_patch, stub = self._fake_om({"backends": {}})
+        with root_patch, stub:
             run._probe_openmontage_transcriber()
-        self.assertEqual(seen["cwd"], fake)
+        self.assertEqual(stub.seen["cwd"], fake)
+        self.assertEqual(stub.seen["cmd"][0], self.FAKE_OM_PYTHON)
 
     def test_prereq_probe_makes_no_network_call(self):
         """프로브는 파일시스템 + 로컬 import 만 본다."""
