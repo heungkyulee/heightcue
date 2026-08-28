@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import struct
@@ -63,6 +64,9 @@ from video_contracts import (CUT_DURATION_SECONDS, IMAGE_HERMES_MODEL,
                              STATE_RETRYABLE_FAILED, VIDEO_ASPECT_RATIO,
                              VIDEO_ENDPOINT, VIDEO_RESOLUTION, append_event,
                              assert_transition, atomic_write_json)
+
+#: 회계 경고 전용 로거 — 상쇄되지 않는 원장 이상은 조용히 흡수하지 않는다.
+LOGGER = logging.getLogger("heightcue.video_generate")
 
 # ---------------------------------------------------------------------------
 # 고정 계약 (상류 확정 — 변경 금지)
@@ -610,8 +614,15 @@ def generate_first_frames(storyboard: Any, asset_manifest: Dict[str, Any], *,
 # * **지출 전 게이트.** 호출 전에 tool/provider/endpoint/model/추정비용/
 #   승인정책을 결정 로그에 남기고, 실행당·일당 상한을 강제한다. 상한을
 #   넘길 실행은 요청을 **한 건도** 보내지 않고 거부한다.
-# * **추정≠실비.** 예약은 추정으로 잡고, 호출 후 provider 가 알려준 실비로
-#   정산한다. 기록에서 추정이 실비를 조용히 대신하는 일은 없다.
+# * **추정≠실비.** 예약은 추정으로 잡고 호출 후 정산하되, 모든 금액에
+#   `cost_source` 표식을 붙인다: `provider_billed`(청구액) /
+#   `provider_estimate`(provider 가 준 숫자지만 그건 자기 추정이다) /
+#   `local_estimate`(우리 요율표). `actual_cost_usd` 는 첫 번째 경우에만
+#   숫자다 — 추정치가 `actual_` 필드를 차지하는 경로는 존재하지 않는다.
+# * **실패한 제출도 돈이다.** 요청이 provider 로 나간 뒤의 실패는 예약을
+#   풀지 않고 `possibly_billed_usd` 로 남긴다. fal 이 실패 제출을 청구하지
+#   않는다는 증거를 우리는 갖고 있지 않고, 시도 3회면 컷 하나가 세 번
+#   제출될 수 있다. 그 금액은 실행·일일 상한을 계속 소모한다.
 #
 # 네트워크는 `client=` 주입 시드로만 들어온다. 테스트는 절대 유료 호출을
 # 하지 않는다.
@@ -645,11 +656,35 @@ MAX_DAILY_SPEND_USD = 10.00
 MAX_CUT_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = (2.0, 5.0)
 
-#: 인프라성(재시도 가능) 실패 신호.
+#: 인프라성(재시도 가능) 실패의 **문자열** 신호 — 타입·상태코드로 판정할 수
+#: 없을 때만 마지막으로 본다. 숫자 상태코드는 여기 두지 않는다: `"500"` 은
+#: 요청 id 나 `1500ms` 안에서도 매치돼 거짓 재시도를 만든다.
 RETRYABLE_MARKERS = ("timeout", "timed out", "rate limit", "rate_limit",
-                     "too many requests", "429", "500", "502", "503", "504",
-                     "connection reset", "connection aborted",
-                     "temporarily unavailable", "service unavailable")
+                     "too many requests", "connection reset",
+                     "connection aborted", "temporarily unavailable",
+                     "service unavailable")
+
+#: 콘텐츠·정책 실패 신호 (재시도해도 같은 결과 — 돈만 태운다).
+CONTENT_MARKERS = ("content", "policy", "moderat", "safety", "nsfw")
+
+#: 타입만으로 인프라 실패가 확정되는 예외들.
+RETRYABLE_EXCEPTION_TYPES = (TimeoutError, ConnectionError, OSError)
+
+#: 재시도 가치가 있는 HTTP 상태코드. 나머지 4xx 는 콘텐츠·요청 오류다.
+RETRYABLE_STATUS_CODES = frozenset({408, 409, 425, 429, 500, 502, 503, 504,
+                                    507, 509, 598, 599})
+
+#: 컷 비용의 출처 — `actual_` 필드에 추정치가 앉는 것을 막는 3값 표식.
+#: ``provider_billed``   : provider 가 **청구액**을 돌려줬다 (billed_cost_usd).
+#: ``provider_estimate`` : provider 가 숫자를 돌려줬지만 그건 자기 **추정**이다
+#:                         (OpenMontage 도구는 `cost_usd = estimate_cost(...)`
+#:                         를 그대로 반환한다 — 청구액이 아니다).
+#: ``local_estimate``    : 아무 숫자도 오지 않아 우리 요율표로 계산했다.
+COST_SOURCE_PROVIDER_BILLED = "provider_billed"
+COST_SOURCE_PROVIDER_ESTIMATE = "provider_estimate"
+COST_SOURCE_LOCAL_ESTIMATE = "local_estimate"
+COST_SOURCES = (COST_SOURCE_PROVIDER_BILLED, COST_SOURCE_PROVIDER_ESTIMATE,
+                COST_SOURCE_LOCAL_ESTIMATE)
 
 
 class CutGenerationError(FirstFrameError):
@@ -688,18 +723,81 @@ def estimate_cut_cost_usd(duration_seconds: int = CUT_DURATION_SECONDS,
     return round(rate * duration_seconds, 6)
 
 
-def is_retryable_provider_error(exc: BaseException) -> bool:
-    """인프라성 실패(타임아웃·5xx·레이트리밋)만 True.
+def _status_code_of(exc: BaseException) -> Optional[int]:
+    """예외가 **구조적으로** 노출하는 HTTP 상태코드만 읽는다 (문자열 아님)."""
+    for attr in ("status_code", "status", "code", "http_status"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, int) and not isinstance(value, bool) \
+                and 100 <= value <= 599:
+            return value
+    response = getattr(exc, "response", None)
+    if response is not None:
+        for attr in ("status_code", "status"):
+            value = getattr(response, attr, None)
+            if isinstance(value, int) and not isinstance(value, bool) \
+                    and 100 <= value <= 599:
+                return value
+    return None
 
-    모델/콘텐츠 실패는 재시도해도 같은 결과라 False — 돈만 태운다.
+
+#: 메시지에서 상태코드를 **읽을 수 있는 형태로만** 뽑는다: `HTTP 400`,
+#: `status 503`, `code: 429`. 맨 숫자 줍기는 하지 않는다.
+_STATUS_IN_TEXT = re.compile(
+    r"\b(?:http|https|status|status_code|code|error)\b[^0-9]{0,4}([1-5]\d\d)\b",
+    re.IGNORECASE)
+
+
+def classify_provider_error(exc: BaseException) -> str:
+    """provider 예외를 ``"retryable"`` / ``"content"`` 로 분류한다.
+
+    판정 순서는 **증거가 강한 것부터**다:
+
+    1. 예외가 구조적으로 노출한 HTTP 상태코드 (가장 신뢰할 수 있다).
+    2. 예외 **타입** (TimeoutError/ConnectionError/OSError = 인프라).
+    3. 콘텐츠·정책 문자열 신호.
+    4. 메시지에서 라벨이 붙은 상태코드 (`HTTP 400`).
+    5. 인프라 문자열 신호.
+    6. **기본값은 retryable.** 모르는 오류를 qa_failed 로 보내면
+       `qa_failed -> queued` 간선을 타고 큐로 되돌아와 다시 지출한다.
+       retryable_failed 는 시도 상한과 지출 상한이 모두 걸린 버킷이라
+       모르는 오류의 안전한 기본값이다.
     """
+    status = _status_code_of(exc)
+    if status is not None:
+        return "retryable" if status in RETRYABLE_STATUS_CODES else "content"
+
+    if isinstance(exc, RETRYABLE_EXCEPTION_TYPES):
+        return "retryable"
+
     text = f"{type(exc).__name__}: {exc}".lower()
-    if "content" in text or "policy" in text or "moderat" in text:
-        return False
-    return any(marker in text for marker in RETRYABLE_MARKERS)
+    if any(marker in text for marker in CONTENT_MARKERS):
+        return "content"
+
+    match = _STATUS_IN_TEXT.search(text)
+    if match:
+        return ("retryable" if int(match.group(1)) in RETRYABLE_STATUS_CODES
+                else "content")
+
+    if any(marker in text for marker in RETRYABLE_MARKERS):
+        return "retryable"
+    return "retryable"
+
+
+def is_retryable_provider_error(exc: BaseException) -> bool:
+    """인프라성 실패면 True. 얇은 래퍼 — 판정은 classify_provider_error 가 한다."""
+    return classify_provider_error(exc) == "retryable"
 
 
 # --- 지출 원장 ---------------------------------------------------------------
+#
+# **알려진 공백 — 이 원장에는 락이 없다.** 지금은 크론이 단일 프로세스라
+# 경합이 없어 의도적으로 미룬 것이다. 동시 실행이 하나라도 생기면
+# read-modify-write 사이에 낀 쓰기가 예약을 잃고 상한이 무력화된다.
+#
+# **재발명하지 말 것.** 이 저장소에는 이미 검증된 파일 락이 있다:
+# `video_queue.py` 의 `LOCK_FILENAME` / `_locked()` — os.link 기반 원자적
+# 획득, stale 락 감지(inode 대조), 타임아웃까지 갖췄고 test_video_queue.py
+# 로 회귀가 걸려 있다. 이 원장을 잠글 때가 오면 그 락을 그대로 쓴다.
 
 
 def load_spend(ledger_path: str) -> Dict[str, Any]:
@@ -716,11 +814,29 @@ def load_spend(ledger_path: str) -> Dict[str, Any]:
 
 def _day_bucket(ledger: Dict[str, Any], day: str) -> Dict[str, Any]:
     bucket = ledger["days"].setdefault(
-        day, {"reserved_usd": 0.0, "actual_usd": 0.0, "entries": []})
+        day, {"reserved_usd": 0.0, "actual_usd": 0.0,
+              "possibly_billed_usd": 0.0, "entries": []})
     bucket.setdefault("reserved_usd", 0.0)
     bucket.setdefault("actual_usd", 0.0)
+    #: 제출됐지만 실패한 요청의 금액. fal 이 실패 제출을 청구하지 **않는다는
+    #: 증거를 우리는 갖고 있지 않다** — 그래서 0 으로 지우지 않고 여기에
+    #: 남기고 상한에도 계속 반영한다. 증거가 확보되면 그때 없앤다.
+    bucket.setdefault("possibly_billed_usd", 0.0)
     bucket.setdefault("entries", [])
     return bucket
+
+
+def _clamp_nonnegative(value: float, *, what: str, day: str, run_id: str,
+                       cut_index: int) -> float:
+    """음수 잔액은 회계 버그다 — 조용히 흡수하지 않고 경고한 뒤 0 으로 만든다."""
+    if value < -1e-9:
+        LOGGER.warning(
+            "지출 원장 %s 이 음수(negative balance)다: %.6f USD "
+            "(day=%s run_id=%s cut_index=%s) — 0 으로 절단하지만 이는 "
+            "회계 버그의 신호다. 원장 항목을 감사할 것.",
+            what, value, day, run_id, cut_index)
+        return 0.0
+    return max(0.0, value)
 
 
 def reserve_spend(ledger_path: str, day: str, amount_usd: float, *,
@@ -745,11 +861,16 @@ def reserve_spend(ledger_path: str, day: str, amount_usd: float, *,
 def reconcile_spend(ledger_path: str, day: str, reserved_usd: float,
                     actual_usd: float, *, run_id: str,
                     cut_index: int) -> Dict[str, Any]:
-    """호출 후 실비로 정산한다 — 예약은 실비로 대체된다."""
+    """호출 후 부과액으로 정산한다 — 예약은 그 값으로 대체된다.
+
+    ``actual_usd`` 에 들어가는 값이 반드시 provider 청구액인 것은 아니다.
+    출처 구분은 컷 계보의 `cost_source` 가 갖는다.
+    """
     ledger = load_spend(ledger_path)
     bucket = _day_bucket(ledger, day)
-    bucket["reserved_usd"] = round(
-        max(0.0, bucket["reserved_usd"] - reserved_usd + actual_usd), 6)
+    bucket["reserved_usd"] = round(_clamp_nonnegative(
+        bucket["reserved_usd"] - reserved_usd + actual_usd,
+        what="reserved_usd", day=day, run_id=run_id, cut_index=cut_index), 6)
     bucket["actual_usd"] = round(bucket["actual_usd"] + actual_usd, 6)
     bucket["entries"].append({"run_id": run_id, "cut_index": cut_index,
                               "reserved_usd": -reserved_usd,
@@ -760,13 +881,40 @@ def reconcile_spend(ledger_path: str, day: str, reserved_usd: float,
 
 def release_spend(ledger_path: str, day: str, amount_usd: float, *,
                   run_id: str, cut_index: int) -> Dict[str, Any]:
-    """실패한 호출의 예약을 되돌린다 (실비 0)."""
+    """실패한 호출의 예약을 되돌린다 (실비 0).
+
+    **요청이 provider 에 도달하기 전에** 실패했을 때만 쓴다. 제출된 뒤
+    실패했다면 `record_possibly_billed` 를 쓴다 — 그건 청구될 수 있다.
+    """
     ledger = load_spend(ledger_path)
     bucket = _day_bucket(ledger, day)
-    bucket["reserved_usd"] = round(
-        max(0.0, bucket["reserved_usd"] - amount_usd), 6)
+    bucket["reserved_usd"] = round(_clamp_nonnegative(
+        bucket["reserved_usd"] - amount_usd,
+        what="reserved_usd", day=day, run_id=run_id, cut_index=cut_index), 6)
     bucket["entries"].append({"run_id": run_id, "cut_index": cut_index,
                               "released_usd": amount_usd, "ts": _now()})
+    atomic_write_json(ledger_path, ledger)
+    return ledger
+
+
+def record_possibly_billed(ledger_path: str, day: str, amount_usd: float, *,
+                           run_id: str, cut_index: int,
+                           reason: str) -> Dict[str, Any]:
+    """제출 후 실패한 시도를 **청구 가능액**으로 원장에 남긴다.
+
+    예약을 풀지 않는다. fal 이 실패한 제출을 청구하지 않는다는 증거를
+    우리는 갖고 있지 않고, MAX_CUT_ATTEMPTS=3 이면 컷 하나가 세 번
+    제출될 수 있다. 그 세 건이 원장에서 사라지면 하루 상한도 감사도
+    거짓말이 된다. 증거가 확보되면 이 함수를 지우고 release_spend 로
+    되돌리면 된다.
+    """
+    ledger = load_spend(ledger_path)
+    bucket = _day_bucket(ledger, day)
+    bucket["possibly_billed_usd"] = round(
+        bucket["possibly_billed_usd"] + amount_usd, 6)
+    bucket["entries"].append({"run_id": run_id, "cut_index": cut_index,
+                              "possibly_billed_usd": amount_usd,
+                              "reason": reason, "ts": _now()})
     atomic_write_json(ledger_path, ledger)
     return ledger
 
@@ -785,11 +933,18 @@ def build_cut_request(frame: Dict[str, Any], *, motion_prompt: str,
                       duration_seconds: int = CUT_DURATION_SECONDS,
                       resolution: str = VIDEO_RESOLUTION,
                       aspect_ratio: str = VIDEO_ASPECT_RATIO,
-                      operation: str = VIDEO_OPERATION) -> Dict[str, Any]:
+                      operation: str = VIDEO_OPERATION,
+                      image_url: Optional[str] = None) -> Dict[str, Any]:
     """컷 1개의 fal 요청을 조립한다. 고정 계약을 벗어나면 전송 전에 거부.
 
     비-5초·비-768P·비-9:16·비-I2V 요청은 여기서 만들어질 수 없다 —
     이 함수가 유일한 요청 생성 지점이다.
+
+    ``image_url`` 은 fal 이 **가져갈 수 있는** http(s) URL 이어야 한다.
+    로컬 경로나 `file://` 은 fal 쪽에서 "이미지를 못 가져왔다"는 4xx 로
+    돌아오는데, 그 메시지에는 재시도 신호도 콘텐츠 신호도 없어 조용히
+    잘못된 버킷으로 분류된다. 그래서 **지출 전에** 여기서 거부한다.
+    업로드는 프로덕션 어댑터의 몫이다.
     """
     if operation != VIDEO_OPERATION:
         raise CutRequestError(
@@ -816,6 +971,14 @@ def build_cut_request(frame: Dict[str, Any], *, motion_prompt: str,
         raise CutRequestError(
             "첫 프레임 경로/해시가 없다 — 계보 없는 컷은 만들지 않는다")
 
+    url = str(image_url or "").strip()
+    if not _is_fetchable_url(url):
+        raise CutRequestError(
+            f"image_url 은 fal 이 가져갈 수 있는 http(s) URL 이어야 한다: "
+            f"{url!r} — 로컬 경로/file:// 는 provider 가 못 읽어 4xx 로 "
+            "실패하고, 그 실패는 잘못된 버킷으로 분류돼 다시 지출을 부른다. "
+            "지출 전에 거부한다 (업로드는 프로덕션 어댑터가 한다)")
+
     return {
         "tool": VIDEO_TOOL,
         "provider": VIDEO_PROVIDER,
@@ -830,12 +993,47 @@ def build_cut_request(frame: Dict[str, Any], *, motion_prompt: str,
         "output_path": output_path,
         "payload": {
             "prompt": prompt,
-            "image_url": f"file://{os.path.abspath(first_frame_path)}",
+            "image_url": url,
             "duration": duration_seconds,
             "resolution": resolution,
             "aspect_ratio": aspect_ratio,
         },
     }
+
+
+#: fal 이 가져갈 수 있는 URL 스킴. `https` 리터럴을 새로 쓰지 않도록
+#: 이 모듈의 유일한 URL 상수에서 스킴을 뽑는다 — 두 번째 엔드포인트
+#: 리터럴이 생기지 않는다는 구조적 성질을 유지한다.
+_FETCHABLE_SCHEMES = (FAL_I2V_URL.split("://", 1)[0] + "://",
+                      FAL_I2V_URL.split("://", 1)[0].rstrip("s") + "://")
+
+
+def _is_fetchable_url(url: str) -> bool:
+    return str(url or "").strip().lower().startswith(_FETCHABLE_SCHEMES)
+
+
+def _as_amount(value: Any) -> Optional[float]:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+def _resolve_cost(response: Any, local_estimate: float) -> tuple:
+    """(billed, cost_source, provider_reported) 를 돌려준다.
+
+    ``billed`` 는 provider 가 **청구액**이라고 명시한 값일 때만 숫자다.
+    provider 의 `cost_usd` 는 청구액이 아니다 — OpenMontage 도구는 그
+    자리에 `estimate_cost(inputs)` 를 그대로 넣는다. 그래서 그 값은
+    `provider_estimate` 로 표시되고 `actual_` 필드에는 들어가지 않는다.
+    """
+    data = response if isinstance(response, dict) else {}
+    billed = _as_amount(data.get("billed_cost_usd"))
+    if billed is not None:
+        return billed, COST_SOURCE_PROVIDER_BILLED, billed
+    reported = _as_amount(data.get("cost_usd"))
+    if reported is not None:
+        return None, COST_SOURCE_PROVIDER_ESTIMATE, reported
+    return None, COST_SOURCE_LOCAL_ESTIMATE, None
 
 
 _MP4_BRANDS = (b"ftyp",)
@@ -866,12 +1064,21 @@ def generate_cuts(storyboard: Any, frames_manifest: Dict[str, Any], *,
                   run_cap_usd: float = MAX_RUN_SPEND_USD,
                   daily_cap_usd: float = MAX_DAILY_SPEND_USD,
                   today: Optional[str] = None,
+                  image_url_for: Optional[Callable] = None,
                   sleep: Optional[Callable] = None) -> Dict[str, Any]:
     """첫 프레임마다 5초 H3 Max I2V 컷을 정확히 하나씩 만든다.
 
     ``client`` 는 주입 시드다 — ``build_cut_request`` 가 만든 요청 dict 를
-    받아 ``{"request_id", "output_path", "cost_usd"?}`` 를 돌려주고, 실패하면
-    예외를 던진다. 프로덕션은 OpenMontage ``minimax_fal_video`` 도구를 감싼다.
+    받아 ``{"request_id", "output_path", "billed_cost_usd"?, "cost_usd"?}`` 를
+    돌려주고, 실패하면 예외를 던진다. 프로덕션은 OpenMontage
+    ``minimax_fal_video`` 도구를 감싼다. ``billed_cost_usd`` 만이 청구액이고
+    ``cost_usd`` 는 provider **추정치**다 (OpenMontage 도구는 후자에
+    `estimate_cost(inputs)` 결과를 그대로 넣는다) — 기록에서 둘은 절대
+    같은 필드를 쓰지 않는다.
+
+    ``image_url_for`` 는 첫 프레임 dict 를 받아 fal 이 가져갈 수 있는
+    http(s) URL 을 돌려주는 업로드 어댑터다. 없으면 요청을 **한 건도**
+    보내지 않고 CutRequestError — 로컬 경로로는 지출할 수 없다.
 
     반환 state 는 계약 전이표의 ``generating`` 하위 간선만 쓴다:
     성공 ``ready_to_publish`` / 모델·콘텐츠 실패 ``qa_failed`` /
@@ -934,12 +1141,28 @@ def generate_cuts(storyboard: Any, frames_manifest: Dict[str, Any], *,
     state = STATE_READY_TO_PUBLISH
     failure: Optional[str] = None
 
-    for frame in sorted(frames, key=lambda f: int(f.get("cut_index") or 0)):
+    # 요청을 **전부 먼저** 조립한다 — image_url 하나라도 못 만들면 지출 0건.
+    uploader = image_url_for
+    ordered = sorted(frames, key=lambda f: int(f.get("cut_index") or 0))
+    if uploader is None:
+        raise CutRequestError(
+            "image_url_for 업로드 어댑터가 없다 — fal 은 로컬 경로를 읽을 수 "
+            "없고 file:// 은 4xx 로 실패한다. 요청을 한 건도 보내지 않는다")
+    requests_by_index: Dict[int, Dict[str, Any]] = {}
+    for frame in ordered:
         index = int(frame.get("cut_index") or 0)
-        output_path = os.path.join(
-            out_dir, f"{product_id}_cut{index:02d}.mp4")
-        request = build_cut_request(frame, motion_prompt=motions.get(index, ""),
-                                    output_path=output_path)
+        requests_by_index[index] = build_cut_request(
+            frame, motion_prompt=motions.get(index, ""),
+            output_path=os.path.join(out_dir,
+                                     f"{product_id}_cut{index:02d}.mp4"),
+            image_url=uploader(frame))
+
+    possibly_billed = 0.0
+
+    for frame in ordered:
+        index = int(frame.get("cut_index") or 0)
+        request = requests_by_index[index]
+        output_path = request["output_path"]
         attempts[index] = 0
         last_error: Optional[BaseException] = None
 
@@ -948,10 +1171,13 @@ def generate_cuts(storyboard: Any, frames_manifest: Dict[str, Any], *,
             attempt = attempts[index]
 
             # 실행당 상한을 시도 단위로도 다시 확인한다 (재시도도 돈이다).
-            if round(run_spent + per_cut_estimate, 6) > run_cap_usd + 1e-9:
+            # 실패한 제출(possibly_billed)도 상한을 소모한다 — 청구될 수 있다.
+            if round(run_spent + possibly_billed + per_cut_estimate, 6) \
+                    > run_cap_usd + 1e-9:
                 state = STATE_RETRYABLE_FAILED
                 failure = (f"run cap 초과로 컷 {index} 시도 {attempt} 중단 "
-                           f"(누적 {run_spent:.4f} USD)")
+                           f"(누적 {run_spent:.4f} + 청구가능 "
+                           f"{possibly_billed:.4f} USD)")
                 break
 
             # 결정 로그 — **호출 직전**에 남긴다.
@@ -976,27 +1202,47 @@ def generate_cuts(storyboard: Any, frames_manifest: Dict[str, Any], *,
             reserve_spend(ledger_path, day, per_cut_estimate, run_id=run_id,
                           cut_index=index, daily_cap_usd=daily_cap_usd)
 
+            # 요청은 이 시점에 provider 로 나갔다. 실패해도 청구될 수
+            # 있으므로 예약을 **풀지 않고** possibly_billed 로 옮긴다.
+            # (release_spend 는 제출 전 실패에만 쓴다.)
             try:
                 response = client(request)
                 path = str((response or {}).get("output_path") or output_path)
                 size = _assert_playable_mp4(path)
+                try:
+                    output_sha256 = sha256_file(path)
+                except OSError as exc:
+                    # 지출이 이미 확정된 뒤의 해싱 실패. 매니페스트 없이
+                    # 크래시하지 않도록 콘텐츠 실패로 감싼다.
+                    raise CutContentError(
+                        f"컷 {index} 산출물을 해싱할 수 없다: {path} ({exc})"
+                    ) from exc
             except CutContentError as exc:
-                release_spend(ledger_path, day, per_cut_estimate,
-                              run_id=run_id, cut_index=index)
+                record_possibly_billed(ledger_path, day, per_cut_estimate,
+                                       run_id=run_id, cut_index=index,
+                                       reason="content_failure")
+                possibly_billed = round(possibly_billed + per_cut_estimate, 6)
                 _discard(output_path)
                 state, failure, last_error = STATE_QA_FAILED, str(exc), exc
                 break
-            except BaseException as exc:  # provider 예외
-                release_spend(ledger_path, day, per_cut_estimate,
-                              run_id=run_id, cut_index=index)
+            except Exception as exc:  # provider 예외 (BaseException 이 아니다:
+                # KeyboardInterrupt/SystemExit 는 잡 상태로 둔갑시키지 않는다)
+                record_possibly_billed(ledger_path, day, per_cut_estimate,
+                                       run_id=run_id, cut_index=index,
+                                       reason="provider_exception")
+                possibly_billed = round(possibly_billed + per_cut_estimate, 6)
                 _discard(output_path)
                 last_error = exc
-                retryable = is_retryable_provider_error(exc)
+                classification = classify_provider_error(exc)
+                retryable = classification == "retryable"
                 append_event(events, {
                     "event": "cut_attempt_failed", "job_id": job_id,
                     "run_id": run_id, "cut_index": index, "attempt": attempt,
+                    "classification": classification,
+                    "status_code": _status_code_of(exc),
                     "retryable": retryable, "error": repr(exc),
                     "endpoint": VIDEO_ENDPOINT,
+                    "possibly_billed_usd": per_cut_estimate,
                     "fallback_taken": False,
                 })
                 if not retryable:
@@ -1011,14 +1257,16 @@ def generate_cuts(storyboard: Any, frames_manifest: Dict[str, Any], *,
                     min(attempt - 1, len(RETRY_BACKOFF_SECONDS) - 1)])
                 continue
 
-            # 성공 — 실비로 정산한다 (추정이 실비를 대신하지 않는다).
-            reported = (response or {}).get("cost_usd")
-            reported_ok = isinstance(reported, (int, float)) and not isinstance(
-                reported, bool)
-            actual = float(reported) if reported_ok else per_cut_estimate
-            reconcile_spend(ledger_path, day, per_cut_estimate, actual,
+            # 성공 — 비용의 **출처**를 함께 기록한다. 추정치는 절대
+            # `actual_` 필드에 앉지 않는다.
+            billed, source, provider_reported = _resolve_cost(
+                response, per_cut_estimate)
+            charged = billed if billed is not None else (
+                provider_reported if provider_reported is not None
+                else per_cut_estimate)
+            reconcile_spend(ledger_path, day, per_cut_estimate, charged,
                             run_id=run_id, cut_index=index)
-            run_spent = round(run_spent + actual, 6)
+            run_spent = round(run_spent + charged, 6)
 
             lineage.append({
                 "job_id": job_id, "run_id": run_id,
@@ -1037,10 +1285,14 @@ def generate_cuts(storyboard: Any, frames_manifest: Dict[str, Any], *,
                     (response or {}).get("request_id") or ""),
                 "attempts": attempt,
                 "estimated_cost_usd": per_cut_estimate,
-                "actual_cost_usd": actual,
-                "actual_cost_is_provider_reported": bool(reported_ok),
+                #: provider 가 **청구액**을 준 경우에만 채워진다. 그 외엔 None —
+                #: 추정치가 `actual_` 필드를 차지하는 일은 구조적으로 없다.
+                "actual_cost_usd": billed,
+                "provider_reported_cost_usd": provider_reported,
+                "charged_cost_usd": charged,
+                "cost_source": source,
                 "output_path": path,
-                "output_sha256": sha256_file(path),
+                "output_sha256": output_sha256,
                 "output_bytes": size,
                 "created_at": _now(),
             })
@@ -1066,9 +1318,16 @@ def generate_cuts(storyboard: Any, frames_manifest: Dict[str, Any], *,
                 index=c["cut_index"], prompt=c["prompt"],
                 duration_seconds=c["duration_seconds"],
                 provider_request_id=c["provider_request_id"],
-                cost_usd=c["actual_cost_usd"], output_path=c["output_path"],
+                cost_usd=c["charged_cost_usd"], output_path=c["output_path"],
                 output_sha256=c["output_sha256"]) for c in lineage],
         ).validate().to_dict()
+        # 계약 dataclass 에 없는 감사 필드를 매니페스트에 실어 보낸다 —
+        # cuts.json 을 읽는 비용 감사는 이 표식으로 추정과 청구를 가른다.
+        for mcut, c in zip(manifest["cuts"], lineage):
+            mcut["cost_source"] = c["cost_source"]
+            mcut["actual_cost_usd"] = c["actual_cost_usd"]
+            mcut["provider_reported_cost_usd"] = c["provider_reported_cost_usd"]
+            mcut["estimated_cost_usd"] = c["estimated_cost_usd"]
         atomic_write_json(os.path.join(out_dir, "cuts.json"),
                           {"manifest": manifest, "cut_lineage": lineage})
     else:
@@ -1080,14 +1339,22 @@ def generate_cuts(storyboard: Any, frames_manifest: Dict[str, Any], *,
         "cuts_dir": out_dir, "manifest": manifest, "cut_lineage": lineage,
         "attempts": [attempts[i] for i in sorted(attempts)],
         "estimated_cost_usd": job_estimate,
+        #: 상한과 원장에 실제로 반영된 금액 (청구액이 아니라 "부과된 값").
+        "charged_cost_usd": round(run_spent, 6),
         "actual_cost_usd": round(run_spent, 6),
+        #: 제출됐지만 실패한 시도의 금액 — 청구될 수 있으므로 사라지지 않는다.
+        "possibly_billed_usd": round(possibly_billed, 6),
+        "cost_sources": sorted({c["cost_source"] for c in lineage}),
         "failure": failure,
     }
     append_event(events, {
         "event": "cut_generation_finished", "job_id": job_id, "run_id": run_id,
         "state": state, "cuts": len(lineage), "endpoint": VIDEO_ENDPOINT,
         "model": VIDEO_MODEL, "estimated_cost_usd": job_estimate,
-        "actual_cost_usd": round(run_spent, 6), "failure": failure,
+        "charged_cost_usd": round(run_spent, 6),
+        "possibly_billed_usd": round(possibly_billed, 6),
+        "cost_sources": sorted({c["cost_source"] for c in lineage}),
+        "failure": failure,
     })
     return result
 

@@ -568,11 +568,15 @@ class FakeFalClient:
     """fal.ai I2V 클라이언트 대체. 모든 요청을 기록한다 — 실제 지출 없음."""
 
     def __init__(self, fail_with=None, fail_times=None, cost_usd=None,
-                 bad_bytes=False):
+                 bad_bytes=False, billed_cost_usd=None):
         #: fail_with 가 있으면 fail_times 회(기본 무한) 실패시킨다.
         self.fail_with = fail_with
         self.fail_times = fail_times
+        #: provider 가 돌려주는 `cost_usd` — OpenMontage 도구는 여기에 자기
+        #: **추정치**를 넣는다(청구액이 아니다).
         self.cost_usd = cost_usd
+        #: 실제 청구액을 아는 provider 만 채우는 필드.
+        self.billed_cost_usd = billed_cost_usd
         self.bad_bytes = bad_bytes
         self.requests = []
 
@@ -589,7 +593,14 @@ class FakeFalClient:
         out = {"request_id": f"fal-req-{n:03d}", "output_path": path}
         if self.cost_usd is not None:
             out["cost_usd"] = self.cost_usd
+        if self.billed_cost_usd is not None:
+            out["billed_cost_usd"] = self.billed_cost_usd
         return out
+
+
+def fake_uploaded_url(frame):
+    """업로드 어댑터 대체 — 실제 업로드 없이 https URL 만 흉내낸다."""
+    return f"https://cdn.example.test/frames/{frame['output_sha256']}.png"
 
 
 class CutBase(Base):
@@ -600,6 +611,7 @@ class CutBase(Base):
 
     def run_cuts(self, **kw):
         kw.setdefault("client", FakeFalClient())
+        kw.setdefault("image_url_for", fake_uploaded_url)
         kw.setdefault("storyboard", make_storyboard())
         kw.setdefault("frames_manifest", self.frames)
         kw.setdefault("projects_root", self.projects_root)
@@ -713,18 +725,72 @@ class TestCostGate(CutBase):
         self.assertAlmostEqual(day["actual_usd"], 0.34, places=6)
         self.assertAlmostEqual(day["reserved_usd"], 0.34, places=6)
 
-    def test_failed_cut_releases_its_reservation(self):
-        self.run_cuts(client=FakeFalClient(fail_with=RuntimeError("HTTP 503")))
+    def test_failed_attempt_stays_on_the_books_as_possibly_billed(self):
+        """제출된 요청은 실패해도 청구될 수 있다 — 원장에서 사라지면 안 된다."""
+        client = FakeFalClient(fail_with=RuntimeError("HTTP 503"))
+        result = self.run_cuts(client=client)
         day = vg.load_spend(self.ledger)["days"]["2026-08-28"]
-        self.assertEqual(day["reserved_usd"], 0.0)
+        n = len(client.requests)
+        self.assertEqual(n, vg.MAX_CUT_ATTEMPTS)
+        self.assertAlmostEqual(day["possibly_billed_usd"], 0.20 * n, places=6)
+        # 예약이 0 으로 사라지지 않는다 — 상한 압력을 유지한다.
+        self.assertAlmostEqual(day["reserved_usd"], 0.20 * n, places=6)
         self.assertEqual(day["actual_usd"], 0.0)
+        self.assertAlmostEqual(result["possibly_billed_usd"], 0.20 * n, places=6)
+
+    def test_possibly_billed_failures_count_against_the_run_cap(self):
+        """재시도가 실행 상한을 소모해야 한다 — 무료가 아니다."""
+        client = FakeFalClient(fail_with=RuntimeError("HTTP 503"))
+        result = self.run_cuts(client=client, run_cap_usd=0.50)
+        self.assertEqual(len(client.requests), 2)  # 0.20*2=0.40, 3번째는 상한
+        self.assertEqual(result["state"], "retryable_failed")
 
     def test_estimate_never_replaces_actual_in_records(self):
-        result = self.run_cuts(client=FakeFalClient(cost_usd=0.17))
+        result = self.run_cuts(client=FakeFalClient(billed_cost_usd=0.17))
         for cut in result["cut_lineage"]:
             self.assertEqual(cut["estimated_cost_usd"], 0.20)
             self.assertEqual(cut["actual_cost_usd"], 0.17)
-            self.assertTrue(cut["actual_cost_is_provider_reported"])
+            self.assertEqual(cut["cost_source"], "provider_billed")
+
+
+class TestCostSource(CutBase):
+    """`actual_` 필드에 추정치가 앉는 것을 구조적으로 막는다."""
+
+    def test_provider_estimate_is_not_recorded_as_actual(self):
+        # OpenMontage 도구는 cost_usd 에 자기 추정치를 넣는다.
+        result = self.run_cuts(client=FakeFalClient(cost_usd=0.17))
+        for cut in result["cut_lineage"]:
+            self.assertEqual(cut["cost_source"], "provider_estimate")
+            self.assertIsNone(cut["actual_cost_usd"])
+            self.assertEqual(cut["provider_reported_cost_usd"], 0.17)
+            self.assertEqual(cut["charged_cost_usd"], 0.17)
+
+    def test_local_estimate_when_provider_reports_nothing(self):
+        result = self.run_cuts(client=FakeFalClient())
+        for cut in result["cut_lineage"]:
+            self.assertEqual(cut["cost_source"], "local_estimate")
+            self.assertIsNone(cut["actual_cost_usd"])
+            self.assertIsNone(cut["provider_reported_cost_usd"])
+            self.assertEqual(cut["charged_cost_usd"], 0.20)
+
+    def test_cost_source_reaches_the_contract_manifest(self):
+        for client, expected in ((FakeFalClient(billed_cost_usd=0.17),
+                                  "provider_billed"),
+                                 (FakeFalClient(cost_usd=0.17),
+                                  "provider_estimate"),
+                                 (FakeFalClient(), "local_estimate")):
+            with self.subTest(expected=expected):
+                self.setUp()
+                result = self.run_cuts(client=client)
+                cuts = result["manifest"]["cuts"]
+                self.assertTrue(cuts)
+                for mcut in cuts:
+                    self.assertEqual(mcut["cost_source"], expected)
+
+    def test_cost_source_values_are_the_only_three(self):
+        self.assertEqual(set(vg.COST_SOURCES),
+                         {"provider_billed", "provider_estimate",
+                          "local_estimate"})
 
 
 class TestNoFallback(CutBase):
@@ -741,10 +807,15 @@ class TestNoFallback(CutBase):
             self.assertNotIn("text-to-video", blob)
             self.assertNotIn("text_to_video", blob)
 
-    def test_module_declares_no_fallback_endpoint(self):
-        source = open(vg.__file__, encoding="utf-8").read().lower()
-        self.assertNotIn("hailuo", source)
-        self.assertNotIn("fallback_tools", source)
+    def test_module_declares_exactly_one_https_literal(self):
+        """구조적 판정: 모듈 전체에 `https://` 리터럴이 정확히 1개다."""
+        import re as _re
+        source = open(vg.__file__, encoding="utf-8").read()
+        hits = _re.findall(r"https://", source)
+        self.assertEqual(len(hits), 1, f"https:// 리터럴 {len(hits)}개 — "
+                                       "두 번째 엔드포인트가 생겼다")
+        self.assertTrue(vg.FAL_I2V_URL.startswith("https://"))
+        self.assertIn(vg.VIDEO_ENDPOINT, vg.FAL_I2V_URL)
 
     def test_no_partial_video_left_on_disk_after_failure(self):
         self.run_cuts(client=FakeFalClient(fail_with=RuntimeError("timeout")))
@@ -791,6 +862,123 @@ class TestRetryPolicy(CutBase):
         self.assertFalse(vg.is_retryable_provider_error(
             RuntimeError("content_policy_violation")))
         self.assertFalse(vg.is_retryable_provider_error(RuntimeError("HTTP 400 bad")))
+
+
+class TestErrorClassification(CutBase):
+    """분류는 예외 타입·HTTP 상태코드로 한다 — 문자열 줍기가 아니다."""
+
+    def test_status_code_attribute_beats_message_text(self):
+        exc = RuntimeError("request 1500ms elapsed, id=req-500-abc")
+        exc.status_code = 400
+        self.assertEqual(vg.classify_provider_error(exc), "content")
+
+    def test_status_5xx_is_retryable_by_code(self):
+        exc = RuntimeError("upstream boom")
+        exc.status_code = 503
+        self.assertEqual(vg.classify_provider_error(exc), "retryable")
+
+    def test_status_429_is_retryable_by_code(self):
+        exc = RuntimeError("slow down")
+        exc.status_code = 429
+        self.assertEqual(vg.classify_provider_error(exc), "retryable")
+
+    def test_digit_run_in_request_id_is_not_a_5xx(self):
+        """`500` 이 요청 id 나 `1500ms` 안에 있다고 재시도하지 않는다."""
+        exc = RuntimeError("rejected by moderation, request_id=abc500def")
+        self.assertEqual(vg.classify_provider_error(exc), "content")
+        self.assertFalse(vg.is_retryable_provider_error(exc))
+
+    def test_timeout_exception_type_is_retryable(self):
+        self.assertEqual(vg.classify_provider_error(TimeoutError("x")),
+                         "retryable")
+
+    def test_connection_error_type_is_retryable(self):
+        self.assertEqual(vg.classify_provider_error(ConnectionError("x")),
+                         "retryable")
+
+    def test_unknown_infrastructure_error_defaults_to_retryable(self):
+        """알 수 없는 오류는 qa_failed 가 아니라 상한이 걸린 재시도로 간다."""
+        exc = ConnectionError("Network is unreachable")
+        self.assertEqual(vg.classify_provider_error(exc), "retryable")
+        client = FakeFalClient(fail_with=exc)
+        result = self.run_cuts(client=client)
+        self.assertEqual(result["state"], "retryable_failed")
+
+    def test_totally_unknown_exception_defaults_to_retryable(self):
+        class Weird(Exception):
+            pass
+        self.assertEqual(vg.classify_provider_error(Weird("???")), "retryable")
+
+    def test_keyboard_interrupt_is_not_swallowed_into_qa_failed(self):
+        client = FakeFalClient(fail_with=KeyboardInterrupt())
+        with self.assertRaises(KeyboardInterrupt):
+            self.run_cuts(client=client)
+
+    def test_system_exit_is_not_swallowed(self):
+        client = FakeFalClient(fail_with=SystemExit(1))
+        with self.assertRaises(SystemExit):
+            self.run_cuts(client=client)
+
+
+class TestImageUrlGate(CutBase):
+    """file:// 는 지출 **전에** 크게 거부한다 — 조용한 4xx 루프 금지."""
+
+    def test_file_scheme_image_url_is_rejected_before_spending(self):
+        frame = self.frames["frames"][0]
+        with self.assertRaises(vg.CutRequestError) as ctx:
+            vg.build_cut_request(frame, motion_prompt="x",
+                                 output_path="/t/a.mp4",
+                                 image_url="file:///tmp/a.png")
+        self.assertIn("http", str(ctx.exception).lower())
+
+    def test_local_path_default_is_rejected(self):
+        frame = self.frames["frames"][0]
+        with self.assertRaises(vg.CutRequestError):
+            vg.build_cut_request(frame, motion_prompt="x",
+                                 output_path="/t/a.mp4")
+
+    def test_https_image_url_is_accepted(self):
+        frame = self.frames["frames"][0]
+        req = vg.build_cut_request(
+            frame, motion_prompt="x", output_path="/t/a.mp4",
+            image_url="https://cdn.example.test/a.png")
+        self.assertEqual(req["payload"]["image_url"],
+                         "https://cdn.example.test/a.png")
+
+    def test_generate_cuts_refuses_without_uploader_before_any_request(self):
+        client = FakeFalClient()
+        with self.assertRaises(vg.CutRequestError):
+            self.run_cuts(client=client, image_url_for=None)
+        self.assertEqual(client.requests, [])
+
+    def test_every_dispatched_request_carries_an_https_image_url(self):
+        client = FakeFalClient()
+        self.run_cuts(client=client)
+        for req in client.requests:
+            self.assertTrue(req["payload"]["image_url"].startswith("https://"))
+            self.assertNotIn("file://", req["payload"]["image_url"])
+
+
+class TestLedgerHygiene(CutBase):
+    def test_negative_reconcile_is_warned_not_silently_clamped(self):
+        vg.reserve_spend(self.ledger, "2026-08-28", 0.20, run_id="r",
+                         cut_index=1)
+        with self.assertLogs(vg.LOGGER, level="WARNING") as cap:
+            vg.reconcile_spend(self.ledger, "2026-08-28", 5.00, 0.0,
+                               run_id="r", cut_index=1)
+        self.assertTrue(any("음수" in m or "negative" in m.lower()
+                            for m in cap.output))
+        day = vg.load_spend(self.ledger)["days"]["2026-08-28"]
+        self.assertEqual(day["reserved_usd"], 0.0)
+
+    def test_negative_release_is_warned(self):
+        with self.assertLogs(vg.LOGGER, level="WARNING"):
+            vg.release_spend(self.ledger, "2026-08-28", 5.00, run_id="r",
+                             cut_index=1)
+
+    def test_module_points_at_the_proven_lock_for_the_ledger(self):
+        source = open(vg.__file__, encoding="utf-8").read()
+        self.assertIn("video_queue.py", source)
 
 
 class TestCutLineage(CutBase):
