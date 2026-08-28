@@ -38,13 +38,19 @@ import json
 import os
 import struct
 import subprocess
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 import codex_image_bridge as cib
-from video_contracts import (IMAGE_HERMES_MODEL, IMAGE_HERMES_PROVIDER,
-                             IMAGE_MODEL_ALIAS, IMAGE_PROVIDER_MODEL, MARKETS,
-                             append_event, atomic_write_json)
+import video_contracts as vc
+from video_contracts import (CUT_DURATION_SECONDS, IMAGE_HERMES_MODEL,
+                             IMAGE_HERMES_PROVIDER, IMAGE_MODEL_ALIAS,
+                             IMAGE_PROVIDER_MODEL, MARKETS, STATE_GENERATING,
+                             STATE_QA_FAILED, STATE_READY_TO_PUBLISH,
+                             STATE_RETRYABLE_FAILED, VIDEO_ASPECT_RATIO,
+                             VIDEO_ENDPOINT, VIDEO_RESOLUTION, append_event,
+                             assert_transition, atomic_write_json)
 
 # ---------------------------------------------------------------------------
 # 고정 계약 (상류 확정 — 변경 금지)
@@ -494,3 +500,505 @@ def generate_first_frames(storyboard: Any, asset_manifest: Dict[str, Any], *,
         "sha256": [f["output_sha256"] for f in frames],
     })
     return manifest
+
+
+# ===========================================================================
+# 컷 생성 — MiniMax H3 Max image-to-video (첫 지출 지점)
+# ===========================================================================
+#
+# 이 절은 첫 프레임 1장을 5초짜리 세로 영상 컷 1개로 바꾼다. 규칙은 짧다:
+#
+# * **컷당 요청 1개.** 정확히 5초 · 768P · 9:16 · image-to-video.
+# * **대체 경로 없음.** H3 Max 가 실패하면 잡이 실패한다. 다른 fal 모델,
+#   다른 provider, text-to-video 로 갈아타는 코드 경로는 존재하지 않는다.
+#   (이 모듈에서 유일하게 허용된 URL 은 FAL_I2V_URL 하나뿐이다.)
+# * **지출 전 게이트.** 호출 전에 tool/provider/endpoint/model/추정비용/
+#   승인정책을 결정 로그에 남기고, 실행당·일당 상한을 강제한다. 상한을
+#   넘길 실행은 요청을 **한 건도** 보내지 않고 거부한다.
+# * **추정≠실비.** 예약은 추정으로 잡고, 호출 후 provider 가 알려준 실비로
+#   정산한다. 기록에서 추정이 실비를 조용히 대신하는 일은 없다.
+#
+# 네트워크는 `client=` 주입 시드로만 들어온다. 테스트는 절대 유료 호출을
+# 하지 않는다.
+
+#: 실제 fal.ai 호출을 소유하는 OpenMontage 도구 (여기서 재구현하지 않는다).
+VIDEO_TOOL = "minimax_fal_video"
+VIDEO_PROVIDER = "minimax"
+VIDEO_GATEWAY = "fal.ai"
+VIDEO_MODEL = "minimax-h3-max"
+
+#: 이 모듈이 아는 유일한 영상 URL. 다른 엔드포인트는 코드에 존재하지 않는다.
+FAL_I2V_URL = f"https://queue.fal.run/{VIDEO_ENDPOINT}"
+
+VIDEO_OPERATION = "image_to_video"
+
+#: 컷 생성은 사람 승인 없이 자동 실행되지만 상한 안에서만 가능하다.
+APPROVAL_POLICY = "auto_within_caps"
+
+# --- 가격 (fal.ai H3 Max I2V 엔드포인트 게시가) ------------------------------
+# 480P $0.025/s, 768P $0.04/s. 엔드포인트 페이지는 768P 가 프로모션 종료 후
+# $0.08/s 로 오른다고 경고한다 — 오르면 아래 상수 하나만 고친다.
+RATE_USD_PER_SECOND_768P = 0.04
+RATE_USD_PER_SECOND_480P = 0.025
+
+#: 실행 1회 지출 상한 (컷 3개 × 재시도 3회 여유).
+MAX_RUN_SPEND_USD = 2.00
+#: 하루 지출 상한.
+MAX_DAILY_SPEND_USD = 10.00
+
+#: 컷 1개의 시도 상한. 여기 도달하면 retryable_failed — 무한 재시도 금지.
+MAX_CUT_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = (2.0, 5.0)
+
+#: 인프라성(재시도 가능) 실패 신호.
+RETRYABLE_MARKERS = ("timeout", "timed out", "rate limit", "rate_limit",
+                     "too many requests", "429", "500", "502", "503", "504",
+                     "connection reset", "connection aborted",
+                     "temporarily unavailable", "service unavailable")
+
+
+class CutGenerationError(FirstFrameError):
+    """컷 생성 계약 위반 공통 베이스."""
+
+
+class CutRequestError(CutGenerationError):
+    """요청 형태가 고정 계약(5초/768P/9:16/I2V)을 벗어났다 — 전송 전에 거부."""
+
+
+class CostGateError(CutGenerationError):
+    """실행당 또는 일당 지출 상한 초과 — 호출 전에 거부."""
+
+
+class CutContentError(CutGenerationError):
+    """모델·콘텐츠 실패 (재시도해도 같은 결과) → qa_failed."""
+
+
+class CutInfraError(CutGenerationError):
+    """인프라 실패가 시도 상한까지 반복됐다 → retryable_failed."""
+
+
+def estimate_cut_cost_usd(duration_seconds: int = CUT_DURATION_SECONDS,
+                          resolution: str = VIDEO_RESOLUTION) -> float:
+    """고정 계약(5초 768P) 기준 컷 1개 추정가 = $0.20.
+
+    **추정일 뿐이다.** 기록에서 실비를 대신하지 않는다.
+    """
+    if resolution == "768P":
+        rate = RATE_USD_PER_SECOND_768P
+    elif resolution == "480P":
+        rate = RATE_USD_PER_SECOND_480P
+    else:
+        raise CutRequestError(
+            f"H3 Max image-to-video 는 480P/768P 만 지원한다: {resolution!r}")
+    return round(rate * duration_seconds, 6)
+
+
+def is_retryable_provider_error(exc: BaseException) -> bool:
+    """인프라성 실패(타임아웃·5xx·레이트리밋)만 True.
+
+    모델/콘텐츠 실패는 재시도해도 같은 결과라 False — 돈만 태운다.
+    """
+    text = f"{type(exc).__name__}: {exc}".lower()
+    if "content" in text or "policy" in text or "moderat" in text:
+        return False
+    return any(marker in text for marker in RETRYABLE_MARKERS)
+
+
+# --- 지출 원장 ---------------------------------------------------------------
+
+
+def load_spend(ledger_path: str) -> Dict[str, Any]:
+    """일자별 예약·실비 원장. 없으면 빈 원장."""
+    try:
+        with open(ledger_path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {"days": {}}
+    if not isinstance(data, dict) or not isinstance(data.get("days"), dict):
+        return {"days": {}}
+    return data
+
+
+def _day_bucket(ledger: Dict[str, Any], day: str) -> Dict[str, Any]:
+    bucket = ledger["days"].setdefault(
+        day, {"reserved_usd": 0.0, "actual_usd": 0.0, "entries": []})
+    bucket.setdefault("reserved_usd", 0.0)
+    bucket.setdefault("actual_usd", 0.0)
+    bucket.setdefault("entries", [])
+    return bucket
+
+
+def reserve_spend(ledger_path: str, day: str, amount_usd: float, *,
+                  run_id: str, cut_index: int,
+                  daily_cap_usd: float = MAX_DAILY_SPEND_USD) -> Dict[str, Any]:
+    """**호출 전에** 추정액을 예약한다. 일당 상한을 넘기면 CostGateError."""
+    ledger = load_spend(ledger_path)
+    bucket = _day_bucket(ledger, day)
+    projected = round(bucket["reserved_usd"] + amount_usd, 6)
+    if projected > daily_cap_usd + 1e-9:
+        raise CostGateError(
+            f"day cap 초과: {day} 예약 {bucket['reserved_usd']:.4f} + "
+            f"{amount_usd:.4f} = {projected:.4f} > 일당 상한 "
+            f"{daily_cap_usd:.4f} USD — 호출을 보내지 않고 거부한다")
+    bucket["reserved_usd"] = projected
+    bucket["entries"].append({"run_id": run_id, "cut_index": cut_index,
+                              "reserved_usd": amount_usd, "ts": _now()})
+    atomic_write_json(ledger_path, ledger)
+    return ledger
+
+
+def reconcile_spend(ledger_path: str, day: str, reserved_usd: float,
+                    actual_usd: float, *, run_id: str,
+                    cut_index: int) -> Dict[str, Any]:
+    """호출 후 실비로 정산한다 — 예약은 실비로 대체된다."""
+    ledger = load_spend(ledger_path)
+    bucket = _day_bucket(ledger, day)
+    bucket["reserved_usd"] = round(
+        max(0.0, bucket["reserved_usd"] - reserved_usd + actual_usd), 6)
+    bucket["actual_usd"] = round(bucket["actual_usd"] + actual_usd, 6)
+    bucket["entries"].append({"run_id": run_id, "cut_index": cut_index,
+                              "reserved_usd": -reserved_usd,
+                              "actual_usd": actual_usd, "ts": _now()})
+    atomic_write_json(ledger_path, ledger)
+    return ledger
+
+
+def release_spend(ledger_path: str, day: str, amount_usd: float, *,
+                  run_id: str, cut_index: int) -> Dict[str, Any]:
+    """실패한 호출의 예약을 되돌린다 (실비 0)."""
+    ledger = load_spend(ledger_path)
+    bucket = _day_bucket(ledger, day)
+    bucket["reserved_usd"] = round(
+        max(0.0, bucket["reserved_usd"] - amount_usd), 6)
+    bucket["entries"].append({"run_id": run_id, "cut_index": cut_index,
+                              "released_usd": amount_usd, "ts": _now()})
+    atomic_write_json(ledger_path, ledger)
+    return ledger
+
+
+# --- 요청 조립 ---------------------------------------------------------------
+
+
+def cuts_dir_for(run_id: str, projects_root: Optional[str] = None) -> str:
+    root = os.path.abspath(os.path.expanduser(projects_root
+                                              or DEFAULT_PROJECTS_ROOT))
+    return os.path.join(root, f"heightcue_{run_id}", "assets", "cuts")
+
+
+def build_cut_request(frame: Dict[str, Any], *, motion_prompt: str,
+                      output_path: str,
+                      duration_seconds: int = CUT_DURATION_SECONDS,
+                      resolution: str = VIDEO_RESOLUTION,
+                      aspect_ratio: str = VIDEO_ASPECT_RATIO,
+                      operation: str = VIDEO_OPERATION) -> Dict[str, Any]:
+    """컷 1개의 fal 요청을 조립한다. 고정 계약을 벗어나면 전송 전에 거부.
+
+    비-5초·비-768P·비-9:16·비-I2V 요청은 여기서 만들어질 수 없다 —
+    이 함수가 유일한 요청 생성 지점이다.
+    """
+    if operation != VIDEO_OPERATION:
+        raise CutRequestError(
+            f"operation 은 {VIDEO_OPERATION!r} 뿐이다: {operation!r} — "
+            "text-to-video 경로는 존재하지 않는다")
+    if duration_seconds != CUT_DURATION_SECONDS:
+        raise CutRequestError(
+            f"컷 길이는 정확히 {CUT_DURATION_SECONDS}초여야 한다: {duration_seconds!r}")
+    if resolution != VIDEO_RESOLUTION:
+        raise CutRequestError(
+            f"해상도는 {VIDEO_RESOLUTION} 고정이다: {resolution!r}")
+    if aspect_ratio != VIDEO_ASPECT_RATIO:
+        raise CutRequestError(
+            f"화면비는 {VIDEO_ASPECT_RATIO} 고정이다: {aspect_ratio!r}")
+
+    if not isinstance(frame, dict):
+        raise CutRequestError(f"frame 은 dict 여야 한다: {type(frame)}")
+    prompt = str(motion_prompt or "").strip()
+    if not prompt:
+        raise CutRequestError("motion_prompt 가 비어 있다 — 빈 프롬프트로 지출 금지")
+    first_frame_path = str(frame.get("output_path") or "")
+    first_frame_sha256 = str(frame.get("output_sha256") or "")
+    if not first_frame_path or not first_frame_sha256:
+        raise CutRequestError(
+            "첫 프레임 경로/해시가 없다 — 계보 없는 컷은 만들지 않는다")
+
+    return {
+        "tool": VIDEO_TOOL,
+        "provider": VIDEO_PROVIDER,
+        "gateway": VIDEO_GATEWAY,
+        "model": VIDEO_MODEL,
+        "endpoint": VIDEO_ENDPOINT,
+        "url": FAL_I2V_URL,
+        "operation": VIDEO_OPERATION,
+        "cut_index": int(frame.get("cut_index") or 0),
+        "first_frame_path": first_frame_path,
+        "first_frame_sha256": first_frame_sha256,
+        "output_path": output_path,
+        "payload": {
+            "prompt": prompt,
+            "image_url": f"file://{os.path.abspath(first_frame_path)}",
+            "duration": duration_seconds,
+            "resolution": resolution,
+            "aspect_ratio": aspect_ratio,
+        },
+    }
+
+
+_MP4_BRANDS = (b"ftyp",)
+
+
+def _assert_playable_mp4(path: str) -> int:
+    """산출물이 실제로 mp4 컨테이너인지 바이트로 확인한다."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(16)
+        size = os.path.getsize(path)
+    except OSError as exc:
+        raise CutContentError(f"컷 산출물을 읽을 수 없다: {path} ({exc})") from exc
+    if size <= 0 or not any(brand in head for brand in _MP4_BRANDS):
+        raise CutContentError(
+            f"컷 산출물이 mp4 가 아니다 (선두 {head[:12]!r}): {path}")
+    return size
+
+
+# --- 공개 API ----------------------------------------------------------------
+
+
+def generate_cuts(storyboard: Any, frames_manifest: Dict[str, Any], *,
+                  client: Callable,
+                  job_id: str,
+                  ledger_path: str,
+                  projects_root: Optional[str] = None,
+                  run_cap_usd: float = MAX_RUN_SPEND_USD,
+                  daily_cap_usd: float = MAX_DAILY_SPEND_USD,
+                  today: Optional[str] = None,
+                  sleep: Optional[Callable] = None) -> Dict[str, Any]:
+    """첫 프레임마다 5초 H3 Max I2V 컷을 정확히 하나씩 만든다.
+
+    ``client`` 는 주입 시드다 — ``build_cut_request`` 가 만든 요청 dict 를
+    받아 ``{"request_id", "output_path", "cost_usd"?}`` 를 돌려주고, 실패하면
+    예외를 던진다. 프로덕션은 OpenMontage ``minimax_fal_video`` 도구를 감싼다.
+
+    반환 state 는 계약 전이표의 ``generating`` 하위 간선만 쓴다:
+    성공 ``ready_to_publish`` / 모델·콘텐츠 실패 ``qa_failed`` /
+    인프라 소진 ``retryable_failed``. **대체 모델 경로는 없다.**
+    """
+    run_id = str(getattr(storyboard, "run_id", "") or "").strip()
+    product_id = str(getattr(storyboard, "product_id", "") or "").strip()
+    market = str(getattr(storyboard, "market", "") or "").strip()
+    storyboard_id = str(getattr(storyboard, "storyboard_id", "") or "").strip()
+    sb_cuts = list(getattr(storyboard, "cuts", None) or [])
+    frames = list((frames_manifest or {}).get("frames") or [])
+    napper = sleep or time.sleep
+    day = today or datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
+
+    if not run_id or not product_id or not storyboard_id or not job_id:
+        raise CutGenerationError(
+            "job_id / run_id / product_id / storyboard_id 는 전부 필요하다")
+    if market not in MARKETS:
+        raise CutGenerationError(f"market 는 {MARKETS} 중 하나여야 한다: {market!r}")
+    if not frames:
+        raise CutGenerationError("첫 프레임이 없다 — 만들 컷이 없다")
+    if len(frames) != len(sb_cuts):
+        raise CutGenerationError(
+            f"프레임 {len(frames)} 장 != 컷 {len(sb_cuts)} 개 — 1:1 이어야 한다")
+
+    out_dir = cuts_dir_for(run_id, projects_root)
+    os.makedirs(out_dir, exist_ok=True)
+    events = os.path.join(out_dir, "cut_generation_events.jsonl")
+
+    # --- 지출 게이트: 상한은 상수보다 커질 수 없고, 초과 실행은 호출 0건으로 거부 ---
+    if run_cap_usd > MAX_RUN_SPEND_USD + 1e-9:
+        raise CostGateError(
+            f"run cap {run_cap_usd} 은 상수 MAX_RUN_SPEND_USD="
+            f"{MAX_RUN_SPEND_USD} 보다 클 수 없다 — 런타임에 상한을 올릴 수 없다")
+    if daily_cap_usd > MAX_DAILY_SPEND_USD + 1e-9:
+        raise CostGateError(
+            f"day cap {daily_cap_usd} 은 상수 MAX_DAILY_SPEND_USD="
+            f"{MAX_DAILY_SPEND_USD} 보다 클 수 없다")
+
+    per_cut_estimate = estimate_cut_cost_usd()
+    job_estimate = round(per_cut_estimate * len(frames), 6)
+    if job_estimate > run_cap_usd + 1e-9:
+        raise CostGateError(
+            f"run cap 초과: 컷 {len(frames)}개 추정 {job_estimate:.4f} USD > "
+            f"실행당 상한 {run_cap_usd:.4f} USD — 요청을 한 건도 보내지 않는다")
+    already = _day_bucket(load_spend(ledger_path), day)["reserved_usd"]
+    if round(already + job_estimate, 6) > daily_cap_usd + 1e-9:
+        raise CostGateError(
+            f"day cap 초과: {day} 기예약 {already:.4f} + 추정 "
+            f"{job_estimate:.4f} > 일당 상한 {daily_cap_usd:.4f} USD — "
+            "요청을 한 건도 보내지 않는다")
+
+    motions = {int(getattr(c, "index")): str(getattr(c, "motion_prompt", "")
+                                             or "").strip()
+               for c in sb_cuts}
+
+    lineage: List[Dict[str, Any]] = []
+    attempts: Dict[int, int] = {}
+    run_spent = 0.0
+    state = STATE_READY_TO_PUBLISH
+    failure: Optional[str] = None
+
+    for frame in sorted(frames, key=lambda f: int(f.get("cut_index") or 0)):
+        index = int(frame.get("cut_index") or 0)
+        output_path = os.path.join(
+            out_dir, f"{product_id}_cut{index:02d}.mp4")
+        request = build_cut_request(frame, motion_prompt=motions.get(index, ""),
+                                    output_path=output_path)
+        attempts[index] = 0
+        last_error: Optional[BaseException] = None
+
+        while attempts[index] < MAX_CUT_ATTEMPTS:
+            attempts[index] += 1
+            attempt = attempts[index]
+
+            # 실행당 상한을 시도 단위로도 다시 확인한다 (재시도도 돈이다).
+            if round(run_spent + per_cut_estimate, 6) > run_cap_usd + 1e-9:
+                state = STATE_RETRYABLE_FAILED
+                failure = (f"run cap 초과로 컷 {index} 시도 {attempt} 중단 "
+                           f"(누적 {run_spent:.4f} USD)")
+                break
+
+            # 결정 로그 — **호출 직전**에 남긴다.
+            append_event(events, {
+                "event": "cost_gate",
+                "job_id": job_id, "run_id": run_id, "cut_index": index,
+                "attempt": attempt,
+                "tool": VIDEO_TOOL, "provider": VIDEO_PROVIDER,
+                "gateway": VIDEO_GATEWAY, "endpoint": VIDEO_ENDPOINT,
+                "model": VIDEO_MODEL, "url": FAL_I2V_URL,
+                "operation": VIDEO_OPERATION,
+                "duration_seconds": CUT_DURATION_SECONDS,
+                "resolution": VIDEO_RESOLUTION,
+                "aspect_ratio": VIDEO_ASPECT_RATIO,
+                "estimated_cost_usd": per_cut_estimate,
+                "rate_usd_per_second": RATE_USD_PER_SECOND_768P,
+                "approval_policy": APPROVAL_POLICY,
+                "run_cap_usd": run_cap_usd, "daily_cap_usd": daily_cap_usd,
+                "run_spent_usd": round(run_spent, 6),
+            })
+
+            reserve_spend(ledger_path, day, per_cut_estimate, run_id=run_id,
+                          cut_index=index, daily_cap_usd=daily_cap_usd)
+
+            try:
+                response = client(request)
+                path = str((response or {}).get("output_path") or output_path)
+                size = _assert_playable_mp4(path)
+            except CutContentError as exc:
+                release_spend(ledger_path, day, per_cut_estimate,
+                              run_id=run_id, cut_index=index)
+                _discard(output_path)
+                state, failure, last_error = STATE_QA_FAILED, str(exc), exc
+                break
+            except BaseException as exc:  # provider 예외
+                release_spend(ledger_path, day, per_cut_estimate,
+                              run_id=run_id, cut_index=index)
+                _discard(output_path)
+                last_error = exc
+                retryable = is_retryable_provider_error(exc)
+                append_event(events, {
+                    "event": "cut_attempt_failed", "job_id": job_id,
+                    "run_id": run_id, "cut_index": index, "attempt": attempt,
+                    "retryable": retryable, "error": repr(exc),
+                    "endpoint": VIDEO_ENDPOINT,
+                    "fallback_taken": False,
+                })
+                if not retryable:
+                    state, failure = STATE_QA_FAILED, str(exc)
+                    break
+                if attempt >= MAX_CUT_ATTEMPTS:
+                    state = STATE_RETRYABLE_FAILED
+                    failure = (f"컷 {index}: 인프라 실패가 시도 상한 "
+                               f"{MAX_CUT_ATTEMPTS} 회를 소진했다 — {exc}")
+                    break
+                napper(RETRY_BACKOFF_SECONDS[
+                    min(attempt - 1, len(RETRY_BACKOFF_SECONDS) - 1)])
+                continue
+
+            # 성공 — 실비로 정산한다 (추정이 실비를 대신하지 않는다).
+            reported = (response or {}).get("cost_usd")
+            reported_ok = isinstance(reported, (int, float)) and not isinstance(
+                reported, bool)
+            actual = float(reported) if reported_ok else per_cut_estimate
+            reconcile_spend(ledger_path, day, per_cut_estimate, actual,
+                            run_id=run_id, cut_index=index)
+            run_spent = round(run_spent + actual, 6)
+
+            lineage.append({
+                "job_id": job_id, "run_id": run_id,
+                "storyboard_id": storyboard_id, "product_id": product_id,
+                "market": market, "cut_index": index,
+                "prompt": request["payload"]["prompt"],
+                "first_frame_path": request["first_frame_path"],
+                "first_frame_sha256": request["first_frame_sha256"],
+                "tool": VIDEO_TOOL, "provider": VIDEO_PROVIDER,
+                "gateway": VIDEO_GATEWAY, "endpoint": VIDEO_ENDPOINT,
+                "model": VIDEO_MODEL, "operation": VIDEO_OPERATION,
+                "resolution": VIDEO_RESOLUTION,
+                "aspect_ratio": VIDEO_ASPECT_RATIO,
+                "duration_seconds": CUT_DURATION_SECONDS,
+                "provider_request_id": str(
+                    (response or {}).get("request_id") or ""),
+                "attempts": attempt,
+                "estimated_cost_usd": per_cut_estimate,
+                "actual_cost_usd": actual,
+                "actual_cost_is_provider_reported": bool(reported_ok),
+                "output_path": path,
+                "output_sha256": sha256_file(path),
+                "output_bytes": size,
+                "created_at": _now(),
+            })
+            break
+
+        if state != STATE_READY_TO_PUBLISH:
+            break  # 실패한 잡은 다음 컷으로 넘어가지 않는다 — 돈을 더 태우지 않는다.
+
+    assert_transition(STATE_GENERATING, state)  # 계약 전이표만이 권위다
+
+    manifest: Optional[Dict[str, Any]] = None
+    if state == STATE_READY_TO_PUBLISH:
+        manifest = vc.GenerationManifest(
+            job_id=job_id, run_id=run_id, storyboard_id=storyboard_id,
+            product_id=product_id, market=market,
+            image_model_alias=MODEL_ALIAS,
+            image_hermes_provider=HERMES_PROVIDER,
+            image_hermes_model=HERMES_MODEL,
+            image_provider_model=PROVIDER_MODEL,
+            video_endpoint=VIDEO_ENDPOINT, resolution=VIDEO_RESOLUTION,
+            aspect_ratio=VIDEO_ASPECT_RATIO,
+            cuts=[vc.CutGeneration(
+                index=c["cut_index"], prompt=c["prompt"],
+                duration_seconds=c["duration_seconds"],
+                provider_request_id=c["provider_request_id"],
+                cost_usd=c["actual_cost_usd"], output_path=c["output_path"],
+                output_sha256=c["output_sha256"]) for c in lineage],
+        ).validate().to_dict()
+        atomic_write_json(os.path.join(out_dir, "cuts.json"),
+                          {"manifest": manifest, "cut_lineage": lineage})
+    else:
+        for cut in lineage:  # 부분 산출물을 하류에 남기지 않는다
+            _discard(cut["output_path"])
+
+    result = {
+        "job_id": job_id, "run_id": run_id, "state": state,
+        "cuts_dir": out_dir, "manifest": manifest, "cut_lineage": lineage,
+        "attempts": [attempts[i] for i in sorted(attempts)],
+        "estimated_cost_usd": job_estimate,
+        "actual_cost_usd": round(run_spent, 6),
+        "failure": failure,
+    }
+    append_event(events, {
+        "event": "cut_generation_finished", "job_id": job_id, "run_id": run_id,
+        "state": state, "cuts": len(lineage), "endpoint": VIDEO_ENDPOINT,
+        "model": VIDEO_MODEL, "estimated_cost_usd": job_estimate,
+        "actual_cost_usd": round(run_spent, 6), "failure": failure,
+    })
+    return result
+
+
+def _discard(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
