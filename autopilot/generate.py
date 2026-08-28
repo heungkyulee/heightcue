@@ -260,9 +260,45 @@ def make_value_post(cfg, kind, episode=None, topic=None, recent=None, dry_run=Fa
     return _gemini(cfg, load_skill(cfg, "V1", country=country), payload)
 
 
+def make_value_thread(cfg, topic, parts=3, recent=None, dry_run=False, country="KR"):
+    """가치글 타래 생성 (V2). 반환: {"parts": [본문, ...], ...}
+
+    증거 원자 1건에는 사실·반론·실행이 함께 들어있어 단편보다 타래에 맞다.
+    각 편은 run.py에서 개별로 검사기를 통과해야 발행된다.
+    """
+    parts = max(2, min(4, int(parts)))
+    if dry_run:
+        if country == "US":
+            sample = ["Melatonin gummies aren't the fix.",
+                      "Deep sleep total matters more than the clock on the wall.",
+                      "That said, genetics is still the biggest factor. No routine changes that."]
+        else:
+            sample = ["10시 취침 강박, 내려놓으세요.",
+                      "시계 바늘보다 깊은 잠을 얼마나 자느냐가 더 관련이 큽니다.",
+                      "물론 최종 키는 유전이 가장 큰 변수입니다. 이건 어떤 습관으로도 안 바뀝니다."]
+        return {"parts": sample[:parts],
+                "self_check": {"각편_480자_이내": True, "링크_제품_없음": True,
+                               "반론_포함": True, "AI결론_없음": True, "1편_결론_선공개": True}}
+
+    from common import recent_context
+    ctx = recent_context(cfg, country)
+    log(f"컨텍스트({country}/타래 {parts}편): 글 {len(ctx['recent_posts'])}건")
+    payload = {"country": country, "topic": topic, "parts": parts,
+               "language_requirement": "English only; no Korean characters"
+               if country == "US" else "Korean only", **ctx}
+    return _gemini(cfg, load_skill(cfg, "V2", country=country), payload)
+
+
 # ── 댓글 답글 (A5) ──────────────────────────────────────────────────────────
 
-def make_reply(cfg, comment, post_summary, post_type, story_facts, dry_run=False, country="KR"):
+def make_reply(cfg, comment, post_summary, post_type, story_facts, dry_run=False, country="KR",
+               thread_context=None, is_nested=False):
+    """댓글/대댓글 답글 생성.
+
+    thread_context: 원글→...→직전 댓글까지의 대화 체인
+        [{"speaker": "me|them", "username": str, "text": str}, ...]
+        대댓글("그럼 몇 개월이요?")은 단독으로 의미가 안 서므로 이 체인이 필수다.
+    """
     if dry_run:
         if country == "US":
             return {"category": "empathy", "action": "reply",
@@ -272,5 +308,6 @@ def make_reply(cfg, comment, post_summary, post_type, story_facts, dry_run=False
                 "text": "읽어주셔서 감사해요. 같은 마음인 분들이 계셔서 이 계정 할 맛이 납니다.",
                 "reason": "dry-run canned"}
     payload = {"comment": comment, "post_summary": post_summary,
-               "post_type": post_type, "story_bank_facts": story_facts}
+               "post_type": post_type, "story_bank_facts": story_facts,
+               "thread_context": thread_context or [], "is_nested": bool(is_nested)}
     return _gemini(cfg, load_skill(cfg, "A5", country=country), payload)

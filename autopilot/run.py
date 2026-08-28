@@ -118,6 +118,68 @@ def _publish_with_retry(cfg, build_fn, country, post_type, product=None, link=No
     return None, last_reason
 
 
+def _publish_thread(cfg, parts, country, dry_run=False, meta_extra=None):
+    """타래 발행 — 각 편을 검사기에 태우고 앞 편에 답글로 잇는다.
+
+    설계 결정: **전량 사전 검사 후 발행.** 1편을 올린 뒤 2편이 검사에서
+    걸리면 미완성 타래가 채널에 남는데, 이건 삭제 스코프 이슈까지 얽혀
+    수습이 번거롭다. 그래서 한 편이라도 걸리면 아무것도 올리지 않는다.
+
+    반환: (root_media_id|None, reason)
+    """
+    if not parts or len(parts) < 2:
+        return None, "thread_too_short"
+
+    # 1단계 — 전량 사전 검사 (발행 없음)
+    for i, text in enumerate(parts, 1):
+        text = (text or "").strip()
+        if not text:
+            log(f"타래 {i}편 비어 있음 — 전체 취소")
+            return None, "format_fail"
+        if country == "US" and re.search(r"[가-힣]", text):
+            return None, "language_fail"
+        if country == "KR" and not re.search(r"[가-힣]", text):
+            return None, "language_fail"
+        check = post_check.check_post({"country": country, "post_type": "value",
+                                       "text": text, "product": {}})
+        if check["verdict"] == "FAIL":
+            log(f"타래 {i}편 포맷 FAIL — 전체 취소")
+            return None, "format_fail"
+        if check["risk_notes"] and cfg["mode"].get("hold_flagged", True):
+            append_jsonl(state_path(cfg, "holdbox.jsonl"),
+                         {"why": "risk_flagged", "country": country, "text": text,
+                          "notes": check["risk_notes"], "thread_part": i})
+            log(f"타래 {i}편 리스크 메모 — 전체 보류")
+            return None, "risk_hold"
+    if not cfg["mode"].get("auto_publish_clean", True):
+        append_jsonl(state_path(cfg, "holdbox.jsonl"),
+                     {"why": "manual_mode", "country": country, "text": "\n---\n".join(parts)})
+        return None, "manual_hold"
+
+    # 2단계 — 순차 발행. 각 편은 직전 편에 답글로 붙는다.
+    root, prev = None, None
+    for i, text in enumerate(parts, 1):
+        meta = {"post_type": "value", "thread_part": i, "thread_total": len(parts),
+                **(meta_extra or {})}
+        if i == 1:
+            meta["hook_pattern"] = _guess_pattern(text.splitlines()[0][:70])
+        media = publish.publish_text(cfg, country, text.strip(), reply_to=prev,
+                                     dry_run=dry_run, meta=meta)
+        if not media:
+            # 사전 검사를 통과했으므로 여기 오면 API 장애다. 남은 편을 보류함에 남겨
+            # 사람이 이어붙일 수 있게 한다(추측 재시도로 중복 발행하지 않는다).
+            log(f"타래 {i}편 발행 실패 — 남은 편 보류함 기록")
+            append_jsonl(state_path(cfg, "holdbox.jsonl"),
+                         {"why": "thread_broken", "country": country,
+                          "published_root": root, "failed_at_part": i,
+                          "remaining": parts[i - 1:]})
+            return root, "thread_partial"
+        root = root or media
+        prev = media
+    log(f"타래 발행 완료({country}): {len(parts)}편, root={root}")
+    return root, "published"
+
+
 def make_and_publish_value(cfg, dry_run=False, country="KR"):
     episodes = load_story_episodes(cfg)
     recent = [p.get("text", "").splitlines()[0]
@@ -140,13 +202,37 @@ def make_and_publish_value(cfg, dry_run=False, country="KR"):
         else:
             topic = "성장기 수면·식사·검진 중 하나를 사실 위주로 정리"
 
+    meta_extra = {"atom_id": atom["atom_id"], "topic": atom["topic"],
+                  "distance": atom["distance"]} if atom else None
+
+    # 근거가 탄탄한 원자(strong/moderate)는 타래로 푼다. 사실·반론·실행이
+    # 한 원자에 다 들어있어 480자 단편에 넣으면 정보가 뭉개진다.
+    # 확신도 weak이나 story 글은 단편 유지.
+    thread_ratio = cfg["mode"].get("value_thread_ratio", 0.5)
+    if (atom and atom.get("confidence") in ("strong", "moderate")
+            and random.random() < thread_ratio):
+        parts_n = 4 if atom.get("confidence") == "strong" else 3
+        try:
+            result = generate.make_value_thread(cfg, topic, parts=parts_n,
+                                                dry_run=dry_run, country=country)
+            parts = [p for p in (result.get("parts") or []) if (p or "").strip()]
+            if len(parts) >= 2:
+                media, reason = _publish_thread(cfg, parts, country, dry_run=dry_run,
+                                                meta_extra=meta_extra)
+                if reason in ("published", "thread_partial"):
+                    if media and not dry_run:
+                        evidence.mark_used(cfg, atom["atom_id"], "threads", country, media)
+                    return media, reason
+                log(f"타래 실패({reason}) — 단편으로 폴백")
+        except Exception as e:
+            record_error(cfg, "value_thread", e)
+            log("타래 생성 오류 — 단편으로 폴백")
+
     def build():
         result = generate.make_value_post(cfg, kind, episode=episode, topic=topic,
                                           recent=recent, dry_run=dry_run, country=country)
         return result["text"]
 
-    meta_extra = {"atom_id": atom["atom_id"], "topic": atom["topic"],
-                  "distance": atom["distance"]} if atom else None
     media, reason = _publish_with_retry(cfg, build, country, "value",
                                         dry_run=dry_run, meta_extra=meta_extra)
     if atom and media and not dry_run:

@@ -231,9 +231,54 @@ def evidence_boundary_notes(text, country, product):
     return notes
 
 
+# ── 상관≠인과 (가치글 포함 전 구간) ─────────────────────────────────────────
+# 증거 원장의 claim_gate가 '입력'을 막는다면, 여기는 LLM이 원자를 과장 렌더링한
+# '출력'을 잡는다. 가치글은 링크가 없어 아래 광고 검사를 통과해버리므로
+# 이 검사만이 유일한 출력 방어선이다.
+CAUSAL_KR = [
+    # 조건절 + 성장 단정. '수면/도면' 등 명사 오탐을 막으려 앞 글자를 제한한다.
+    (r"(?<!수)[가-힣]면\s*(?:키[가는를]?\s*)?(?:크|커|컸|큽|자라|자란|자랍)",
+     "인과 단정(조건→성장) — 상관을 인과로 바꾸는 표현"),
+    (r"\d+\s*(?:cm|센티)\s*(?:더|는|씩)?\s*(?:크|커|컸|큽|자라|자란)",
+     "수치 성장 약속 — 실증 불가 표현"),
+    (r"(?:확실히|반드시|무조건)\s*(?:크|커|컸|큽|자라|자란)", "성장 단정 부사"),
+    (r"보장(?:합니다|해요|됩니다)?", "효과 보장 표현"),
+    # 역방향 귀속: "늦게 자서 키가 안 컸다", "스트레스 때문에 못 자란다"
+    # 주의: [가-힣]+ 를 앞에 붙이면 탐욕 매칭이 앵커를 밀어내 전부 놓친다.
+    # 연결어미(서/때문에/덕분에) 직후 ~10자 안에 성장어가 오는지로 본다.
+    (r"(?:때문에|덕분에|[가-힣]서)\s*[^.!?\n]{0,10}?(?:키[가는를]?\s*)?"
+     r"(?:안|못)\s*(?:크|커|컸|큽|자라|자란|자랐)",
+     "단일 원인 귀속(부정) — 성장은 다인자다"),
+    (r"(?:때문에|덕분에|[가-힣]서)\s*[^.!?\n]{0,6}?키[가는를]?\s*"
+     r"(?:크|커|컸|큽|자라|자란|자랐)",
+     "단일 원인 귀속 — 성장은 다인자다"),
+    (r"(?:잘|많이|푹)\s*[가-힣]+(?:서|면)\s*(?:잘\s*)?(?:자란|자랍|큽|커집)",
+     "습관→성장 인과 단정"),
+]
+CAUSAL_US = [
+    (r"\bmakes?\s+(?:kids?|children|them|you)\s+taller\b", "causal height claim"),
+    (r"\bwill\s+(?:grow|add|gain)\s+\d+", "numeric growth promise"),
+    (r"\bguarantee[sd]?\b", "guarantee language"),
+    (r"\bproven\s+to\s+(?:increase|boost)\s+height\b", "unsubstantiated proof claim"),
+]
+
+
+def causal_notes(text, country):
+    """상관을 인과로 바꾼 표현을 잡는다. 인용부 안은 원문이므로 제외."""
+    unquoted = RE_QUOTED.sub(" ", text or "")
+    out = []
+    for pat, label in (CAUSAL_KR if country == "KR" else CAUSAL_US):
+        m = re.search(pat, unquoted, re.I)
+        if m:
+            out.append(f"{label} → «{m.group(0).strip()}»")
+    return out
+
+
 def risk_notes(text, country, post_type, product):
     """참고용 리스크 메모. 어떤 경우에도 차단하지 않는다."""
     notes = evidence_boundary_notes(text, country, product)
+    # 인과 단정은 상업/비상업을 가리지 않는다 — 가치글에서도 검사한다.
+    notes += causal_notes(text, country)
 
     product_key = str(product.get("product_key") or "").lower()
     if country == "US" and "ddrops" in product_key and post_type == "sales":

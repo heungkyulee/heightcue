@@ -51,12 +51,14 @@
 
 | 파일 | 역할 |
 |---|---|
-| `autopilot/evidence.py` | **증거 원장.** `claim_gate()`(1차출처 강제·인과과장 차단·반론 필수·바이럴 verbatim 차단·중복), `promote_pending()`(무인 승격), `pick_atom()`(거리 배분 기반 채널별 공급), `mark_used()`(채널별 소진), `to_generation_topic()`(V1 입력 직렬화) |
-| `aside-evidence-routine.md` | **증거 수집 기준 문서** (수집 소스 우선순위, 거리 체계, 레코드 스키마, 자동 반려 사유). Aside 워커 프롬프트 원본 |
+| `autopilot/evidence.py` | **증거 원장.** `claim_gate()`(1차출처 강제·인과과장 차단·반론 필수·바이럴 verbatim 차단·중복), `promote_pending()`(무인 승격), `pick_atom()`(거리 배분 기반 채널별 공급), `mark_used()`(채널별 소진), `to_generation_topic()`(V1/V2 입력 직렬화) |
+| `autopilot/harvest.py` | **수집 워커.** Aside CLI(`aside --account u0 exec`)를 호출해 논문·공공기관 근거를 수확 → `evidence.jsonl`. 재고가 얇은 거리를 자동 선택. **Aside 출력 파서 주의:** 진행 로그(`[tool] ...`)의 대괄호와 ANSI 색상코드가 섞여 나오므로 균형 괄호 스캔으로 증거 배열만 골라낸다(2026-08-28 2회 연속 파싱 실패 전례). 워커는 게이트를 우회할 수 없다 — 적재만 하고 승격은 `run.py daily`가 한다 |
+| `aside-evidence-routine.md` | **증거 수집 기준 문서** (수집 소스 우선순위, 거리 체계, 레코드 스키마, 자동 반려 사유). harvest.py의 프롬프트 원본 |
 | `autopilot/state/evidence.jsonl` | 원본 증거 수확 로그 (워커가 append) |
 | `autopilot/state/insight_atoms.json` | **채널 중립 인사이트 원자.** 게이트 통과분만 승격. `used_in`으로 채널×국가별 소진 분리 추적 — 같은 원자가 Threads KR / TikTok KR / Threads US에 각각 신선하다 |
 | `autopilot/state/evidence_rejects.jsonl` | 게이트 반려 기록 (반려율 높으면 워커 프롬프트를 고칠 신호) |
 | `autopilot/test_evidence.py` | 회귀 26/26. 무인 운영이라 '막아야 하는 케이스'를 집중 검증 |
+| `autopilot/test_harvest.py` | 수집 워커 회귀 (파서 견고성·주제 선택·게이트 우회 불가). Aside는 호출하지 않는다 |
 
 **주제 거리 체계(D0~D3):** 가치글엔 제품이 없으므로 소싱 카테고리 하드락이 적용되지 않는다.
 D0 수면·영양·자세·검진(40%) / D1 성장기 생활(30%) / D2 훈육·자기조절·예의·마인드셋(20%) /
@@ -66,11 +68,33 @@ D3 운영자 서사·사회적 시선(10%). D2·D3가 도달을 만들고 D0가 
 ② 원장이 비면 지어낸 사실을 쓰는 대신 story로 폴백한다(`run.py make_and_publish_value`)
 ③ 원자는 채널을 모른다 — 채널 추가 시 수집기는 건드리지 않는다
 
+**스케줄:** 08:30 `harvest.py`(수집) → 09:30 `run.py daily`(승격 후 생성). 순서가 뒤집히면 당일 원자가 비므로 crontab 시각을 임의로 바꾸지 말 것.
+
+### 3-2. 가치글 타래 (V2 — 2026-08-28 신설)
+
+원자 1건에는 [사실 + 반론·한계 + 실행]이 다 들어있어 480자 단편에 넣으면 정보가 뭉개진다.
+확신도 strong/moderate 원자는 타래로 푼다(strong=4편, moderate=3편, 비율은 `mode.value_thread_ratio`, 기본 0.5).
+
+| 파일 | 역할 |
+|---|---|
+| `heightcue-gemini-skills.md` SKILL V2 | 타래 생성 프롬프트. 1편은 **결론 선공개**(떡밥 낚시 금지), 3편은 반론 전담, 편 번호 표기·AI 마무리 금지 |
+| `autopilot/generate.py` `make_value_thread()` | V2 호출 계층 |
+| `autopilot/run.py` `_publish_thread()` | 타래 발행. **전량 사전 검사 후 발행** — 한 편이라도 걸리면 아무것도 올리지 않는다(미완성 타래 방지). 각 편은 직전 편에 `reply_to`로 잇는다 |
+| `autopilot/test_thread.py` | 회귀 18/18. 중간 실패·언어 게이트·API 장애 시 남은 편 보류함 기록 검증 |
+
+### 3-3. 상관≠인과 출력 검사 (2026-08-28 신설)
+
+`claim_gate`가 원장 **입력**을 막는다면, `post_check.causal_notes()`는 LLM이 원자를
+과장 렌더링한 **출력**을 잡는다. **중요:** `risk_notes()`는 링크 없는 가치글을 조기 반환으로
+건너뛰므로, 인과 검사는 그 분기 **앞**에 놓여야 한다. 이 검사가 가치글의 유일한 출력 방어선이다.
+회귀: `test_causal.py` 33/33 (놓침 0·오탐 0). 오탐은 발행을 멈추므로 누락만큼 심각하게 다룬다.
+
 ## 4. 파이프라인 B — 발행
 
 | 파일 | 역할 |
 |---|---|
-| `autopilot/publish.py` | Threads 공식 API 발행 (컨테이너→publish, link_attachment/reply_to_id A/B, 토큰 주 1회 갱신) |
+| `autopilot/publish.py` | Threads 공식 API 발행 (컨테이너→publish, link_attachment/reply_to_id A/B, 토큰 주 1회 갱신). `fetch_conversation()`=대댓글 포함 조회, `has_delete_scope()`/`DeletePermissionError`=삭제 권한 판정 |
+| `autopilot/reauth.py` | **OAuth 재인증** — 토큰에 새 스코프를 반영한다. Meta 앱에 권한을 추가해도 **기존 토큰은 발급 시점 스코프로 고정**되고 `refresh_access_token`으로는 늘지 않으므로, 새 권한을 쓰려면 이 스크립트로 재발급해야 한다. `THREADS_APP_ID`(=Threads 앱 ID `27621028630913037`, Meta 앱 ID `2080790246144682`와 다름)와 `THREADS_APP_SECRET`을 환경변수로 전달. Meta는 localhost에도 HTTPS를 요구하고 콜백 URL 3개(callback/deauthorize/delete)를 모두 채워야 저장되므로 자체서명 인증서로 `https://localhost:8787`을 띄운다 |
 | `autopilot/run.py` | **오케스트레이터.** `daily`/`post`/`comments`/`weekly`/`rehearsal`/`status`/`golive`/`dryrun`/`context` 명령. 진입점은 항상 이 파일 |
 | `crontab.txt` | 스케줄 원본 (09:30 daily / 12:30·16:00·19:30 post / 14:00 comments / 일 21:00 weekly). 등록: `crontab ~/heightcue-autopilot/crontab.txt` |
 | `autopilot/config.json` | 실제 설정 (mode/cadence/openrouter/threads/coupang/amazon 키). git 미추적. 예시는 `config.example.json` |
