@@ -24,7 +24,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -96,6 +95,9 @@ GRAMMAR_FIELDS = (
 # --- 관측 지표 (실제로 본 것만) ---------------------------------------------
 
 ENGAGEMENT_METRICS = ("likes", "replies", "reposts", "shares", "views")
+
+#: 해석 전용 필드 — Observation 에 섞여 들어오면 거부한다 (블러 방지는 대칭이다).
+INFERENCE_ONLY_KEYS = ("grammar", "analyst_notes", "confidence")
 
 #: 미디어 사본을 암시하는 키 — 발견 즉시 거부한다.
 FORBIDDEN_MEDIA_KEYS = (
@@ -339,6 +341,11 @@ class Observation:
     def from_dict(cls, data: Dict[str, Any]) -> "Observation":
         data = dict(data or {})
         _reject_media(data, "observation")
+        for key in INFERENCE_ONLY_KEYS:
+            if key in data:
+                raise ObservationError(
+                    f"observation 에 해석 필드 {key!r} 가 있다 — "
+                    "관측과 해석은 섞지 않는다")
         return cls(
             observation_id=data.get("observation_id", ""),
             market=data.get("market", ""),
@@ -517,7 +524,9 @@ class PromotionCheck:
 class PatternScore:
     pattern_id: str
     total: float
-    components: Dict[str, float]
+    #: 값이 ``None`` 인 성분은 **미관측** — 0.0(진짜 0) 과 구분되며 총점 계산에서
+    #: 제외되고 나머지 가중치가 재정규화된다.
+    components: Dict[str, Optional[float]]
 
     def to_dict(self) -> Dict[str, Any]:
         return {"pattern_id": self.pattern_id, "total": self.total,
@@ -610,11 +619,30 @@ class PatternLedger:
                 f"{what} 의 market={value!r} 이 이 원장({self.market}) 과 다르다 — "
                 "KR/US 원장은 절대 섞이지 않는다")
 
+    def _load_guarded(self, rows, factory, what: str, where: str) -> List[Any]:
+        """읽기 경로도 시장을 강제한다.
+
+        쓰기는 전부 ``_guard_market`` 로 막혀 있지만, 손편집·잘못된 백업 복원·
+        수집기가 JSONL 을 직접 쓰는 경로로 이물질이 파일에 들어올 수 있다.
+        그런 레코드를 조용히 돌려주면 ``select_patterns`` 가 다른 시장 패턴을
+        그대로 내보내게 된다 — 그래서 읽는 즉시 검증하고 터뜨린다.
+        """
+        out: List[Any] = []
+        for index, row in enumerate(rows, 1):
+            try:
+                record = factory(row).validate()
+                self._guard_market(record.market, what)
+            except ViralUGCError as exc:
+                raise type(exc)(f"{where}:{index} {exc}") from exc
+            out.append(record)
+        return out
+
     # -- 관측 ---------------------------------------------------------------
 
     def observations(self) -> List[Observation]:
-        return [Observation.from_dict(r) for r in
-                self._read_jsonl(self.observations_path)]
+        return self._load_guarded(self._read_jsonl(self.observations_path),
+                                  Observation.from_dict, "observation",
+                                  self.observations_path)
 
     def record_observation(self, obs: Observation) -> Observation:
         obs.validate()
@@ -638,8 +666,9 @@ class PatternLedger:
     # -- 해석 ---------------------------------------------------------------
 
     def inferences(self) -> List[Inference]:
-        return [Inference.from_dict(r) for r in
-                self._read_jsonl(self.inferences_path)]
+        return self._load_guarded(self._read_jsonl(self.inferences_path),
+                                  Inference.from_dict, "inference",
+                                  self.inferences_path)
 
     def record_inference(self, inf: Inference) -> Inference:
         inf.validate()
@@ -668,7 +697,12 @@ class PatternLedger:
             return []
         with open(self.patterns_path, encoding="utf-8") as fh:
             raw = json.load(fh)
-        return [Pattern.from_dict(r) for r in (raw.get("patterns") or [])]
+        file_market = raw.get("market")
+        if file_market is not None:
+            self._guard_market(file_market, "patterns 파일")
+        return self._load_guarded(raw.get("patterns") or [],
+                                  Pattern.from_dict, "pattern",
+                                  self.patterns_path)
 
     def _write_patterns(self, patterns: List[Pattern]) -> None:
         atomic_write_json(self.patterns_path, {
@@ -808,21 +842,28 @@ class PatternLedger:
 
         rates = [r for r in (o.engagement.engagement_rate() for o in obs)
                  if r is not None]
-        engagement = _ratio(sum(rates) / len(rates),
-                            ENGAGEMENT_SATURATION_RATE) if rates else 0.0
+        # views 를 한 번도 관측하지 못했다면 참여도는 **미관측**이다.
+        # 이를 0.0 으로 적으면 '못 봤다' 와 '진짜 0 이었다' 가 같은 점수가 된다 —
+        # 대신 성분을 None 으로 두고 아래에서 가중치를 재정규화한다.
+        engagement: Optional[float] = (
+            _ratio(sum(rates) / len(rates), ENGAGEMENT_SATURATION_RATE)
+            if rates else None)
 
         flagged = sum(1 for i in infs if policy_flags(i))
         policy = 1.0 if not infs else max(0.0, 1.0 - flagged / len(infs))
 
-        components = {
+        components: Dict[str, Optional[float]] = {
             "market_fit": _clamp(market_fit),
             "product_fit": _clamp(product_fit),
             "evidence_quality": _clamp(evidence),
             "recency": _clamp(recency),
-            "engagement": _clamp(engagement),
+            "engagement": None if engagement is None else _clamp(engagement),
             "policy_compatibility": _clamp(policy),
         }
-        total = sum(components[k] * w for k, w in SCORE_WEIGHTS.items())
+        observed = {k: v for k, v in components.items() if v is not None}
+        weight_sum = sum(SCORE_WEIGHTS[k] for k in observed)
+        total = (sum(observed[k] * SCORE_WEIGHTS[k] for k in observed)
+                 / weight_sum) if weight_sum else 0.0
         return PatternScore(pattern_id=pattern_id, total=_clamp(total),
                             components=components)
 

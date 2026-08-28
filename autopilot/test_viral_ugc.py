@@ -6,8 +6,11 @@
 실행: cd autopilot && ../.venv/bin/python -m unittest -v test_viral_ugc.py
 """
 
+import json
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -192,6 +195,16 @@ class TestObservation(unittest.TestCase):
         for key in ("grammar", "analyst_notes", "confidence"):
             self.assertNotIn(key, data)
 
+    def test_observation_rejects_inbound_inference_fields(self):
+        """블러 방지는 대칭이어야 한다 — Inference 처럼 Observation 도 거부한다."""
+        for key, value in (("grammar", dict(GRAMMAR)),
+                           ("analyst_notes", "해석 메모"),
+                           ("confidence", 0.9)):
+            data = observation().to_dict()
+            data[key] = value
+            with self.assertRaises(vu.ObservationError, msg=key):
+                vu.Observation.from_dict(data)
+
 
 # ---------------------------------------------------------------------------
 # 2. 해석(INFERENCE) 검증 — 관측과 구조적으로 분리
@@ -289,6 +302,76 @@ class TestMarketIsolation(LedgerTestCase):
         _support(self.us, "vp-us", 3, 2, market="US", prefix="d")
         # US 원장에서 KR 패턴 id 를 조회해도 존재하지 않아야 한다.
         self.assertIsNone(self.us.get_pattern("vp-kr"))
+
+
+class TestReadPathMarketGuard(LedgerTestCase):
+    """쓰기뿐 아니라 **읽기**도 시장을 강제한다.
+
+    손편집·잘못된 백업 복원·JSONL 직접 기록 등으로 이물질이 파일에 들어오면
+    조용히 반환하지 않고 즉시 MarketIsolationError 로 터진다.
+    """
+
+    def _plant_observation(self, ledger, market="US"):
+        row = observation(observation_id="obs-foreign-001", market=market,
+                          source_url="https://example.invalid/foreign/1").to_dict()
+        ledger._append_jsonl(ledger.observations_path, row)
+        return row
+
+    def test_foreign_observation_in_file_raises_on_read(self):
+        self.kr.record_observation(observation())
+        self._plant_observation(self.kr)
+        with self.assertRaises(vu.MarketIsolationError):
+            self.kr.observations()
+
+    def test_foreign_inference_in_file_raises_on_read(self):
+        self.kr.record_observation(observation())
+        self.kr.record_inference(inference())
+        self.kr._append_jsonl(
+            self.kr.inferences_path,
+            inference(inference_id="inf-foreign", market="US").to_dict())
+        with self.assertRaises(vu.MarketIsolationError):
+            self.kr.inferences()
+
+    def test_foreign_pattern_in_file_raises_on_read(self):
+        _support(self.kr, "vp-native", 3, 2, prefix="rp1")
+        raw = {"market": "KR", "patterns": [
+            pattern(pattern_id="vp-native", market="KR").to_dict(),
+            pattern(pattern_id="vp-foreign", market="US",
+                    state=vu.STATE_ACTIVE).to_dict(),
+        ]}
+        with open(self.kr.patterns_path, "w", encoding="utf-8") as fh:
+            json.dump(raw, fh)
+        with self.assertRaises(vu.MarketIsolationError):
+            self.kr.patterns()
+
+    def test_foreign_pattern_never_reaches_selection(self):
+        """binding constraint: KR 패턴이 US 선택에 절대 나타나지 않는다."""
+        _support(self.us, "vp-us", 3, 2, market="US", prefix="rp2")
+        self.us.promote("vp-us", baseline=BASELINE)
+        with open(self.us.patterns_path, encoding="utf-8") as fh:
+            raw = json.load(fh)
+        raw["patterns"].append(pattern(
+            pattern_id="vp-kr-leak", market="KR",
+            state=vu.STATE_ACTIVE).to_dict())
+        with open(self.us.patterns_path, "w", encoding="utf-8") as fh:
+            json.dump(raw, fh)
+        with self.assertRaises(vu.MarketIsolationError):
+            self.us.select_patterns(now=NOW)
+
+    def test_read_path_also_validates_records(self):
+        self.kr._append_jsonl(self.kr.observations_path,
+                              dict(observation().to_dict(), source_url=""))
+        with self.assertRaises(vu.ObservationError):
+            self.kr.observations()
+
+    def test_clean_ledger_reads_normally(self):
+        """가드가 정상 레코드를 막지 않는지 — 비공허성 확인."""
+        _support(self.kr, "vp-clean", 3, 2, prefix="rp3")
+        self.kr.promote("vp-clean", baseline=BASELINE)
+        self.assertEqual(3, len(self.kr.observations()))
+        self.assertEqual(3, len(self.kr.inferences()))
+        self.assertEqual(["vp-clean"],
+                         [p.pattern_id for p in self.kr.select_patterns(now=NOW)])
 
 
 # ---------------------------------------------------------------------------
@@ -411,6 +494,7 @@ class TestScoringAndSelection(LedgerTestCase):
         score = self.kr.score_pattern("vp-s", now=NOW)
         self.assertEqual(set(vu.SCORE_WEIGHTS), set(score.components))
         for name, value in score.components.items():
+            self.assertIsNotNone(value, name)  # 이 패턴은 views 를 관측했다
             self.assertGreaterEqual(value, 0.0, name)
             self.assertLessEqual(value, 1.0, name)
         self.assertGreaterEqual(score.total, 0.0)
@@ -433,6 +517,68 @@ class TestScoringAndSelection(LedgerTestCase):
         fresh = self.kr.score_pattern("vp-fresh", now=NOW)
         stale = self.kr.score_pattern("vp-fresh", now="2027-08-28T09:00:00+09:00")
         self.assertLess(stale.components["recency"], fresh.components["recency"])
+
+    def _support_without_views(self, pattern_id, prefix):
+        """views 를 한 번도 관측하지 못한 패턴 — engagement rate 가 존재하지 않는다."""
+        cats = list(vu.ALLOWED_CATEGORIES)
+        obs_ids, inf_ids = [], []
+        for i in range(3):
+            oid = "obs-kr-%s-%d" % (prefix, i)
+            eng = dict(observation().engagement.to_dict())
+            eng.pop("views")
+            self.kr.record_observation(observation(
+                observation_id=oid, product_id="kr-prod-%d" % i,
+                category=cats[i % 2], engagement=eng,
+                source_url="https://example.invalid/%s/%d" % (prefix, i)))
+            iid = "inf-kr-%s-%d" % (prefix, i)
+            self.kr.record_inference(inference(
+                inference_id=iid, observation_id=oid))
+            obs_ids.append(oid)
+            inf_ids.append(iid)
+        self.kr.upsert_pattern(pattern(
+            pattern_id=pattern_id, observation_ids=obs_ids,
+            inference_ids=inf_ids))
+        return obs_ids
+
+    def test_unobserved_engagement_is_dropped_not_scored_as_zero(self):
+        """'못 봤다' 와 '0 이었다' 는 같은 점수가 되어선 안 된다.
+
+        views 미관측이면 engagement 성분을 빼고 남은 가중치를 재정규화한다.
+        """
+        self._support_without_views("vp-noviews", "nv")
+        self.kr.promote("vp-noviews", baseline=BASELINE)
+        score = self.kr.score_pattern("vp-noviews", now=NOW)
+
+        # 성분은 미관측임을 드러낸다 (0.0 으로 위장하지 않는다).
+        self.assertIsNone(score.components["engagement"])
+
+        # 총점 = 나머지 성분들의 가중 평균 (engagement 가중치 제외 후 재정규화).
+        rest = {k: v for k, v in score.components.items() if k != "engagement"}
+        wsum = sum(vu.SCORE_WEIGHTS[k] for k in rest)
+        expected = sum(rest[k] * vu.SCORE_WEIGHTS[k] for k in rest) / wsum
+        self.assertAlmostEqual(expected, score.total, places=9)
+
+        # 그리고 engagement 를 0 으로 매겼을 때보다 반드시 높다.
+        zeroed = sum(rest[k] * vu.SCORE_WEIGHTS[k] for k in rest)
+        self.assertGreater(score.total, zeroed)
+
+    def test_genuinely_zero_engagement_still_scores_zero(self):
+        """관측했는데 상호작용이 0 인 경우는 여전히 0.0 — 미관측과 구분된다."""
+        cats = list(vu.ALLOWED_CATEGORIES)
+        obs_ids = []
+        for i in range(3):
+            oid = "obs-kr-ze-%d" % i
+            self.kr.record_observation(observation(
+                observation_id=oid, product_id="kr-prod-%d" % i,
+                category=cats[i % 2],
+                engagement={"observed_at": "2026-08-20T10:00:00+09:00",
+                            "likes": 0, "replies": 0, "views": 5000},
+                source_url="https://example.invalid/ze/%d" % i))
+            obs_ids.append(oid)
+        self.kr.upsert_pattern(pattern(pattern_id="vp-zero",
+                                       observation_ids=obs_ids))
+        score = self.kr.score_pattern("vp-zero", now=NOW)
+        self.assertEqual(0.0, score.components["engagement"])
 
 
 # ---------------------------------------------------------------------------
@@ -506,7 +652,13 @@ class TestFixture(unittest.TestCase):
     def test_fixture_is_marked_as_fixture_data(self):
         with open(self.path, encoding="utf-8") as fh:
             first = fh.readline()
-        self.assertIn("fixture", first.lower())
+        note = json.loads(first).get("_fixture_note", "").lower()
+        # 단어 'fixture' 하나로는 부족하다 — 실질 주장(합성·비실측·미디어 미보관)을 검사한다.
+        self.assertIn("synthetic", note)
+        self.assertIn("not real", note)
+        self.assertIn("example.invalid", note)
+        self.assertIn("no real creator handle", note)
+        self.assertIn("no creator media is stored", note)
 
     def test_fixture_ingest_is_market_isolated(self):
         kr = vu.PatternLedger(self.tmp, "KR")
@@ -532,13 +684,50 @@ class TestFixture(unittest.TestCase):
         with self.assertRaises(vu.ObservationError):
             vu.load_observations(bad)
 
+    #: 순수 인터프리터 기동만으로 이미 올라와 있을 수 있는 모듈은 제외하고 검사한다.
+    NETWORK_MODULES = ("requests", "urllib.request", "urllib3", "http.client",
+                       "httpx", "aiohttp", "socket", "ssl", "ftplib",
+                       "smtplib", "telnetlib", "xmlrpc.client")
+
+    _PROBE = (
+        "import sys\n"
+        "before = set(sys.modules)\n"
+        "import {target}\n"
+        "banned = {banned!r}\n"
+        "gained = set(sys.modules) - before\n"
+        "print(','.join(sorted(m for m in banned if m in gained)))\n"
+    )
+
+    def _probe(self, target):
+        """서브프로세스에서 target 을 import 하고, 그때 새로 올라온 네트워크 모듈을 돌려준다.
+
+        소스 grep 이 아니라 **실제 import 그래프**를 본다 — 따라서 video_contracts
+        나 common 이 나중에 requests 를 import 해도 잡힌다.
+        """
+        here = os.path.dirname(os.path.abspath(__file__))
+        code = self._PROBE.format(target=target, banned=self.NETWORK_MODULES)
+        proc = subprocess.run(
+            [sys.executable, "-c", code], cwd=here, capture_output=True,
+            text=True, timeout=60,
+            env=dict(os.environ, PYTHONPATH=here, PYTHONDONTWRITEBYTECODE="1"))
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        out = proc.stdout.strip()
+        return [m for m in out.split(",") if m]
+
     def test_module_makes_no_network_calls(self):
-        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                               "viral_ugc.py"), encoding="utf-8") as fh:
-            src = fh.read()
-        for banned in ("import requests", "urllib.request", "http.client",
-                       "socket."):
-            self.assertNotIn(banned, src)
+        """viral_ugc 의 **전이적** import 그래프에 HTTP/소켓 클라이언트가 없어야 한다."""
+        self.assertEqual([], self._probe("viral_ugc"))
+
+    def test_network_probe_is_not_vacuous(self):
+        """탐지기 자체가 살아 있음을 증명한다 — 실제로 requests 를 쓰는 모듈은 잡혀야 한다."""
+        here = os.path.dirname(os.path.abspath(__file__))
+        canary = os.path.join(here, "_net_canary_tmp.py")
+        with open(canary, "w", encoding="utf-8") as fh:
+            fh.write("import urllib.request  # noqa: F401\n")
+        try:
+            self.assertIn("urllib.request", self._probe("_net_canary_tmp"))
+        finally:
+            os.remove(canary)
 
 
 if __name__ == "__main__":
