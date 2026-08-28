@@ -93,9 +93,39 @@ DOWNLOAD_INTENT_TOKENS = (
     "wget", "curl -o",
 )
 
-#: 이 토큰이 있으면 yt-dlp 는 메타데이터 전용으로 간주한다.
-YTDLP_METADATA_ONLY = ("--skip-download", "--dump-json", "--print",
-                       "--list-subs", "--write-auto-subs")
+#: 한국어 쓰기·상호작용 동사. QUERY_SEEDS 가 한국어이므로 영어 denylist 만으로는
+#: 구멍이 생긴다. 부분 문자열로 매칭한다 (한국어는 공백 단어 경계가 없다).
+KOREAN_WRITE_INTENT_TOKENS = (
+    "좋아요", "팔로우", "언팔", "게시", "댓글", "답글", "공유", "구독",
+    "업로드", "삭제", "차단", "신고", "발행", "작성", "전송", "리포스트",
+    "누르", "달기", "쓰기", "저장", "다운로드", "내려받",
+)
+
+#: yt-dlp 는 **허용목록**으로만 통과한다 (denylist 는 --write-thumbnails 같은
+#: 복수형·신규 플래그를 놓친다). 값을 하나 먹는 플래그는 True.
+YTDLP_ALLOWED_FLAGS: Dict[str, bool] = {
+    "--skip-download": False,
+    "--simulate": False,
+    "--dump-json": False,
+    "--dump-single-json": False,
+    "--no-download": False,
+    "--list-subs": False,
+    "--list-formats": False,
+    "--no-playlist": False,
+    "--no-warnings": False,
+    "--quiet": False,
+    "--ignore-config": False,
+    "--no-write-subs": False,
+    "--print": True,
+    "--socket-timeout": True,
+    "--retries": True,
+    "--playlist-items": True,
+}
+
+#: 메타데이터 전용임을 증명하는 플래그 (최소 하나 필수).
+YTDLP_METADATA_ONLY = ("--skip-download", "--dump-json",
+                       "--dump-single-json", "--simulate", "--print",
+                       "--list-subs")
 
 #: HTTP 쓰기 메서드.
 WRITE_HTTP_METHODS = ("POST", "PUT", "PATCH", "DELETE")
@@ -120,6 +150,19 @@ class ReadOnlyViolation(CollectionError):
 
 class LiveCollectionDisabled(CollectionError):
     """라이브 수집이 명시적으로 활성화되지 않았다."""
+
+
+class LiveParseError(CollectionError):
+    """Aside stdout 이 비어 있지 않은데 관측으로 파싱되지 않았다.
+
+    이 예외가 존재하는 이유: 조용한 ``[]`` 는 "바이럴 게시물이 없다" 와
+    "파서가 stdout 모양을 못 알아봤다" 를 구별할 수 없게 만든다. 빈 결과는
+    **증명된 빈 결과**여야 한다.
+    """
+
+
+class UnapprovedQuerySeeds(CollectionError):
+    """운영자 승인 없는 QUERY_SEEDS 로 라이브를 돌리려 했다."""
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +206,18 @@ class CollectionBounds:
     def to_dict(self) -> Dict[str, Any]:
         return {name: getattr(self, name) for name in self._CEILINGS}
 
+    def timeout_for(self, elapsed: float) -> Optional[float]:
+        """남은 예산에 맞춰 **줄인** 단계 타임아웃.
+
+        이것이 월클럭 예산을 실제 천장으로 만든다. 단계 사이에서만 검사하면
+        진행 중인 단계가 step_timeout 만큼 더 달릴 수 있어 최악의 경우가
+        예산을 넘는다. 남은 예산이 없으면 ``None``.
+        """
+        remaining = self.wall_clock_budget_seconds - max(0.0, elapsed)
+        if remaining <= 0:
+            return None
+        return min(self.step_timeout_seconds, remaining)
+
 
 # ---------------------------------------------------------------------------
 # 읽기 전용 가드
@@ -202,10 +257,22 @@ def assert_read_only(argv: Sequence[str]) -> Sequence[str]:
                 "yt-dlp 는 메타데이터 전용 플래그"
                 f"({', '.join(YTDLP_METADATA_ONLY)}) 없이 쓸 수 없다 — "
                 f"미디어 다운로드 금지: {parts!r}")
-        for tok in ("-o", "--output", "--write-thumbnail", "--write-video"):
-            if tok in parts:
-                raise ReadOnlyViolation(
-                    f"yt-dlp 출력 플래그 {tok} 감지 — 미디어 저장 금지: {parts!r}")
+        # 허용목록: 모르는 플래그는 전부 거부한다. denylist 는 --write-thumbnails
+        # (복수형), -P/--paths, 신규 플래그를 구조적으로 놓친다.
+        idx = 1
+        while idx < len(parts):
+            tok = parts[idx]
+            if tok.startswith("-"):
+                flag = tok.split("=", 1)[0]
+                if flag not in YTDLP_ALLOWED_FLAGS:
+                    raise ReadOnlyViolation(
+                        f"yt-dlp 플래그 {flag!r} 는 허용목록에 없다 — "
+                        "메타데이터 전용 플래그만 쓸 수 있다 "
+                        f"(파일을 쓰는 --write-*/-P/--paths 포함 전부 금지): "
+                        f"{parts!r}")
+                if YTDLP_ALLOWED_FLAGS[flag] and "=" not in tok:
+                    idx += 1  # 이 플래그의 값은 건너뛴다
+            idx += 1
         return argv
 
     for token in DOWNLOAD_INTENT_TOKENS:
@@ -219,6 +286,13 @@ def assert_read_only(argv: Sequence[str]) -> Sequence[str]:
             raise ReadOnlyViolation(
                 f"쓰기 의도 토큰 {token!r} 감지 — 게시·좋아요·팔로우·댓글 "
                 f"금지: {parts!r}")
+
+    # 한국어는 공백 단어 경계가 없으므로 부분 문자열로 본다.
+    for token in KOREAN_WRITE_INTENT_TOKENS:
+        if token in joined:
+            raise ReadOnlyViolation(
+                f"한국어 쓰기 의도 토큰 {token!r} 감지 — 게시·좋아요·팔로우·"
+                f"댓글·구독 금지: {parts!r}")
 
     return argv
 
@@ -284,11 +358,30 @@ class CollectionResult:
 # 계획 수립
 # ---------------------------------------------------------------------------
 
-#: 시장별 좁은 쿼리 (SSOT §0 카테고리 하드락 안에서만).
+#: ⚠️ **운영자 미승인 플레이스홀더.** 아래 쿼리는 구현자가 임시로 적은 것이며
+#: 운영자가 검토·승인한 검색어가 **아니다.** SSOT §0 카테고리 하드락 안에는
+#: 있지만, 라이브 실행 전에 운영자가 직접 확인하고 아래
+#: ``QUERY_SEEDS_APPROVED`` 를 True 로 바꿔야 한다. 그 전까지 라이브 수집은
+#: ``UnapprovedQuerySeeds`` 로 거부된다. (docs/operations/
+#: viral-ugc-collection-brief.md §3.1 참조)
 QUERY_SEEDS: Dict[str, Tuple[str, ...]] = {
     "KR": ("아이 키 성장 수면 루틴", "아이 자세 교정 후기"),
     "US": ("kids growth nutrition routine", "children posture habit"),
 }
+
+#: 위 QUERY_SEEDS 를 운영자가 승인했는가. **기본 False** — 승인 없이는 라이브
+#: 수집이 시작되지 않는다. 승인 시 이 값을 True 로 바꾸고 커밋한다.
+QUERY_SEEDS_APPROVED = False
+
+
+def assert_query_seeds_approved() -> None:
+    """운영자 승인 없는 시드로 라이브를 돌리지 못하게 막는다."""
+    if not QUERY_SEEDS_APPROVED:
+        raise UnapprovedQuerySeeds(
+            "QUERY_SEEDS 는 구현자가 적은 플레이스홀더이며 운영자 승인을 받지 "
+            "않았다. 라이브 수집 전에 검색어를 검토하고 "
+            "QUERY_SEEDS_APPROVED=True 로 바꿔라 "
+            f"(현재 시드: {QUERY_SEEDS})")
 
 
 def build_plan(markets: Sequence[str] = DEFAULT_MARKETS,
@@ -312,18 +405,30 @@ def build_plan(markets: Sequence[str] = DEFAULT_MARKETS,
 
 
 def aside_command(step: Dict[str, Any]) -> List[str]:
-    """이 단계에 해당하는 Aside CLI argv (브라우저 표준 — 유일한 경로)."""
+    """이 단계에 해당하는 Aside CLI argv (브라우저 표준 — 유일한 경로).
+    목표문은 **전적으로 기계 생성**이다. 호출자가 자유형 목표문을 넣을 수 있는
+    경로는 존재하지 않으며, 쿼리는 ``QUERY_SEEDS`` 표에 실제로 있는 값만
+    허용한다. 그래야 ``assert_read_only`` 가 검사할 문자열의 공간이 유한하다.
+    마지막에 자기 자신을 가드에 통과시켜, 통과 못 하는 목표문은 만들지 않는다.
+    """
+    query = step["query"]
+    if query not in tuple(QUERY_SEEDS.get(step["market"], ())):
+        raise ReadOnlyViolation(
+            f"쿼리 {query!r} 가 승인된 QUERY_SEEDS 표에 없다 — 목표문은 "
+            "기계 생성만 허용한다 (자유형 목표문 금지)")
     goal = (
-        f"Read-only observation task. Follow {step['brief']}. "
+        f"Read-only observation task. Obey the brief at {step['brief']}. "
         f"Market {step['market']}. Inspect at most {step['max_posts']} public "
         f"results across at most {step['pages']} scroll batches for the query "
-        f"\"{step['query']}\". Return structured JSON observations containing "
+        f"\"{query}\". Return structured JSON observations containing "
         f"only: source_url, observed_at, visible engagement counters that are "
         f"actually on screen, product_id, category. Omit any counter that is "
         f"not visible — never guess or fill in zero. Do not save any image or "
         f"video. Do not interact with any account."
     )
-    return ["aside", "--account", ASIDE_ACCOUNT, "exec", goal]
+    argv = ["aside", "--account", ASIDE_ACCOUNT, "exec", goal]
+    assert_read_only(argv)
+    return argv
 
 
 # ---------------------------------------------------------------------------
@@ -331,11 +436,17 @@ def aside_command(step: Dict[str, Any]) -> List[str]:
 # ---------------------------------------------------------------------------
 
 
-def _scrub_media(row: Dict[str, Any], strict: bool) -> Dict[str, Any]:
-    """미디어 사본 키 처리 — strict 면 거부, 아니면 드롭 후 사유를 남긴다."""
+def _scrub_media(row: Dict[str, Any], strict: bool) -> None:
+    """미디어 사본 키가 있으면 **어느 모드에서든** MediaPolicyError 를 던진다.
+
+    strict 와 lenient 의 차이는 여기가 아니라 호출자에 있다 — lenient 는 이
+    예외를 잡아 해당 레코드를 ``rejected`` 에 사유와 함께 남기고 계속하고,
+    strict 는 그대로 전파해 실행을 세운다. 어느 쪽도 미디어 키를 통과시키지
+    않는다.
+    """
     present = [k for k in FORBIDDEN_MEDIA_KEYS if k in row]
     if not present:
-        return row
+        return
     if strict:
         raise MediaPolicyError(
             f"수집 레코드에 미디어 사본 필드 {present} 가 있다 — "
@@ -354,15 +465,32 @@ def normalize_record(row: Dict[str, Any], strict: bool = True) -> Observation:
 
 
 def _iter_fixture_rows(path: str):
+    """픽스처를 (lineno, row) 로 흘린다.
+
+    깨진 JSON 줄은 ``ViralUGCError`` 로 바꿔 던진다 — 원래의
+    ``json.JSONDecodeError`` 는 제너레이터 안에서 collect() 의 try 바깥으로
+    새어 나가 lenient 모드에서도 main() 을 트레이스백으로 죽였다.
+    """
     with open(path, encoding="utf-8") as fh:
         for lineno, line in enumerate(fh, 1):
             line = line.strip()
             if not line or line.startswith("//"):
                 continue
-            data = json.loads(line)
+            try:
+                data = json.loads(line)
+            except ValueError as exc:
+                yield lineno, _MalformedLine(f"{lineno}행 JSON 파싱 실패: {exc}")
+                continue
             if data.get("_fixture_note") and "observation_id" not in data:
                 continue  # 픽스처 헤더 주석
             yield lineno, data
+
+
+class _MalformedLine:
+    """깨진 픽스처 줄 표식 — collect() 안에서 ViralUGCError 로 승격된다."""
+
+    def __init__(self, message: str) -> None:
+        self.message = message
 
 
 # ---------------------------------------------------------------------------
@@ -408,6 +536,8 @@ def collect(dry_run: bool = True,
         raise LiveCollectionDisabled(
             "라이브 수집은 allow_live=True 로 명시해야 한다 — "
             "기본 경로는 픽스처 dry-run 이다 (이전 라이브 시도 300초 타임아웃)")
+    if not dry_run:
+        assert_query_seeds_approved()
 
     started = clock()
     result = CollectionResult(
@@ -417,8 +547,15 @@ def collect(dry_run: bool = True,
         started_at=datetime.now(timezone.utc).astimezone().isoformat(),
     )
 
+    def _step_timeout() -> float:
+        """남은 예산에 맞춰 줄인 타임아웃. 예산이 끝났으면 실행하지 않는다."""
+        remaining = bounds.timeout_for(clock() - started)
+        if remaining is None:
+            raise _BudgetExhausted()
+        return remaining
+
     if preflight:
-        result.preflight = run_preflight(runner, bounds.step_timeout_seconds)
+        result.preflight = run_preflight(runner, _step_timeout())
 
     wanted = tuple(markets)
 
@@ -434,6 +571,8 @@ def collect(dry_run: bool = True,
                 result.bounds_hit.append("max_observations_per_run")
                 break
             try:
+                if isinstance(row, _MalformedLine):
+                    raise ViralUGCError(row.message)
                 obs = normalize_record(row, strict=strict)
             except ViralUGCError as exc:
                 if strict:
@@ -445,15 +584,24 @@ def collect(dry_run: bool = True,
             result.observations.append(obs)
     else:  # pragma: no cover - 라이브는 별도 검증 태스크에서만 실행한다
         for step in result.plan:
-            if clock() - started >= bounds.wall_clock_budget_seconds:
+            step_timeout = bounds.timeout_for(clock() - started)
+            if step_timeout is None:
                 result.bounds_hit.append("wall_clock_budget_seconds")
                 break
             if len(result.observations) >= bounds.max_observations_per_run:
                 result.bounds_hit.append("max_observations_per_run")
                 break
-            call = _run(runner, aside_command(step),
-                        bounds.step_timeout_seconds)
-            for row in _parse_live_stdout(call.get("stdout", "")):
+            call = _run(runner, aside_command(step), step_timeout)
+            try:
+                rows = _parse_live_stdout(call.get("stdout", ""))
+            except LiveParseError as exc:
+                if strict:
+                    raise
+                result.rejected.append(
+                    {"step": step["query"], "reason": "live_parse_failed",
+                     "error": str(exc)})
+                continue
+            for row in rows:
                 if len(result.observations) >= bounds.max_observations_per_run:
                     result.bounds_hit.append("max_observations_per_run")
                     break
@@ -467,32 +615,61 @@ def collect(dry_run: bool = True,
                         {"step": step["query"], "error": str(exc)})
 
     if postflight:
-        result.postflight = run_postflight(runner, bounds.step_timeout_seconds)
+        try:
+            result.postflight = run_postflight(runner, _step_timeout())
+        except _BudgetExhausted:
+            result.bounds_hit.append("wall_clock_budget_seconds")
 
     result.elapsed_seconds = max(0.0, clock() - started)
     result.bounds_hit = sorted(set(result.bounds_hit))
     return result
 
 
+class _BudgetExhausted(CollectionError):
+    """월클럭 예산이 끝나 더 이상 외부 명령을 시작하지 않는다."""
+
+
 def _parse_live_stdout(stdout: str) -> List[Dict[str, Any]]:
-    """Aside stdout 에서 관측 레코드를 뽑는다. 파싱 실패는 빈 리스트."""
+    """Aside stdout 에서 관측 레코드를 뽑는다.
+
+    **빈 결과는 증명돼야 한다.** stdout 이 비었으면 ``[]`` 를 돌려주지만,
+    비어 있지 않은데 아는 모양(배열 / ``{"observations": [...]}`` / JSONL)
+    으로 읽히지 않으면 ``LiveParseError`` 를 던진다. 조용한 ``[]`` 는
+    "바이럴 게시물이 없었다" 와 "파서가 Aside 출력 계약을 모른다" 를
+    구별할 수 없게 만들고, 그게 정확히 라이브 검증 태스크가 필요로 하는 신호다.
+    """
     text = (stdout or "").strip()
     if not text:
         return []
     try:
         data = json.loads(text)
     except ValueError:
-        rows = []
+        rows: List[Dict[str, Any]] = []
         for line in text.splitlines():
             line = line.strip()
             if line.startswith("{"):
                 try:
-                    rows.append(json.loads(line))
+                    parsed = json.loads(line)
                 except ValueError:
                     continue
+                if isinstance(parsed, dict):
+                    rows.append(parsed)
+        if not rows:
+            raise LiveParseError(
+                "Aside stdout 이 비어 있지 않은데 관측으로 파싱되지 않았다 — "
+                "빈 결과로 조용히 넘기지 않는다. 원문 stdout: "
+                f"{text[:2000]!r}")
         return rows
     if isinstance(data, dict):
+        if "observations" not in data:
+            raise LiveParseError(
+                "Aside stdout JSON 에 'observations' 키가 없다 — 출력 계약이 "
+                f"바뀌었을 수 있다. 원문 stdout: {text[:2000]!r}")
         data = data.get("observations") or []
+    if not isinstance(data, list):
+        raise LiveParseError(
+            "Aside stdout 의 observations 가 배열이 아니다. 원문 stdout: "
+            f"{text[:2000]!r}")
     return [r for r in data if isinstance(r, dict)]
 
 
@@ -502,19 +679,31 @@ def _parse_live_stdout(stdout: str) -> List[Dict[str, Any]]:
 
 
 def write_observations(path: str, observations: Sequence[Observation]) -> str:
-    """검증된 관측을 JSONL 로 원자적으로 쓴다 (미디어 키는 구조상 없다)."""
+    """검증된 관측을 JSONL 에 **덧붙인다** (원자적·크래시 안전).
+
+    덮어쓰기가 아니라 append 인 이유: 출력 경로는
+    ``state/viral_ugc/incoming.jsonl`` 이라는 누적 인박스이고, 덮어쓰면 두 번째
+    실행이 첫 실행의 관측을 조용히 파괴한다.
+
+    크래시 안전성: 모든 레코드를 **먼저 메모리에서 직렬화·검증**한 뒤 한 번의
+    ``write()`` 로 O_APPEND 파일에 붙이고 fsync 한다. 검증 실패는 파일을 건드리기
+    전에 터지므로 반쪽 배치가 남지 않는다.
+    """
     directory = os.path.dirname(os.path.abspath(path))
     os.makedirs(directory, exist_ok=True)
-    tmp = f"{path}.{os.getpid()}.tmp"
+    lines = []
+    for obs in observations:
+        obs.validate()
+        lines.append(json.dumps(obs.to_dict(), ensure_ascii=False) + "\n")
+    if not lines:
+        return path
+    payload = "".join(lines)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
     try:
-        with open(tmp, "w", encoding="utf-8") as fh:
-            for obs in observations:
-                obs.validate()
-                fh.write(json.dumps(obs.to_dict(), ensure_ascii=False) + "\n")
-        os.replace(tmp, path)
+        os.write(fd, payload.encode("utf-8"))
+        os.fsync(fd)
     finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
+        os.close(fd)
     return path
 
 
@@ -599,11 +788,14 @@ __all__ = [
     "MAX_QUERIES_PER_RUN", "MAX_PAGES_PER_QUERY", "MAX_POSTS_PER_QUERY",
     "MAX_OBSERVATIONS_PER_RUN", "WALL_CLOCK_BUDGET_SECONDS",
     "STEP_TIMEOUT_SECONDS", "DEFAULT_MARKETS", "ASIDE_ACCOUNT",
-    "COLLECTION_BRIEF", "QUERY_SEEDS",
+    "COLLECTION_BRIEF", "QUERY_SEEDS", "QUERY_SEEDS_APPROVED",
+    "YTDLP_ALLOWED_FLAGS", "YTDLP_METADATA_ONLY",
+    "KOREAN_WRITE_INTENT_TOKENS",
     "CollectionError", "BoundsError", "ReadOnlyViolation",
-    "LiveCollectionDisabled",
+    "LiveCollectionDisabled", "LiveParseError", "UnapprovedQuerySeeds",
     "CollectionBounds", "CollectionResult",
     "assert_read_only", "build_plan", "aside_command", "normalize_record",
+    "assert_query_seeds_approved",
     "run_preflight", "run_postflight", "collect", "write_observations", "main",
 ]
 

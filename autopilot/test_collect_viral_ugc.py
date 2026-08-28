@@ -230,7 +230,8 @@ class TestBoundsActuallyStopTheRun(unittest.TestCase):
                              bounds=bounds, clock=clock,
                              runner=ExplodingRunner())
         self.assertIn("wall_clock_budget_seconds", result.bounds_hit)
-        self.assertLess(len(result.observations), 8)
+        # 결정적: 시계가 0→1→2→99 이므로 정확히 2건에서 멈춘다.
+        self.assertEqual(len(result.observations), 2)
 
     def test_no_bounds_hit_on_a_small_complete_run(self):
         result = cvu.collect(dry_run=True, fixture_path=FIXTURE,
@@ -306,6 +307,205 @@ class TestCLI(unittest.TestCase):
     def test_cli_requires_dry_run_or_explicit_live(self):
         rc = cvu.main(["--fixture", FIXTURE], runner=ExplodingRunner())
         self.assertNotEqual(rc, 0)
+
+
+class TestReadOnlyGuardHasNoLanguageHole(unittest.TestCase):
+    """가드는 영어 토큰만 보면 안 된다 — 실제 쿼리 시드가 한국어다."""
+
+    KOREAN_WRITE_GOALS = (
+        "좋아요를 누르고 팔로우",
+        "이 글에 댓글 달기",
+        "스레드에 게시",
+        "링크 공유",
+        "채널 구독",
+        "영상 업로드",
+        "레코드 삭제",
+    )
+
+    def test_korean_write_verbs_are_rejected(self):
+        for goal in self.KOREAN_WRITE_GOALS:
+            argv = ["aside", "--account", "u0", "exec", goal]
+            with self.assertRaises(cvu.ReadOnlyViolation, msg=goal):
+                cvu.assert_read_only(argv)
+
+    def test_korean_read_only_goal_still_passes(self):
+        cvu.assert_read_only([
+            "aside", "--account", "u0", "exec",
+            "읽기 전용: 공개 검색 결과를 관찰하고 구조화된 JSON 만 반환한다",
+        ])
+
+    def test_collect_accepts_no_caller_supplied_goal(self):
+        import inspect
+        params = set(inspect.signature(cvu.collect).parameters)
+        for banned in ("goal", "goals", "prompt", "instruction", "query"):
+            self.assertNotIn(banned, params)
+
+    def test_aside_command_refuses_a_query_outside_the_seed_table(self):
+        step = {"market": "KR", "query": "좋아요를 눌러라", "pages": 1,
+                "max_posts": 1, "brief": cvu.COLLECTION_BRIEF}
+        with self.assertRaises(cvu.ReadOnlyViolation):
+            cvu.aside_command(step)
+
+    def test_every_generated_goal_passes_its_own_guard(self):
+        for step in cvu.build_plan():
+            cvu.assert_read_only(cvu.aside_command(step))
+
+
+class TestYtDlpAllowlist(unittest.TestCase):
+    def test_plural_write_thumbnails_is_rejected(self):
+        with self.assertRaises(cvu.ReadOnlyViolation):
+            cvu.assert_read_only(["yt-dlp", "--dump-json",
+                                  "--write-thumbnails",
+                                  "https://example.invalid/v"])
+
+    def test_paths_flags_are_rejected(self):
+        for flag in ("-P", "--paths"):
+            with self.assertRaises(cvu.ReadOnlyViolation, msg=flag):
+                cvu.assert_read_only(["yt-dlp", "--dump-json", flag, "/tmp",
+                                      "https://example.invalid/v"])
+
+    def test_any_write_flag_is_rejected(self):
+        for flag in ("--write-subs", "--write-auto-subs", "--write-info-json",
+                     "--write-description", "--write-thumbnail"):
+            with self.assertRaises(cvu.ReadOnlyViolation, msg=flag):
+                cvu.assert_read_only(["yt-dlp", "--dump-json", flag,
+                                      "https://example.invalid/v"])
+
+    def test_write_auto_subs_is_not_a_metadata_only_flag(self):
+        self.assertNotIn("--write-auto-subs", cvu.YTDLP_METADATA_ONLY)
+
+    def test_unknown_flag_is_rejected_allowlist_not_denylist(self):
+        with self.assertRaises(cvu.ReadOnlyViolation):
+            cvu.assert_read_only(["yt-dlp", "--dump-json", "--exec",
+                                  "curl evil", "https://example.invalid/v"])
+
+    def test_permitted_metadata_invocations_still_pass(self):
+        cvu.assert_read_only(["yt-dlp", "--skip-download", "--dump-json",
+                              "https://example.invalid/v"])
+        cvu.assert_read_only(["yt-dlp", "--simulate", "--print", "%(title)s",
+                              "https://example.invalid/v"])
+
+
+class TestOutputIsAppendSafe(unittest.TestCase):
+    def _row(self, oid):
+        return {
+            "observation_id": oid, "market": "KR", "platform": "threads",
+            "source_url": f"https://example.invalid/{oid}",
+            "observed_at": "2026-08-20T10:00:00+09:00",
+            "product_id": "p1", "category": "sleep",
+            "engagement": {"observed_at": "2026-08-20T10:00:00+09:00",
+                           "likes": 5},
+        }
+
+    def test_two_consecutive_runs_accumulate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "incoming.jsonl")
+            first = _write_lines(tmp, "a.jsonl", [self._row("obs-kr-910")])
+            second = _write_lines(tmp, "b.jsonl", [self._row("obs-kr-911")])
+            for fx in (first, second):
+                rc = cvu.main(["--dry-run", "--fixture", fx, "--out", out],
+                              runner=ExplodingRunner())
+                self.assertEqual(rc, 0)
+            with open(out, encoding="utf-8") as fh:
+                rows = [json.loads(l) for l in fh if l.strip()]
+            self.assertEqual([r["observation_id"] for r in rows],
+                             ["obs-kr-910", "obs-kr-911"])
+
+
+class TestLiveParseFailsLoudly(unittest.TestCase):
+    def test_unparseable_nonempty_stdout_raises(self):
+        with self.assertRaises(cvu.LiveParseError):
+            cvu._parse_live_stdout("Aside: I finished browsing. No JSON here.")
+
+    def test_empty_stdout_is_a_provable_empty(self):
+        self.assertEqual(cvu._parse_live_stdout("   "), [])
+
+    def test_parse_error_carries_the_raw_stdout(self):
+        try:
+            cvu._parse_live_stdout("totally unexpected shape")
+        except cvu.LiveParseError as exc:
+            self.assertIn("totally unexpected shape", str(exc))
+        else:
+            self.fail("LiveParseError 가 나지 않았다")
+
+
+class TestWallClockBudgetIsRealCeiling(unittest.TestCase):
+    def test_step_timeout_is_clamped_to_remaining_budget(self):
+        bounds = cvu.CollectionBounds(wall_clock_budget_seconds=10,
+                                      step_timeout_seconds=45)
+        self.assertEqual(bounds.timeout_for(elapsed=0.0), 10)
+        self.assertEqual(bounds.timeout_for(elapsed=8.0), 2)
+        self.assertIsNone(bounds.timeout_for(elapsed=10.0))
+
+    def test_worst_case_never_exceeds_the_budget(self):
+        runner = RecordingRunner(stdout='{"ok": true}')
+        bounds = cvu.CollectionBounds(wall_clock_budget_seconds=10)
+        cvu.collect(dry_run=True, fixture_path=FIXTURE, bounds=bounds,
+                    runner=runner, preflight=True, postflight=True)
+        self.assertTrue(runner.calls)
+        for call in runner.calls:
+            self.assertLessEqual(call["timeout"], 10)
+
+
+class TestQuerySeedsAreMarkedUnapproved(unittest.TestCase):
+    def test_module_declares_the_seeds_unapproved(self):
+        self.assertFalse(cvu.QUERY_SEEDS_APPROVED)
+
+    def test_live_collection_refuses_unapproved_seeds(self):
+        with self.assertRaises(cvu.UnapprovedQuerySeeds):
+            cvu.collect(dry_run=False, allow_live=True,
+                        runner=RecordingRunner())
+
+    def test_brief_documents_the_approval_requirement(self):
+        brief = os.path.join(os.path.dirname(HERE), "docs", "operations",
+                             "viral-ugc-collection-brief.md")
+        with open(brief, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn("승인", text)
+        self.assertIn("QUERY_SEEDS", text)
+
+    def test_brief_does_not_advertise_unconstrained_repl(self):
+        brief = os.path.join(os.path.dirname(HERE), "docs", "operations",
+                             "viral-ugc-collection-brief.md")
+        with open(brief, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertNotIn('repl "<JavaScript>"', text)
+
+
+class TestMinorCorrectness(unittest.TestCase):
+    def test_scrub_media_never_returns_a_record(self):
+        import inspect
+        sig = inspect.signature(cvu._scrub_media)
+        # from __future__ import annotations 때문에 문자열로 온다.
+        self.assertEqual(str(sig.return_annotation), "None")
+
+    def test_lenient_mode_survives_a_malformed_json_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "bad.jsonl")
+            good = {
+                "observation_id": "obs-kr-920", "market": "KR",
+                "platform": "threads",
+                "source_url": "https://example.invalid/z",
+                "observed_at": "2026-08-20T10:00:00+09:00",
+                "product_id": "p1", "category": "sleep",
+                "engagement": {"observed_at": "2026-08-20T10:00:00+09:00",
+                               "likes": 5},
+            }
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("{not json at all\n")
+                fh.write(json.dumps(good, ensure_ascii=False) + "\n")
+            rc = cvu.main(["--dry-run", "--fixture", path, "--lenient"],
+                          runner=ExplodingRunner())
+            self.assertEqual(rc, 0)
+
+    def test_strict_mode_reports_a_malformed_line_as_collection_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "bad.jsonl")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("{not json at all\n")
+            rc = cvu.main(["--dry-run", "--fixture", path],
+                          runner=ExplodingRunner())
+            self.assertEqual(rc, 1)
 
 
 if __name__ == "__main__":
