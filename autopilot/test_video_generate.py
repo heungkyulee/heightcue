@@ -7,6 +7,7 @@ Hermes 프리플라이트는 ``preflight_runner=`` 시드로 주입한다.
 PNG 바이트는 로컬에서 합성한다.
 """
 
+import inspect
 import os
 import shutil
 import struct
@@ -1009,6 +1010,42 @@ class TestCutLineage(CutBase):
     def test_non_mp4_output_is_a_content_failure(self):
         result = self.run_cuts(client=FakeFalClient(bad_bytes=True))
         self.assertEqual(result["state"], "qa_failed")
+
+
+class TestPermanentContentMarkers(unittest.TestCase):
+    """영구 콘텐츠 실패는 재시도하면 안 된다 — possibly_billed 회계에서 돈만 탄다."""
+
+    def test_invalid_prompt_is_content(self):
+        self.assertEqual(
+            vg.classify_provider_error(RuntimeError("invalid prompt")), "content")
+
+    def test_unsupported_image_format_is_content(self):
+        self.assertEqual(
+            vg.classify_provider_error(
+                RuntimeError("unsupported image format: bmp")), "content")
+
+    def test_infra_failures_still_retry(self):
+        """마커 추가가 인프라 버킷을 잠식하지 않았는지 확인한다."""
+        for exc in (TimeoutError("timed out"),
+                    ConnectionError("Network is unreachable"),
+                    RuntimeError("HTTP 503 service unavailable")):
+            self.assertEqual(vg.classify_provider_error(exc), "retryable")
+
+
+class TestResolveCostSignature(unittest.TestCase):
+    """`_resolve_cost` 는 응답만 본다 — 쓰지 않는 인자를 받으면 안 된다."""
+
+    def test_takes_only_response(self):
+        params = list(inspect.signature(vg._resolve_cost).parameters)
+        self.assertEqual(params, ["response"])
+
+    def test_still_resolves_all_three_sources(self):
+        self.assertEqual(vg._resolve_cost({"billed_cost_usd": 0.2}),
+                         (0.2, vg.COST_SOURCE_PROVIDER_BILLED, 0.2))
+        self.assertEqual(vg._resolve_cost({"cost_usd": 0.2}),
+                         (None, vg.COST_SOURCE_PROVIDER_ESTIMATE, 0.2))
+        self.assertEqual(vg._resolve_cost(None),
+                         (None, vg.COST_SOURCE_LOCAL_ESTIMATE, None))
 
 
 if __name__ == "__main__":

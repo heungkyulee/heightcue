@@ -561,6 +561,10 @@ class VideoLedger:
             entry["lease"] = None
             if packet is not None and passed:
                 entry["packet"] = packet
+            elif not passed:
+                # 통과하지 못한 잡에 이전 라운드의 발행 패킷이 남아 있으면
+                # 낡은 산출물을 가리키게 된다. 재진입 경로에서 반드시 지운다.
+                entry.pop("packet", None)
             self._set_state(entry, target, worker_id=worker_id,
                             qa_passed=passed,
                             packet_attached=bool(packet is not None and passed))

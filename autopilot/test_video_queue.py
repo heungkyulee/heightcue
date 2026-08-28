@@ -936,5 +936,33 @@ class TestCLI(LedgerTestCase):
         self.assertEqual(self.run_cli("status").returncode, 0)
 
 
+class TestPacketClearedOnNonPassPath(LedgerTestCase):
+    """복귀·QA실패 경로에 낡은 패킷이 남으면 안 된다."""
+
+    def test_packet_cleared_when_qa_fails_after_a_ready_pass(self):
+        self.ledger.enqueue(make_job())
+        self.ledger.claim(worker_id="w-1")
+        self.ledger.complete(
+            "job-1", worker_id="w-1", manifest=make_manifest(job_id="job-1"),
+            qa_report=vc.QAReport(job_id="job-1", run_id="run-1", passed=True),
+            handoff=make_handoff(job_id="job-1"),
+            packet={"job_id": "job-1", "video_path": "/tmp/a.mp4"})
+        self.assertIsNotNone(self.ledger.get("job-1").get("packet"))
+
+        # ready -> publishing -> 실패 -> queued -> 재생성 -> 이번엔 QA 실패
+        self.ledger.claim(worker_id="w-2",
+                          states=(vc.STATE_READY_TO_PUBLISH,))
+        self.ledger.retry("job-1", worker_id="w-2", reason="publish boom")
+        self.ledger.claim(worker_id="w-3")
+        self.ledger.complete(
+            "job-1", worker_id="w-3", manifest=make_manifest(job_id="job-1"),
+            qa_report=vc.QAReport(job_id="job-1", run_id="run-1", passed=False,
+                                  failures=["disclosure 누락"]))
+        entry = self.ledger.get("job-1")
+        self.assertEqual(entry["state"], vc.STATE_QA_FAILED)
+        self.assertIsNone(entry.get("packet"),
+                          "QA 실패로 되돌아온 잡에 낡은 발행 패킷이 남았다")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -665,7 +665,11 @@ RETRYABLE_MARKERS = ("timeout", "timed out", "rate limit", "rate_limit",
                      "service unavailable")
 
 #: 콘텐츠·정책 실패 신호 (재시도해도 같은 결과 — 돈만 태운다).
-CONTENT_MARKERS = ("content", "policy", "moderat", "safety", "nsfw")
+#: `invalid prompt` 와 `unsupported image format` 은 영구 실패다: 같은
+#: 요청을 다시 보내면 같은 거절이 오는데, possibly_billed 회계에서는
+#: 시도 상한까지 돈이 계속 나간다.
+CONTENT_MARKERS = ("content", "policy", "moderat", "safety", "nsfw",
+                   "invalid prompt", "unsupported image format")
 
 #: 타입만으로 인프라 실패가 확정되는 예외들.
 RETRYABLE_EXCEPTION_TYPES = (TimeoutError, ConnectionError, OSError)
@@ -1018,7 +1022,7 @@ def _as_amount(value: Any) -> Optional[float]:
     return None
 
 
-def _resolve_cost(response: Any, local_estimate: float) -> tuple:
+def _resolve_cost(response: Any) -> tuple:
     """(billed, cost_source, provider_reported) 를 돌려준다.
 
     ``billed`` 는 provider 가 **청구액**이라고 명시한 값일 때만 숫자다.
@@ -1259,8 +1263,7 @@ def generate_cuts(storyboard: Any, frames_manifest: Dict[str, Any], *,
 
             # 성공 — 비용의 **출처**를 함께 기록한다. 추정치는 절대
             # `actual_` 필드에 앉지 않는다.
-            billed, source, provider_reported = _resolve_cost(
-                response, per_cut_estimate)
+            billed, source, provider_reported = _resolve_cost(response)
             charged = billed if billed is not None else (
                 provider_reported if provider_reported is not None
                 else per_cut_estimate)
