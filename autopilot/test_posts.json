@@ -1,0 +1,446 @@
+[
+ {
+  "id": "v1-kr-1-칼슘",
+  "country": "KR",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": true,
+   "is_certified_health_food": false
+  },
+  "text": "영유아 검진 끝나고 우시는 맘님들 계시죠? 😭 저도 첫째 15백분위 뜨고 차에서 엉엉 울었던 기억이 나네요.\n우유 안 먹는 아이들 억지로 먹이지 마세요. 저도 별짓 다 해보다가 이 츄어블 칼슘으로 정착했는데, 카라멜 맛이라 아이가 아침마다 먼저 달라고 입 벌립니다ㅋㅋ 성분도 칼슘+마그네슘+비타민D 황금비율이라 이것저것 안 챙겨도 돼서 워킹맘한테 빛 한 줄기예요.\n할인할 때 두 통 쟁여두세요!\n👉 [쿠팡 파트너스 링크]",
+  "expect_notes": "some"
+ },
+ {
+  "id": "v1-kr-2-토퍼",
+  "country": "KR",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": false
+  },
+  "text": "\"애들은 잘 때 큰다\" 이 말 진짜 진리인 거 아시죠?\n근데 저희 둘째가 밤마다 굴러다니고 깨는 예민 보스였거든요. 침대 매트리스 위에 이 '기절 토퍼' 하나 깔아줬더니 거짓말 안 하고 통잠 자기 시작했습니다. 🌙\n척추 허리 탄탄하게 잡아주는 고밀도 폼이라 성장기 아이들한테 딱이에요. 수면의 질이 달라지니까 요새 밥도 잘 먹네요. 애들 잠투정 심하면 매트리스부터 바꿔보세요.\n👉 [쿠팡 파트너스 링크]",
+  "expect_notes": "some"
+ },
+ {
+  "id": "v1-kr-3-줄넘기",
+  "country": "KR",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": false
+  },
+  "text": "키 크려면 점프 운동 필수라는데, 미세먼지 핑계 대고 안 나가는 우리 집 초딩 🤦‍♀️\n결국 실내 무소음 줄넘기 샀습니다. 밑에 층 층간소음 걱정 없는 매트랑 세트로 된 건데, 넷플릭스 틀어주고 \"하루 300개만 하자\" 하니까 땀 뻘뻘 흘리면서 재밌어하네요. 줄이 없어서 집 안 물건 깰 일도 없어요! 날씨 핑계 대는 아이들한테 강추합니다.\n👉 [쿠팡 파트너스 링크]",
+  "expect_notes": "some"
+ },
+ {
+  "id": "v1-kr-4-의자",
+  "country": "KR",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": false
+  },
+  "text": "키가 작은 게 아니라, 자세가 구부정해서 숨은 키 2cm를 손해 보고 있다는 사실 충격이지 않나요? 😱\n책상에 구부정하게 앉는 습관 고쳐주려고 발받침 있는 자세 교정 의자로 바꿨어요. 처음엔 불편해하더니 지금은 허리 꼿꼿하게 펴고 책 봅니다. 거북목 예방에도 좋아서 애들 뼈 굳기 전에 무조건 빨리 바꿔주세요. 엄마 마음 편해지는 투자 1순위예요.\n👉 [쿠팡 파트너스 링크]",
+  "expect_notes": "some"
+ },
+ {
+  "id": "v1-kr-5-아연",
+  "country": "KR",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": true,
+   "is_certified_health_food": false
+  },
+  "text": "\"한 숟갈만 더 먹자~\" 매일 밥상 머리 전쟁 치르시는 맘님들 ㅠㅠ\n저희 첫째가 진짜 밥알 세면서 먹는 소식좌였는데, 맘카페 추천받고 이 아연 시럽 2주 먹이니까 신기하게 밥 양이 확 늘었어요! 아연이 아이들 미각이랑 입맛 돋우는 데 도움 된다는 거 저만 이제 알았나요? 딸기맛이라 약병에 주면 쭉쭉 빨아먹습니다. 밥 안 먹는 아이 두신 분들 꼭 시도해 보세요.\n👉 [쿠팡 파트너스 링크]",
+  "expect_notes": "some"
+ },
+ {
+  "id": "v1-us-6-gummies",
+  "country": "US",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": true,
+   "is_certified_health_food": false
+  },
+  "text": "Just got back from the pediatrician and my son is in the 10th percentile for height. Cue the mom guilt 😭\nHe refuses to drink milk, so I went down a rabbit hole of research. Finally found these Calcium + Vitamin D3 gummies. They taste like fruit snacks! He literally reminds ME to give them to him every morning. If you have a picky eater, save your sanity and try these. You're doing great, mamas! ❤️\n👉 [Amazon Affiliate Link]",
+  "expect_notes": "some"
+ },
+ {
+  "id": "v1-us-7-blanket",
+  "country": "US",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": false
+  },
+  "text": "Did you know growth hormones peak during deep sleep? 🛌\nMy 5-year-old used to wake up 3 times a night. I bought this kids' weighted blanket on a whim, and it's been magic. It gives them that \"hugged\" feeling all night. He's sleeping 10 hours straight now, and his leg pains (growing pains!) have totally lessened. A game changer for tired moms.\n👉 [Amazon Affiliate Link]",
+  "expect_notes": "some"
+ },
+ {
+  "id": "v1-us-8-trampoline",
+  "country": "US",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": false
+  },
+  "text": "Trying to get kids off their iPads and actually moving? 🤸‍♂️\nJumping is one of the best ways to stimulate bone growth! I put this mini indoor foldable trampoline in the living room. Now, instead of sitting on the couch while watching cartoons, they are bouncing non-stop. It's super sturdy and took me 10 minutes to assemble. Best $50 I've spent this year!\n👉 [Amazon Affiliate Link]",
+  "expect_notes": "some"
+ },
+ {
+  "id": "v1-us-9-desk",
+  "country": "US",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": false
+  },
+  "text": "A bad posture can literally hide 1-2 inches of your child's true height! 😲\nI noticed my daughter slouching so bad while doing homework. We upgraded to this adjustable ergonomic desk and chair set. It keeps her feet flat on the floor and her spine straight. Plus, it grows WITH your child, so you won't need a new one next year. Invest in their spine!\n👉 [Amazon Affiliate Link]",
+  "expect_notes": "some"
+ },
+ {
+  "id": "v1-us-10-zinc",
+  "country": "US",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": true,
+   "is_certified_health_food": false
+  },
+  "text": "If dinnertime feels like a negotiation tactic with a tiny terrorist because they won't eat... try Zinc! 🥦\nMy son used to eat like a bird. A mom friend told me Zinc deficiency can cause a loss of appetite in kids. I started sneaking these unflavored Liquid Zinc drops into his morning juice. Fast forward 3 weeks: he's asking for seconds at dinner! Seriously, try this before you pull all your hair out.\n👉 [Amazon Affiliate Link]",
+  "expect_notes": "some"
+ },
+ {
+  "id": "v2-kr-1-칼슘",
+  "country": "KR",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": true,
+   "is_certified_health_food": true
+  },
+  "text": "츄어블 칼슘 5개 성분표를 뜯어보고 4개는 걸렀습니다.\n이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n\n우유 안 먹는 아이 칼슘, 뭘로 채우나 고민이라면 — 남은 1개의 이유: ① 건강기능식품 인증(캔디형 아님) ② 칼슘+마그네슘+비타민D가 한 알에 ③ 리뷰 4천여 건에서 \"아이가 먼저 찾는다\"는 얘기가 유독 자주 보임.\n식사 대체는 아니고 보충이에요. 섭취량은 라벨 기준으로.\n👉 [쿠팡 파트너스 링크]",
+  "expect_notes": "none"
+ },
+ {
+  "id": "v2-kr-2-토퍼",
+  "country": "KR",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": false
+  },
+  "text": "아이 수면템 리뷰 3천 개에서 제일 자주 나온 문장: \"이걸 왜 이제 샀지\" 🌙\n이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n\n밤마다 굴러다니고 새벽에 깨는 아이 얘기, 육아 스레드마다 나오길래 스펙을 뜯어봤습니다. 고밀도 폼이라 꺼짐이 적고, 커버 분리 세탁 가능, \"뒤척임이 줄었다\"는 후기가 눈에 띄게 많아요.\n잠자리 환경은 오늘 밤부터 바꿔볼 수 있는 일이라, 잠투정 심한 집은 매트리스부터 점검해 보세요.\n👉 [쿠팡 파트너스 링크]",
+  "expect_notes": "none"
+ },
+ {
+  "id": "v2-kr-3-줄넘기",
+  "country": "KR",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": false
+  },
+  "text": "'하루 300개 미션'으로 소파에서 아이를 떼어냈다는 집들의 공통 아이템 🤸\n이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n\n실내 무소음 줄넘기 + 층간소음 매트 세트. 줄이 없어서 집 안 물건 깰 일이 없고, 리뷰에 \"넷플릭스 틀어놓고 하루 300개\" 하는 집이 많네요.\n아파트에서 아이 운동 습관 만들기엔 이만한 조합이 없어요. 매트 포함 여부는 옵션 확인!\n👉 [쿠팡 파트너스 링크]",
+  "expect_notes": "none"
+ },
+ {
+  "id": "v2-kr-4-의자",
+  "country": "KR",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": false
+  },
+  "text": "\"허리 펴!\" 잔소리, 오늘 몇 번 하셨어요?\n이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n\n잔소리 대신 가구를 바꿨다는 후기가 많길래 발받침 있는 자세 의자들을 비교했습니다. 이게 남은 이유 — 발이 바닥에 닿는 높이 조절 폭이 제일 넓고, 좌면 각도가 앉는 자세를 잡아줍니다. 리뷰에도 \"허리 펴고 앉기 시작했다\"는 얘기가 많아요.\n높이 조절 범위는 상세페이지에서 확인하세요.\n👉 [쿠팡 파트너스 링크]",
+  "expect_notes": "none"
+ },
+ {
+  "id": "v2-kr-5-비타민D",
+  "country": "KR",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": true,
+   "is_certified_health_food": true
+  },
+  "text": "급식 잘 먹는 애도 비타민D는 얘기가 다릅니다 — 햇빛으로 만드는 영양소라서요 ☀️\n이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n\n실내 생활 많은 요즘 애들 생각하며 어린이 비타민D 4개를 비교해 이걸로 정했습니다 — ① 건강기능식품 인증 ② 기능성 문구가 명확함: \"칼슘과 인이 흡수되고 이용되는 데 필요·뼈의 형성과 유지에 필요\"(식약처 인정 문구) ③ 츄어블이라 아침 루틴에 넣기 쉬움.\n함량·섭취량은 연령별로 다르니 라벨 확인이 먼저예요.\n👉 [쿠팡 파트너스 링크]",
+  "expect_notes": "none"
+ },
+ {
+  "id": "v2-us-6-gummies",
+  "country": "US",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": true,
+   "is_certified_health_food": false
+  },
+  "text": "5 calcium gummies for kids, 4 rejected — here's the survivor. #ad\nFor kids who won't touch milk: ① calcium + D3 in one gummy, one less thing to track ② third-party tested ③ 4,000+ reviews where \"my picky eater actually asks for these\" keeps showing up.\nNot a meal replacement — just backup for the days milk isn't happening. Dosage per the label; check with your pediatrician.\n👉 [Amazon link] (paid link)",
+  "expect_notes": "none"
+ },
+ {
+  "id": "v2-us-7-sound-machine",
+  "country": "US",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": false
+  },
+  "text": "\"Why didn't we buy this sooner\" — the top line in 3,000+ reviews. #ad\nIf bedtime takes 45 minutes and three glasses of water, the fix might be the room, not the kid. This one made the cut: red night-light mode, a shut-off timer, and it survives being knocked off the nightstand (per hundreds of reviews).\n👉 [Amazon link] (paid link)",
+  "expect_notes": "none"
+ },
+ {
+  "id": "v2-us-8-trampoline",
+  "country": "US",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": false
+  },
+  "text": "Screen-time fights ended in a lot of homes with one $60 purchase. #ad\nI compared the small indoor trampolines: this foldable one has a handlebar for younger kids, holds up per 4,000+ reviews, and \"took 10 minutes to assemble\" shows up in almost every one of them.\nCheck the weight limit before you buy — they differ a lot between models.\n👉 [Amazon link] (paid link)",
+  "expect_notes": "none"
+ },
+ {
+  "id": "v2-us-9-desk",
+  "country": "US",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": false
+  },
+  "text": "Your kid's desk might be teaching the slouch. #ad\nI looked at adjustable desk-and-chair sets and this one stood out: the height adjusts so feet sit flat on the floor, the desktop tilts for reading, and it resizes as your kid grows — reviewers keep mentioning they skipped buying a new desk the next year.\nMeasure chair-to-floor height first — sizing charts are in the listing.\n👉 [Amazon link] (paid link)",
+  "expect_notes": "none"
+ },
+ {
+  "id": "v2-us-10-plates",
+  "country": "US",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": false
+  },
+  "text": "Feeding therapists' rule for picky eaters: don't let foods touch. #ad\nThese divided plates show up constantly in those threads — suction bottom (survives the throw test), dishwasher safe, and portioned so a \"full plate\" doesn't overwhelm. Reviews are full of \"dinner fights went down a notch.\"\n👉 [Amazon link] (paid link)",
+  "expect_notes": "none"
+ },
+ {
+  "id": "v2-value-1-검진정보 (가치글: 주제 어휘 허용)",
+  "country": "KR",
+  "post_type": "value",
+  "expect": "PASS",
+  "text": "영유아검진에서 키 백분위 숫자 보고 마음 복잡했던 분들, 그 숫자 읽는 법부터 정리해 드릴게요.\n백분위는 '등수'가 아니라 또래 100명 중의 위치고, 소아과에서 실제로 중요하게 보는 건 한 번의 숫자가 아니라 성장곡선의 '추세'입니다. 키의 가장 큰 변수는 유전이고, 부모가 챙길 수 있는 건 수면·식사·활동 같은 기본기예요.\n다음 검진 전에 기록해 가면 좋은 것 3가지: 최근 6개월 키·몸무게 변화, 수면 시간, 식사량 변화. 걱정될 땐 검색보다 소아과 상담이 빠릅니다.",
+  "expect_notes": "none"
+ },
+ {
+  "id": "v2-value-2-링크넣은가치글 (차단 없음 — 고지 미표시 리스크 메모만 표시)",
+  "country": "KR",
+  "post_type": "value",
+  "expect": "PASS",
+  "text": "애들 수면 습관 잡는 법 3가지 정리했어요. 첫째 자기 전 스크린 끄기, 둘째 방 온도 낮추기, 셋째 일정한 취침 시간.\n참고로 저희가 소개했던 토퍼는 여기서: 👉 [쿠팡 파트너스 링크]",
+  "expect_notes": "some"
+ },
+ {
+  "id": "v3-value-운영자스토리 (가치글: '돌아가도' 서사 허용)",
+  "country": "KR",
+  "post_type": "value",
+  "expect": "PASS",
+  "text": "저는 167에서 멈춘 26살입니다. 15년 전으로 돌아가도 아마 결과는 크게 다르지 않았을 거예요. 키는 유전이 제일 크니까요.\n그래도 가끔 생각합니다. 새벽 1시까지 깨어 있던 초등학생, 아침을 거르고 뛰던 등굣길, 우유만 보면 도망가던 급식 시간.\n바꿀 수 없었더라도, 해볼 수 있는 걸 다 해봤다면 지금 이렇게 아쉽지는 않았을 것 같아요.\n그래서 이 계정을 합니다. 그때는 몰랐던 것들 — 수면, 식사, 검진 데이터 읽는 법 — 을 하나씩 정리해서요. 부모님 잘못이 아니었어요. 몰랐을 뿐이죠. 지금은 알 수 있으니까.",
+  "expect_notes": "none"
+ },
+ {
+  "id": "v3-sales-반사실구매 (차단 없음 — 반사실 프레임 리스크 메모만 표시)",
+  "country": "KR",
+  "post_type": "sales",
+  "expect": "PASS",
+  "product": {
+   "is_food": true,
+   "is_certified_health_food": true
+  },
+  "text": "우유만 보면 도망가던 애였습니다. 제가 돌아간다면 이 칼슘부터 챙겨 먹었을 거예요.\n이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n\n칼슘+마그네슘+비타민D 한 알, 건강기능식품 인증.\n👉 [쿠팡 파트너스 링크]",
+  "expect_notes": "some"
+ },
+ {
+  "id": "v4-format-길이초과 (유일한 FAIL: Threads가 게시 거부)",
+  "country": "KR",
+  "post_type": "sales",
+  "expect": "FAIL",
+  "expect_notes": "none",
+  "product": {
+   "is_food": false
+  },
+  "text": "아이 책상 고르다가 알게 된 것들을 전부 적어봅니다. 아이 책상 고르다가 알게 된 것들을 전부 적어봅니다. 아이 책상 고르다가 알게 된 것들을 전부 적어봅니다. 아이 책상 고르다가 알게 된 것들을 전부 적어봅니다. 아이 책상 고르다가 알게 된 것들을 전부 적어봅니다. 아이 책상 고르다가 알게 된 것들을 전부 적어봅니다. 아이 책상 고르다가 알게 된 것들을 전부 적어봅니다. 아이 책상 고르다가 알게 된 것들을 전부 적어봅니다. 아이 책상 고르다가 알게 된 것들을 전부 적어봅니다. 아이 책상 고르다가 알게 된 것들을 전부 적어봅니다. 아이 책상 고르다가 알게 된 것들을 전부 적어봅니다. 아이 책상 고르다가 알게 된 것들을 전부 적어봅니다. 아이 책상 고르다가 알게 된 것들을 전부 적어봅니다. 아이 책상 고르다가 알게 된 것들을 전부 적어봅니다. 아이 책상 고르다가 알게 된 것들을 전부 적어봅니다. 아이 책상 고르다가 알게 된 것들을 전부 적어봅니다. 아이 책상 고르다가 알게 된 것들을 전부 적어봅니다. 아이 책상 고르다가 알게 된 것들을 전부 적어봅니다. 아이 책상 고르다가 알게 된 것들을 전부 적어봅니다. 아이 책상 고르다가 알게 된 것들을 전부 적어봅니다. \n이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n👉 [쿠팡 파트너스 링크]"
+ },
+ {
+  "id": "v5-us-sales-사이트경유 (가이드 링크 — paid link 불요, PASS)",
+  "country": "US",
+  "post_type": "sales",
+  "expect": "PASS",
+  "expect_notes": "none",
+  "product": {
+   "is_food": true,
+   "is_certified_health_food": false
+  },
+  "text": "One tasteless drop vs the daily vitamin battle — I broke down the label so you don't have to. #ad\n① 600 IU vitamin D3 per single tasteless oil drop (label) ② the guide covers drawbacks and free alternatives too — this isn't a hype page.\nOnly relevant if an intake need is already established — check with your pediatrician first.\n👉 Full breakdown & where to buy: https://heightcue.lifoli.co.kr/us/vitamin-d-drops.html"
+ },
+ {
+  "id": "v6-kr-검출-골든타임",
+  "country": "KR",
+  "post_type": "sales",
+  "expect": "PASS",
+  "expect_notes": "some",
+  "product": {
+   "is_food": true,
+   "is_certified_health_food": false
+  },
+  "text": "더 늦기 전에 챙겨야 하는 골든타임이라는 말, 많이 보셨죠.\n이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n이런 문장이 들어간 글은 보류함으로 가야 정상입니다 — 검출기 테스트 픽스처.\n👉 [링크]"
+ },
+ {
+  "id": "v6-kr-검출-원망협박",
+  "country": "KR",
+  "post_type": "sales",
+  "expect": "PASS",
+  "expect_notes": "some",
+  "product": {
+   "is_food": false,
+   "is_certified_health_food": false
+  },
+  "text": "10년 뒤에 아이가 원망하면 어떡하죠?\n이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n죄책감 조성 프레임 검출 테스트 픽스처입니다.\n👉 [링크]"
+ },
+ {
+  "id": "v6-us-검출-fear-window",
+  "country": "US",
+  "post_type": "sales",
+  "expect": "PASS",
+  "expect_notes": "some",
+  "product": {
+   "is_food": true,
+   "is_certified_health_food": false
+  },
+  "text": "Don't wait until it's before it's too late — this golden window closes fast. #ad\nDetector test fixture: this fear-framing must be flagged into the holdbox.\n👉 https://heightcue.lifoli.co.kr/us/test.html"
+ },
+ {
+  "id": "v7-kr-사이트경유-고지없음 (site 암: 제휴링크 없음 → 글 내 고지 불요)",
+  "country": "KR",
+  "post_type": "sales",
+  "text": "20만 원짜리 유명 베개, 라텍스 통은 3만 원대랑 같습니다.\n\n167에서 멈춘 사람이라 애들 수면 환경은 그냥 못 지나칩니다.\n\n리뷰 2천 건에서 \"이걸 왜 이제 샀지\"가 계속 나옵니다.\n\n비추천: 지금 베개에 불만 없는 집. 바꿀 이유 없습니다.\n따져본 거 전부 정리해뒀어요.\nhttps://heightcue.lifoli.co.kr/kr/p/example.html",
+  "product": {
+   "is_food": false,
+   "is_certified_health_food": false
+  },
+  "expect": "PASS",
+  "expect_notes": "none"
+ },
+ {
+  "id": "v7-kr-직링크-고지누락 (쿠팡 링크 있는데 고지 없음 → 메모)",
+  "country": "KR",
+  "post_type": "sales",
+  "text": "20만 원짜리랑 구조가 같은 3만 원대 의자입니다.\n\n비추천: 발이 바닥에 닿는 아이.\n리뷰 4천 건 확인하고 들이세요.\nhttps://link.coupang.com/a/test",
+  "product": {
+   "is_food": false,
+   "is_certified_health_food": false
+  },
+  "expect": "PASS",
+  "expect_notes": "some"
+ },
+ {
+  "id": "v7-kr-검출-무근거권위 (병원 납품 주장)",
+  "country": "KR",
+  "post_type": "sales",
+  "text": "병원에 납품하던 공장이 만든 의자라 다릅니다.\n\n비추천: 이미 좋은 의자 있는 집.\n리뷰 3천 건. 이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\nhttps://link.coupang.com/a/test",
+  "product": {
+   "is_food": false,
+   "is_certified_health_food": false
+  },
+  "expect": "PASS",
+  "expect_notes": "some"
+ },
+ {
+  "id": "v7-kr-검출-효능동치 (똑같은 효과 주장)",
+  "country": "KR",
+  "post_type": "sales",
+  "text": "20만 원짜리랑 똑같은 효과를 3만 원에 봅니다.\n이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n\n비추천: 불만 없는 집.\n리뷰 2천 건.\nhttps://link.coupang.com/a/test",
+  "product": {
+   "is_food": false,
+   "is_certified_health_food": false
+  },
+  "expect": "PASS",
+  "expect_notes": "some"
+ },
+ {
+  "id": "v7-kr-검출-창작긴급성 (품절 임박)",
+  "country": "KR",
+  "post_type": "sales",
+  "text": "품절 임박이라 서두르세요. 리뷰 5천 개짜리입니다.\n이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n\n비추천: 천천히 골라도 되는 집.\nhttps://link.coupang.com/a/test",
+  "product": {
+   "is_food": false,
+   "is_certified_health_food": false
+  },
+  "expect": "PASS",
+  "expect_notes": "some"
+ },
+ {
+  "id": "v7-us-검출-authority (clinics dispense)",
+  "country": "US",
+  "post_type": "sales",
+  "text": "The drop that pediatric clinics dispense over every viral gummy. #ad\n\nI stopped at 5'6, so I read labels like it's personal.\n\nskip if: your kid loves chewables. no reason to switch.\nFull breakdown: https://heightcue.lifoli.co.kr/us/vitamin-d-drops.html",
+  "product": {
+   "is_food": true,
+   "is_certified_health_food": false
+  },
+  "expect": "PASS",
+  "expect_notes": "some"
+ },
+ {
+  "id": "v7-us-검출-urgency (today only)",
+  "country": "US",
+  "post_type": "sales",
+  "text": "Today only: the $12 bottle reviewers keep comparing to $40 gummies. #ad\n\nskip if: no daily vitamin battle at your house.\nFull breakdown: https://heightcue.lifoli.co.kr/us/vitamin-d-drops.html",
+  "product": {
+   "is_food": true,
+   "is_certified_health_food": false
+  },
+  "expect": "PASS",
+  "expect_notes": "some"
+ },
+ {
+  "id": "v8-us-adoff-사이트경유 (#ad 없음 + 사이트 링크만 → 메모)",
+  "country": "US",
+  "post_type": "sales",
+  "text": "Most kids' vitamin gummies are just candy with better PR.\n\nI stopped at 5'6, so I do the label homework other people skip.\n\nOne survived the label check: single-drop D3, zero sugar, zero dyes.\n\nskip if: your kid already takes a plain tablet fine. no reason to switch.\nFull breakdown & where to buy: https://heightcue.lifoli.co.kr/us/vitamin-d-drops.html",
+  "product": {
+   "is_food": true,
+   "is_certified_health_food": false
+  },
+  "expect": "PASS",
+  "expect_notes": "some"
+ },
+ {
+  "id": "v9-kr-format-이모지와번호목록",
+  "country": "KR",
+  "post_type": "sales",
+  "text": "비타민D 4개를 비교하고 하나만 남겼습니다 ☀️\n이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n\n① 건강기능식품 인증 ② 라벨 함량 확인.\n\n비추천: 이미 잘 먹는 제품이 있는 집. 바꿀 이유 없습니다.\n자세한 성분표는 링크에서 확인하세요.\nhttps://link.coupang.com/a/test",
+  "product": {
+   "is_food": true,
+   "is_certified_health_food": true
+  },
+  "expect": "PASS",
+  "expect_notes": "none",
+  "expect_tips": "some"
+ },
+ {
+  "id": "v9-kr-format-텍스트전용평문",
+  "country": "KR",
+  "post_type": "sales",
+  "text": "비타민D 4개를 비교하고 하나만 남겼습니다.\n이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n\n건강기능식품 인증부터 봤습니다. 라벨 함량까지 확인했습니다.\n\n비추천: 이미 잘 먹는 제품이 있는 집. 바꿀 이유 없습니다.\n자세한 성분표는 링크에서 확인하세요.\nhttps://link.coupang.com/a/test",
+  "product": {
+   "is_food": true,
+   "is_certified_health_food": true
+  },
+  "expect": "PASS",
+  "expect_notes": "none",
+  "expect_tips": "none"
+ }
+]
