@@ -24,6 +24,16 @@
   import 하지 않는다.
 * 상품당 첫 프레임 후보 수는 `MAX_FIRST_FRAME_CANDIDATES` 로 상한.
 
+**알려진 미해결 공백 — 상품 충실도는 검증되지 않는다.**
+"상품이 알아볼 수 있게 그대로 남는다"는 요구는 현재 **프롬프트 텍스트로만**
+전달된다(`PRODUCT_FIDELITY_CLAUSE`). 생성 **후** 검증은 존재하지 않는다 —
+perceptual hash 도, 임베딩 유사도도, 사람 게이트도 없다. 모델이 조항을
+무시하고 상품을 변형해도 이 모듈은 통과시킨다. 지금 있는 구조적 보장은
+두 가지뿐이다: (1) 권리 검증을 통과하고 디스크에서 **재해시**된 진짜 공식
+상품 사진이 참조 입력으로 들어간다, (2) 그 sha256 이 프레임 매니페스트에
+기록되므로 위반이 발생하면 최소한 **추적은 된다**. 하류에서 이 모듈이
+충실도를 보장한다고 가정하지 말 것. 이 공백을 닫으려면 별도 작업이 필요하다.
+
 네트워크·유료 호출은 `bridge=` / `preflight_runner=` 주입 시드로만 들어온다
 (`codex_image_bridge` 의 `runner=` 패턴과 동일). 테스트는 절대 실제
 이미지를 생성하지 않는다.
@@ -36,9 +46,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import struct
 import subprocess
 import time
+import zlib
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
@@ -144,6 +156,8 @@ def sha256_file(path: str) -> str:
 
 
 _PNG_SIG = b"\x89PNG\r\n\x1a\n"
+#: 길이 0 + "IEND" + CRC — 정상 PNG 는 정확히 이 12바이트로 끝난다.
+_PNG_IEND = b"\x00\x00\x00\x00IEND\xaeB`\x82"
 
 
 def measure_png(path: str) -> tuple:
@@ -152,21 +166,63 @@ def measure_png(path: str) -> tuple:
     디스패처가 에코한 aspect_ratio 는 우리가 보낸 요청의 메아리일 뿐이라
     아무것도 증명하지 못한다. 여기서는 실제 파일 바이트만 본다.
     자립형으로 유지한다 — 다른 모듈의 파서를 import 하지 않는다.
+
+    이 바이트는 브리지를 통해 **네트워크에서** 온다. 그래서 선언된 크기를
+    그냥 믿지 않는다: IHDR CRC 를 직접 계산해 대조하고, 비어 있지 않은
+    IDAT 가 최소 1개 있어야 하며, 파일이 12바이트 IEND 청크로 끝나야 한다.
+    앞 33바이트만 멀쩡한 잘린 응답이 1024x1536 세로로 통과해 매니페스트에
+    기록되는 일을 막는다.
     """
     try:
         with open(path, "rb") as fh:
-            head = fh.read(33)
+            data = fh.read()
     except OSError as exc:
         raise PortraitError(f"출력 이미지를 읽을 수 없다: {path} ({exc})") from exc
 
-    if not head.startswith(_PNG_SIG):
+    if not data.startswith(_PNG_SIG):
         raise PortraitError(
-            f"출력이 PNG 가 아니다 (선두 바이트 {head[:8]!r}): {path} — "
+            f"출력이 PNG 가 아니다 (선두 바이트 {data[:8]!r}): {path} — "
             "확장자나 디스패처 응답이 아니라 실제 바이트로 판정한다")
-    if len(head) < 24 or head[12:16] != b"IHDR":
+    if len(data) < 33 or data[12:16] != b"IHDR":
         raise PortraitError(f"PNG IHDR 청크를 찾을 수 없다: {path}")
 
-    width, height = struct.unpack(">II", head[16:24])
+    ihdr_len = struct.unpack(">I", data[8:12])[0]
+    if ihdr_len != 13:
+        raise PortraitError(f"IHDR 길이가 13 이 아니다 ({ihdr_len}): {path}")
+    declared_crc = struct.unpack(">I", data[29:33])[0]
+    actual_crc = zlib.crc32(data[12:29]) & 0xFFFFFFFF
+    if declared_crc != actual_crc:
+        raise PortraitError(
+            f"IHDR CRC 불일치 (선언 {declared_crc:#010x} != 실제 "
+            f"{actual_crc:#010x}): {path} — 손상되거나 잘린 응답이다")
+
+    if not data.endswith(_PNG_IEND):
+        raise PortraitError(
+            f"PNG 가 IEND 청크로 끝나지 않는다: {path} — "
+            "잘린 다운로드를 완성된 프레임으로 받아들이지 않는다")
+
+    # 청크를 실제로 걸어 비어 있지 않은 IDAT 가 있는지 확인한다.
+    offset = 8
+    saw_idat = False
+    while offset + 8 <= len(data):
+        length = struct.unpack(">I", data[offset:offset + 4])[0]
+        tag = data[offset + 4:offset + 8]
+        end = offset + 12 + length
+        if end > len(data):
+            raise PortraitError(
+                f"PNG 청크 {tag!r} 가 파일 끝을 넘어간다: {path} — 잘린 응답이다")
+        if tag == b"IDAT" and length > 0:
+            saw_idat = True
+        offset = end
+        if tag == b"IEND":
+            break
+    if offset != len(data):
+        raise PortraitError(f"PNG 청크 구조가 파일 길이와 어긋난다: {path}")
+    if not saw_idat:
+        raise PortraitError(
+            f"PNG 에 비어 있지 않은 IDAT 가 없다: {path} — 픽셀이 없는 껍데기다")
+
+    width, height = struct.unpack(">II", data[16:24])
     return width, height
 
 
@@ -228,6 +284,24 @@ def _run_preflight(runner: Callable, cmd: List[str], label: str) -> str:
     return str(result.get("stdout") or "")
 
 
+#: 인증 상태 줄에서 이 토큰들 중 하나라도 보이면 무조건 미인증으로 본다.
+#: `authorized` 는 `unauthorized` 의 부분문자열이라 substring 검사로는
+#: 탈인증된 provider 가 프리플라이트를 그대로 통과한다 — 토큰으로 본다.
+_AUTH_NEGATIVE_TOKENS = frozenset({
+    "unauthorized", "unauthenticated", "not", "no", "never", "none",
+    "expired", "revoked", "invalid", "missing", "failed", "error",
+})
+_AUTH_POSITIVE_TOKEN = "authorized"
+
+
+def _line_says_authorized(line: str) -> bool:
+    """`hermes auth list` 한 줄이 **명시적 인증 상태**인지 토큰 단위로 본다."""
+    tokens = set(re.findall(r"[a-z]+", str(line or "").lower()))
+    if tokens & _AUTH_NEGATIVE_TOKENS:
+        return False
+    return _AUTH_POSITIVE_TOKEN in tokens
+
+
 def preflight_codex(*, runner: Optional[Callable] = None) -> Dict[str, Any]:
     """`hermes auth list` + `hermes config get image_gen` 로 계약을 확인한다.
 
@@ -247,7 +321,7 @@ def preflight_codex(*, runner: Optional[Callable] = None) -> Dict[str, Any]:
             "다른 provider 로 대체하지 않고 중단한다.")
     provider_line = next(
         (ln for ln in auth.splitlines() if HERMES_PROVIDER in ln.lower()), "")
-    if "authorized" not in provider_line.lower():
+    if not _line_says_authorized(provider_line):
         raise PreflightError(
             f"provider {HERMES_PROVIDER!r} 가 인증 상태가 아니다: "
             f"{provider_line.strip()!r} — 중단한다.")
@@ -264,18 +338,28 @@ def preflight_codex(*, runner: Optional[Callable] = None) -> Dict[str, Any]:
 
     provider = str(cfg.get("provider") or "").strip()
     model = str(cfg.get("model") or "").strip()
-    if not cfg:
-        # JSON 이 아니면 키:값 형태를 보수적으로 훑는다.
+    if not provider or not model:
+        # JSON 이 아니거나 키가 빠졌으면 키:값 형태를 보수적으로 훑는다.
         for line in raw.splitlines():
             if ":" in line:
                 key, _, value = line.partition(":")
                 key = key.strip().strip('"').lower()
                 value = value.strip().strip(',').strip('"')
-                if key == "provider":
+                if key == "provider" and not provider:
                     provider = value
-                elif key == "model":
+                elif key == "model" and not model:
                     model = value
 
+    if not provider:
+        raise PreflightError(
+            "`hermes config get image_gen` 출력에 provider 키가 아예 없다 "
+            f"(원문 {raw.strip()[:200]!r}) — 설정이 비었거나 CLI 출력 형식이 "
+            "바뀐 것이다. 잘못된 provider 문제와는 다르다. 중단한다.")
+    if not model:
+        raise PreflightError(
+            "`hermes config get image_gen` 출력에 model 키가 아예 없다 "
+            f"(원문 {raw.strip()[:200]!r}) — 설정이 비었거나 CLI 출력 형식이 "
+            "바뀐 것이다. 잘못된 모델 문제와는 다르다. 중단한다.")
     if provider != HERMES_PROVIDER:
         raise PreflightError(
             f"image_gen provider 가 {provider!r} 다 — {HERMES_PROVIDER!r} 이어야 "
@@ -407,6 +491,15 @@ def generate_first_frames(storyboard: Any, asset_manifest: Dict[str, Any], *,
                                  market=market)
 
     # 3) 프롬프트를 전부 먼저 만든다 — 하나라도 비면 아무것도 생성하지 않는다.
+    #    컷 인덱스가 겹치면 같은 output_path 를 두 번 쓰게 되고, 뒤 컷이 앞
+    #    컷을 덮어써도 len(frames)==len(cuts) 는 그대로 통과한다 — 실제보다
+    #    한 장 적은 결과를 성공으로 보고하게 되므로 여기서 명시적으로 거부한다.
+    indices = [int(getattr(cut, "index")) for cut in cuts]
+    duplicates = sorted({i for i in indices if indices.count(i) > 1})
+    if duplicates:
+        raise FirstFrameError(
+            f"컷 인덱스가 중복이다: {duplicates} — 같은 출력 경로를 덮어써 "
+            "프레임이 조용히 사라진다. 지출 전에 거부한다")
     prompts = {int(getattr(cut, "index")): build_frame_prompt(cut)
                for cut in cuts}
 
@@ -426,8 +519,10 @@ def generate_first_frames(storyboard: Any, asset_manifest: Dict[str, Any], *,
             output_path = os.path.join(
                 out_dir, f"{product_id}_cut{index:02d}_first_frame.png")
 
-            bridge_manifest = dispatch(prompt, [source["path"]], output_path)
+            # 쓰기 **전에** 기록한다 — 브리지가 다운로드 도중 죽으면(트런케이트,
+            # 디스크 오류, Ctrl-C) 경로가 등록돼 있어야 부분 파일을 지울 수 있다.
             written.append(output_path)
+            bridge_manifest = dispatch(prompt, [source["path"]], output_path)
 
             if not os.path.isfile(output_path) or os.path.getsize(output_path) <= 0:
                 raise FirstFrameError(

@@ -67,16 +67,23 @@ def make_preflight(auth=OK_AUTH, image=OK_IMAGE_CFG, auth_rc=0, image_rc=0):
 class FakeBridge:
     """codex_image_bridge.edit_image 대체. 호출 인자를 전부 기록한다."""
 
-    def __init__(self, width=1024, height=1536, fail=None):
+    def __init__(self, width=1024, height=1536, fail=None, partial_bytes=None):
         self.width = width
         self.height = height
         self.fail = fail
+        #: 쓰다 만 바이트를 남기고 죽는 브리지 (트런케이트 다운로드·디스크 오류).
+        self.partial_bytes = partial_bytes
         self.calls = []
 
     def __call__(self, prompt, source_images, output_path, **kwargs):
         self.calls.append({"prompt": prompt,
                            "source_images": list(source_images),
                            "output_path": output_path})
+        if self.partial_bytes is not None:
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            with open(output_path, "wb") as fh:
+                fh.write(self.partial_bytes)
+            raise self.fail or RuntimeError("bridge died mid-write")
         if self.fail:
             raise self.fail
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -364,20 +371,158 @@ class TestSourceOrigin(Base):
         asset = dict(self.asset_manifest["assets"][0])
         asset["rights_basis"] = "creator_photo"
         manifest["assets"] = [asset]
+        bridge = FakeBridge()
         with self.assertRaises(vg.SourceAssetError):
-            self.run_generate(asset_manifest=manifest)
+            self.run_generate(asset_manifest=manifest, bridge=bridge)
+        self.assertEqual(bridge.calls, [])
 
     def test_empty_asset_manifest_rejected(self):
         manifest = dict(self.asset_manifest)
         manifest["assets"] = []
+        bridge = FakeBridge()
         with self.assertRaises(vg.SourceAssetError):
-            self.run_generate(asset_manifest=manifest)
+            self.run_generate(asset_manifest=manifest, bridge=bridge)
+        self.assertEqual(bridge.calls, [])
 
     def test_product_id_mismatch_rejected(self):
         manifest = dict(self.asset_manifest)
         manifest["product_id"] = "other-product"
+        bridge = FakeBridge()
         with self.assertRaises(vg.SourceAssetError):
-            self.run_generate(asset_manifest=manifest)
+            self.run_generate(asset_manifest=manifest, bridge=bridge)
+        self.assertEqual(bridge.calls, [])
+
+
+# ---------------------------------------------------------------------------
+# 프리플라이트 — 인증 문자열 토큰 판정 / 부분 기록 정리 / PNG 무결성
+# ---------------------------------------------------------------------------
+
+
+class _Cut:
+    """계약 검증을 우회해 거부 경로만 겨누는 최소 컷 스텁."""
+
+    def __init__(self, index, first_frame_prompt="세로 프레임"):
+        self.index = index
+        self.first_frame_prompt = first_frame_prompt
+        self.motion_prompt = "손이 올라간다"
+
+
+class _Storyboard:
+    def __init__(self, cuts):
+        self.storyboard_id = "sb-001"
+        self.run_id = "run-001"
+        self.product_id = "prod-kr-1"
+        self.market = "KR"
+        self.cuts = cuts
+
+
+class TestAuthStatusToken(Base):
+    """`authorized` 는 `unauthorized` 의 부분문자열이다 — 토큰으로 봐야 한다."""
+
+    def test_unauthorized_provider_stops_job_without_calling_bridge(self):
+        bridge = FakeBridge()
+        with self.assertRaises(vg.PreflightError) as ctx:
+            self.run_generate(bridge=bridge, preflight_runner=make_preflight(
+                auth="provider     status\nopenai-codex  unauthorized\n"))
+        self.assertIn("openai-codex", str(ctx.exception))
+        self.assertEqual(bridge.calls, [])
+
+    def test_not_authorized_provider_stops_job_without_calling_bridge(self):
+        bridge = FakeBridge()
+        with self.assertRaises(vg.PreflightError):
+            self.run_generate(bridge=bridge, preflight_runner=make_preflight(
+                auth="provider     status\nopenai-codex  not authorized\n"))
+        self.assertEqual(bridge.calls, [])
+
+    def test_expired_was_authorized_stops_job(self):
+        bridge = FakeBridge()
+        with self.assertRaises(vg.PreflightError):
+            self.run_generate(bridge=bridge, preflight_runner=make_preflight(
+                auth="openai-codex  expired (was authorized)\n"))
+        self.assertEqual(bridge.calls, [])
+
+    def test_config_without_provider_key_says_so(self):
+        """JSON 은 파싱되지만 provider 키가 없는 경우 — 오류 문구가 구분돼야 한다."""
+        with self.assertRaises(vg.PreflightError) as ctx:
+            self.run_generate(preflight_runner=make_preflight(
+                image='{"model": "gpt-image-2-medium"}'))
+        self.assertIn("provider", str(ctx.exception))
+        self.assertIn("없다", str(ctx.exception))
+
+
+class TestPartialWriteCleanup(Base):
+    def test_bridge_raising_mid_write_leaves_no_file(self):
+        bridge = FakeBridge(partial_bytes=make_png(1024, 1536)[:40])
+        with self.assertRaises(RuntimeError):
+            self.run_generate(bridge=bridge)
+        frames_dir = os.path.join(self.projects_root, "heightcue_run-001",
+                                  "assets", "frames")
+        leftovers = (os.listdir(frames_dir) if os.path.isdir(frames_dir) else [])
+        self.assertEqual(leftovers, [], f"부분 산출물이 남았다: {leftovers}")
+
+    def test_bridge_raising_before_write_leaves_no_file(self):
+        bridge = FakeBridge(fail=RuntimeError("bridge exploded"))
+        with self.assertRaises(RuntimeError):
+            self.run_generate(bridge=bridge)
+        frames_dir = os.path.join(self.projects_root, "heightcue_run-001",
+                                  "assets", "frames")
+        leftovers = (os.listdir(frames_dir) if os.path.isdir(frames_dir) else [])
+        self.assertEqual(leftovers, [])
+
+
+class TestPngIntegrity(Base):
+    def _write(self, data):
+        path = os.path.join(self.tmp, "probe.png")
+        with open(path, "wb") as fh:
+            fh.write(data)
+        return path
+
+    def test_truncated_png_with_intact_header_is_rejected(self):
+        """앞 33바이트만 멀쩡한 잘린 응답을 1024x1536 으로 받아들이면 안 된다."""
+        path = self._write(make_png(1024, 1536)[:33])
+        with self.assertRaises(vg.PortraitError):
+            vg.measure_png(path)
+
+    def test_corrupt_ihdr_crc_is_rejected(self):
+        good = make_png(1024, 1536)
+        bad = good[:29] + bytes([good[29] ^ 0xFF]) + good[30:]
+        with self.assertRaises(vg.PortraitError):
+            vg.measure_png(self._write(bad))
+
+    def test_missing_iend_is_rejected(self):
+        good = make_png(1024, 1536)
+        with self.assertRaises(vg.PortraitError):
+            vg.measure_png(self._write(good[:-12]))
+
+    def test_missing_idat_is_rejected(self):
+        def chunk(tag, data):
+            return (struct.pack(">I", len(data)) + tag + data
+                    + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
+        sig = b"\x89PNG\r\n\x1a\x0a"[:8]
+        ihdr = chunk(b"IHDR", struct.pack(">IIBBBBB", 1024, 1536, 8, 2, 0, 0, 0))
+        with self.assertRaises(vg.PortraitError):
+            vg.measure_png(self._write(sig + ihdr + chunk(b"IEND", b"")))
+
+    def test_valid_png_still_measures(self):
+        self.assertEqual(vg.measure_png(self._write(make_png(1024, 1536))),
+                         (1024, 1536))
+
+
+class TestPromptAndIndexRefusals(Base):
+    def test_empty_first_frame_prompt_rejected_without_calling_bridge(self):
+        bridge = FakeBridge()
+        sb = _Storyboard([_Cut(1), _Cut(2, first_frame_prompt="   ")])
+        with self.assertRaises(vg.FirstFrameError):
+            self.run_generate(storyboard=sb, bridge=bridge)
+        self.assertEqual(bridge.calls, [])
+
+    def test_duplicate_cut_indices_rejected_without_calling_bridge(self):
+        bridge = FakeBridge()
+        sb = _Storyboard([_Cut(1), _Cut(1)])
+        with self.assertRaises(vg.FirstFrameError) as ctx:
+            self.run_generate(storyboard=sb, bridge=bridge)
+        self.assertIn("중복", str(ctx.exception))
+        self.assertEqual(bridge.calls, [])
 
 
 # ---------------------------------------------------------------------------
