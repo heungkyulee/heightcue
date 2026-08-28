@@ -17,6 +17,7 @@ import struct
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -685,6 +686,75 @@ class TestApplyQAWriteOrdering(QABase):
         vq.apply_qa_result(job, report)
         self.assertIs(seen.get("qa_report"), report,
                       "전이 시점에 잡이 자기 불변식을 위반한다 (리포트 미부착)")
+
+
+class TestOpenMontageInterpreter(unittest.TestCase):
+    """OpenMontage 툴은 **OpenMontage 자기 인터프리터**로 돌아야 한다.
+
+    호출자(heightcue) venv 에는 faster-whisper 가 없다 — sys.executable 로
+    돌리면 전사기가 설치돼 있는데도 항상 CheckUnavailable 이 난다.
+    """
+
+    def _fake_root(self, with_venv=True):
+        root = tempfile.mkdtemp()
+        if with_venv:
+            os.makedirs(os.path.join(root, ".venv", "bin"), exist_ok=True)
+            p = os.path.join(root, ".venv", "bin", "python")
+            with open(p, "w") as fh:
+                fh.write("#!/bin/sh\n")
+            os.chmod(p, 0o755)
+        return root
+
+    def test_subprocess_uses_openmontage_venv_python_not_sys_executable(self):
+        root = self._fake_root()
+        expected = os.path.join(root, ".venv", "bin", "python")
+        captured = {}
+
+        class Proc:
+            returncode = 0
+            stdout = '{"success": true, "data": {"ok": 1}, "error": null}'
+            stderr = ""
+
+        def fake_run(argv, **kw):
+            captured["argv"] = argv
+            captured["kw"] = kw
+            return Proc()
+
+        with mock.patch.object(vq.subprocess, "run", fake_run):
+            data = vq._openmontage_call("transcriber", "Transcriber",
+                                        {"input_path": "x.mp4"}, root=root)
+        self.assertEqual(data, {"ok": 1})
+        self.assertEqual(captured["argv"][0], expected,
+                         f"OpenMontage 인터프리터가 아니라 {captured['argv'][0]} 로 돌았다")
+        self.assertNotEqual(captured["argv"][0], sys.executable)
+        self.assertEqual(captured["kw"].get("cwd"), root)
+        self.assertEqual(captured["kw"].get("timeout"), vq.DEFAULT_SEAM_TIMEOUT)
+
+    def test_missing_venv_python_fails_closed_naming_the_path(self):
+        root = self._fake_root(with_venv=False)
+        missing = os.path.join(root, ".venv", "bin", "python")
+        with mock.patch.object(vq.subprocess, "run",
+                               mock.Mock(side_effect=AssertionError("서브프로세스를 띄우면 안 된다"))):
+            with self.assertRaises(vq.CheckUnavailable) as ctx:
+                vq._openmontage_call("transcriber", "Transcriber", {}, root=root)
+        self.assertIn(missing, str(ctx.exception))
+
+    def test_transcriber_passes_an_explicit_model_size(self):
+        """모델 크기는 **명시**돼야 한다 — 조용한 기본값 상속 금지.
+
+        값 자체(base)는 실측으로 고른 것이다: small/medium 은 한국어
+        고유명사를 오히려 더 뭉갰다. video_qa.TRANSCRIBER_MODEL_SIZE 주석 참조.
+        """
+        seen = {}
+
+        def fake_call(module, cls, inputs, **kw):
+            seen.update(inputs)
+            return {"segments": [{"text": "안녕"}], "language": "ko"}
+
+        with mock.patch.object(vq, "_openmontage_call", fake_call):
+            vq.default_transcriber("x.mp4")
+        self.assertEqual(seen.get("model_size"), vq.TRANSCRIBER_MODEL_SIZE)
+        self.assertTrue(vq.TRANSCRIBER_MODEL_SIZE)
 
 
 if __name__ == "__main__":

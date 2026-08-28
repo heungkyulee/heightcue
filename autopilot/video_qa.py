@@ -138,6 +138,47 @@ DEFAULT_OPENMONTAGE_ROOT = os.environ.get(
 
 DEFAULT_SEAM_TIMEOUT = 300
 
+#: 전사 모델 크기 — **명시적으로 넘긴다.** 안 넘기면 OpenMontage 기본값이
+#: 조용히 걸려서, 정확도가 QA 판정에 직결되는데도 이 레포에는 기록이 남지 않는다.
+#:
+#: 값을 `small` 로 올리려다 실측으로 뒤집었다. 이 맥에서 `say -v Yuna` 로
+#: 만든 한국어 실음성 2건을 base/small/medium 으로 각각 전사한 결과:
+#:
+#:   원문 "하이트큐 성장 마인드셋 / 아이 키는 유전이 전부가 아닙니다"
+#:     base   → "하이트큐 성장 마인드색, 아이키는 …"      (브랜드명 정확)
+#:     small  → "하이트키오 성장 마인드색, 아이키는 …"    (브랜드명 붕괴)
+#:   원문 "안녕하세요 … 아이 키 때문에 …"
+#:     base   → "안녕하세요? 아이키 때문에 …"              (정확)
+#:     small  → "안녕하세여, IP 때문에 …"                  ("아이 키" → "IP")
+#:     medium → "안녕하세 요 아이케 때문에 …" (67초, base 2.9초의 약 23배)
+#:
+#: 즉 **모델을 키운다고 고유명사 오탐이 줄지 않는다.** 큰 모델은 낯선 한국어
+#: 고유명사를 더 그럴듯한 흔한 단어로 '교정'해버린다. 지연만 최대 23배 늘고
+#: 문제는 남는다. 그래서 base 를 유지한다 — 다만 이제 명시적 선택이다.
+#:
+#: **미해결로 남기는 것:** 전사 잡음이 승인 카피 대조에 오탐(멀쩡한 유료
+#: 영상 반려)을 낼 위험은 여전하다. MAX_UNAPPROVED_CHARS 를 푸는 것은
+#: 드리프트 감지력을 직접 깎으므로 하지 않는다(3음절 = 한국어 한 단어).
+#: 실제 생성 영상의 TTS 음성으로 오탐률을 재기 전에는 어느 쪽이 옳은지
+#: 결정할 데이터가 없다. 첫 유료 실행의 전사 로그를 보고 다시 판단한다.
+TRANSCRIBER_MODEL_SIZE = os.environ.get("OPENMONTAGE_MODEL_SIZE", "base")
+
+
+def _openmontage_python(root: str) -> str:
+    """OpenMontage 자기 venv 의 인터프리터 경로 — 없으면 fail closed.
+
+    호출자(heightcue) venv 는 의도적으로 `requests` 뿐이다. 무거운 ML
+    의존성은 OpenMontage 쪽에만 산다. 그래서 sys.executable 로 폴백하면
+    설치돼 있는 전사기가 영원히 '없다'고 나온다 — 조용한 폴백 금지.
+    """
+    exe = os.path.join(root, ".venv", "bin", "python")
+    if not os.path.isfile(exe):
+        raise CheckUnavailable(
+            f"OpenMontage 인터프리터가 없다: {exe} — 이 파이썬으로만 전사/프레임 "
+            "툴이 돈다 (호출자 venv 로 대신 돌리지 않는다: 조용한 폴백은 "
+            "거짓 초록을 만든다). fail closed 로 처리한다")
+    return exe
+
 
 class QAError(Exception):
     """QA 게이트 내부 오류 — 검사 실패는 예외가 아니라 리포트로 표현한다."""
@@ -305,6 +346,7 @@ def _openmontage_call(tool_module: str, tool_class: str,
         raise CheckUnavailable(
             f"OpenMontage 를 찾을 수 없다: {root} — 프레임/전사 검사를 "
             "돌릴 수 없으므로 실패로 처리한다 (fail closed)")
+    exe = _openmontage_python(root)
     script = (
         "import json, sys\n"
         f"sys.path.insert(0, {root!r})\n"
@@ -317,7 +359,7 @@ def _openmontage_call(tool_module: str, tool_class: str,
     )
     try:
         proc = subprocess.run(
-            [sys.executable, "-c", script], input=json.dumps(inputs),
+            [exe, "-c", script], input=json.dumps(inputs),
             capture_output=True, text=True, timeout=DEFAULT_SEAM_TIMEOUT,
             cwd=root)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -354,9 +396,14 @@ def default_frame_sampler(video_path: str, timestamps: Sequence[float],
 
 
 def default_transcriber(video_path: str) -> Dict[str, Any]:
-    """OpenMontage transcriber 로 오디오를 전사한다."""
+    """OpenMontage transcriber 로 오디오를 전사한다.
+
+    ``model_size`` 를 명시한다 — 안 넘기면 OpenMontage 기본값 ``base`` 가
+    걸리고, base 는 한국어 고유명사를 뭉개 승인 카피 대조에 오탐을 만든다.
+    """
     data = _openmontage_call("transcriber", "Transcriber",
-                             {"input_path": video_path})
+                             {"input_path": video_path,
+                              "model_size": TRANSCRIBER_MODEL_SIZE})
     segments = data.get("segments") or []
     text = " ".join(str(s.get("text", "")) for s in segments
                     if isinstance(s, dict)).strip()
