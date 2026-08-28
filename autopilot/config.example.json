@@ -1,0 +1,50 @@
+{
+  "_안내": "이 파일을 config.json으로 복사한 뒤 값을 채우세요. config.json은 절대 공개 저장소에 올리지 마세요.",
+  "mode": {
+    "dry_run": true,
+    "publish": false,
+    "us_value_posts": true,
+    "us_sales_posts": true,
+    "auto_publish_clean": true,
+    "hold_flagged": true,
+    "_안내": "dry_run=true: 오프라인 모의(LLM 호출 없음). dry_run=false + publish=false: 리허설 — 실제 생성·검사하되 발행은 state/preview.jsonl 기록만. publish=true: 실발행. us_value_posts: US 계정 링크 없는 영어 스토리·가치글 1건/일. us_sales_posts: US 판매글 — 사이트 가이드 페이지 경유(state/us_products.json 레지스트리 로테이션, 소재 없으면 자동 건너뜀)."
+  },
+  "cadence": {
+    "sales_per_day": 1,
+    "value_per_day": 2,
+    "max_replies_per_run": 20
+  },
+  "openrouter": {
+    "api_key": "여기에_OPENROUTER_API_KEY",
+    "model": "google/gemini-3.1-pro-preview",
+    "_안내": "SSOT 원칙: 모델은 Gemini 계열만 (OpenRouter 경유). 운영자 지정: 3.1 Pro 고정 — OpenRouter 슬러그는 google/gemini-3.1-pro-preview (2026-08-26 모델 목록에서 실존 확인). validate.py가 슬러그 실존을 실호출로 재확인."
+  },
+  "threads": {
+    "kr_user_id": "",
+    "kr_access_token": "",
+    "us_user_id": "",
+    "us_access_token": "",
+    "_안내": "Meta 개발자 앱에서 본인 계정을 Threads Tester로 등록하고 장기 토큰 발급. US는 아마존 앵커 준비 후."
+  },
+  "coupang": {
+    "access_key": "",
+    "secret_key": "",
+    "sub_id_prefix": "hc",
+    "_안내": "쿠팡 파트너스 최종 승인 후 API 키 발급. 그 전에는 state/manual_products.json 수동 소싱 모드로 동작."
+  },
+  "amazon": {
+    "tracking_id": "",
+    "_안내": "Amazon Associates 트래킹 ID (예: heightcue-20). US 트랙 개시 시 사용."
+  },
+  "video_storyboard": {
+    "default_complexity": "standard",
+    "voice_line_max_chars": 120,
+    "metrics_path": "state/metrics.jsonl",
+    "_안내": "I2V 마이크로 스토리보드(Task 8). default_complexity: simple=5초/1컷, standard=10초/2컷, complex=15초/3컷 — 총 길이는 5·10·15초만 존재하며 컷당 5초는 video_contracts 고정 상수라 여기서 못 바꾼다. metrics_path: 기준선 비교 수치를 계산하는 실측 지표 파일 — 값을 손으로 적어 넣는 것은 금지(2026-08-27 플레이스홀더 사고). 근거·고지 규칙은 코드 하드코딩이라 설정으로 완화할 수 없다."
+  },
+  "paths": {
+    "skills": "../heightcue-gemini-skills.md",
+    "story_bank": "../story-bank.md",
+    "state_dir": "state"
+  }
+}
