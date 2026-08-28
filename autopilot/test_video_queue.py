@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -654,6 +655,170 @@ class TestLock(LedgerTestCase):
             fh.write("{not json at all")
         self.ledger.enqueue(make_job())
         self.assertEqual(len(self.ledger.list_jobs()), 1)
+
+    def test_dead_pid_lock_is_broken_by_exactly_one_racer(self):
+        """죽은 보유자의 락을 N개 스레드가 동시에 깨도 진입은 정확히 1명.
+
+        기존 경합 테스트는 보유자가 *살아 있는* pid 라 아무도 stale 분기에
+        들어가지 않아 이 구간을 구조적으로 못 건드린다. 여기서는 죽은 pid 락을
+        미리 깔아 모두가 stale 분기로 진입하게 만든다. unlink 가 신원 확인 없이
+        '지금 거기 있는 것'을 지우면, 방금 락을 딴 다른 스레드의 *살아 있는*
+        락까지 지워 다중 소유가 생긴다.
+
+        TOCTOU 창(내용 판독 → unlink)은 자연 상태에서 수 마이크로초라 우연히는
+        거의 안 잡힌다. `_pid_alive`(판독 *뒤*, unlink *앞*에 호출된다)에 지연을
+        넣어 스케줄러가 실제로 낼 수 있는 인터리빙을 결정적으로 재현한다.
+        신원 확인(파기 직전 재-stat)은 이 지연 이후에 일어나므로 수정본은
+        이 지연이 있어도 통과한다.
+        """
+        with open(self.ledger.lock_path, "w", encoding="utf-8") as fh:
+            json.dump({"pid": 999999999, "host": socket.gethostname(),
+                       "acquired_at": time.time()}, fh)
+
+        real_pid_alive = vq._pid_alive
+
+        def slow_pid_alive(pid):
+            time.sleep(0.05)          # 판독과 파기 사이를 벌린다
+            return real_pid_alive(pid)
+
+        n = 16
+        barrier = threading.Barrier(n)
+        inside = []
+        errors = []
+        guard = threading.Lock()
+        overlap = []
+
+        def run(i):
+            led = vq.VideoLedger(self.tmp, lock_timeout=5.0)
+            try:
+                barrier.wait(timeout=10)
+                with led._locked():
+                    with guard:
+                        inside.append(i)
+                        overlap.append(len(inside))
+                    time.sleep(0.02)
+                    with guard:
+                        inside.remove(i)
+            except Exception as exc:      # noqa: BLE001 - 테스트 진단용
+                errors.append(repr(exc))
+
+        vq._pid_alive = slow_pid_alive
+        try:
+            threads = [threading.Thread(target=run, args=(i,)) for i in range(n)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=30)
+        finally:
+            vq._pid_alive = real_pid_alive
+
+        self.assertEqual(errors, [], f"경합 중 예외: {errors}")
+        self.assertEqual(max(overlap), 1,
+                         f"락 안에 동시에 {max(overlap)}명이 들어갔다 — "
+                         "stale 락 파기가 신원 확인 없이 살아 있는 락을 지웠다")
+
+    def test_unbreakable_stale_lock_times_out_instead_of_spinning(self):
+        """깰 수 없는 stale 락은 무한 루프가 아니라 LockTimeout 이어야 한다."""
+        led = vq.VideoLedger(self.tmp, lock_timeout=0.3)
+        with open(led.lock_path, "w", encoding="utf-8") as fh:
+            json.dump({"pid": 999999999, "host": "ghost",
+                       "acquired_at": time.time() - 3600}, fh)
+
+        real_unlink = os.unlink
+
+        def refuse(path, *a, **kw):
+            if path == led.lock_path:
+                raise PermissionError("read-only")
+            return real_unlink(path, *a, **kw)
+
+        result = {}
+
+        def run():
+            try:
+                led.enqueue(make_job())
+                result["ok"] = True
+            except Exception as exc:      # noqa: BLE001
+                result["exc"] = exc
+
+        os.unlink = refuse
+        try:
+            t = threading.Thread(target=run, daemon=True)
+            started = time.time()
+            t.start()
+            t.join(timeout=5)
+            self.assertFalse(t.is_alive(),
+                             "깰 수 없는 stale 락에서 무한 루프에 빠졌다")
+        finally:
+            os.unlink = real_unlink
+        self.assertIsInstance(result.get("exc"), vq.LockTimeout,
+                              f"LockTimeout 이어야 한다: {result}")
+        self.assertLess(time.time() - started, 5)
+        real_unlink(led.lock_path)
+
+
+# ---------------------------------------------------------------------------
+# 원장 파일 손상 처리
+# ---------------------------------------------------------------------------
+
+
+class TestCorruptLedger(LedgerTestCase):
+
+    def test_corrupt_ledger_is_not_silently_reset(self):
+        """찢어진 ledger.json 을 빈 원장으로 조용히 갈아엎으면 안 된다."""
+        self.ledger.enqueue(make_job())
+        with open(self.ledger.ledger_path, "w", encoding="utf-8") as fh:
+            fh.write('{"jobs": [{"job_id": "job-1"')   # 잘린 파일
+        with self.assertRaises(vq.LedgerCorrupt):
+            self.ledger.list_jobs()
+
+    def test_corrupt_ledger_is_preserved_aside(self):
+        self.ledger.enqueue(make_job())
+        with open(self.ledger.ledger_path, "w", encoding="utf-8") as fh:
+            fh.write("{ truncated")
+        with self.assertRaises(vq.LedgerCorrupt):
+            self.ledger.list_jobs()
+        aside = [f for f in os.listdir(self.tmp) if ".corrupt." in f]
+        self.assertTrue(aside, "손상 원장은 옆으로 보존돼야 한다")
+        with open(os.path.join(self.tmp, aside[0]), encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), "{ truncated")
+
+    def test_missing_ledger_still_starts_empty(self):
+        self.assertEqual(self.ledger.list_jobs(), [])
+
+
+# ---------------------------------------------------------------------------
+# publishing 회수 기록
+# ---------------------------------------------------------------------------
+
+
+class TestPublishingRecoveryIsRecorded(LedgerTestCase):
+
+    def test_recovered_publishing_job_is_flagged_in_ledger(self):
+        self.ledger.enqueue(make_job())
+        self.drive_to_ready(self.ledger, "job-1")
+        self.ledger.claim(worker_id="pub-1", states=(vc.STATE_READY_TO_PUBLISH,),
+                          lease_seconds=0.05)
+        time.sleep(0.1)
+        self.assertEqual(self.ledger.recover_stale(), ["job-1"])
+        entry = self.ledger.get("job-1")
+        self.assertEqual(entry["state"], vc.STATE_QUEUED)
+        self.assertEqual(entry.get("recovered_from"), vc.STATE_PUBLISHING,
+                         "발행 중 죽었다는 사실이 원장에 남아야 한다")
+        self.assertIsInstance(entry.get("publish_attempted_at"), (int, float))
+        self.assertIn("publishing", _summary_of(entry))
+
+    def test_generating_recovery_does_not_set_publish_flag(self):
+        self.ledger.enqueue(make_job())
+        self.ledger.claim(worker_id="w-1", lease_seconds=0.05)
+        time.sleep(0.1)
+        self.ledger.recover_stale()
+        entry = self.ledger.get("job-1")
+        self.assertIsNone(entry.get("recovered_from"))
+        self.assertIsNone(entry.get("publish_attempted_at"))
+
+
+def _summary_of(entry):
+    return vq._summary_line(entry)
 
 
 # ---------------------------------------------------------------------------

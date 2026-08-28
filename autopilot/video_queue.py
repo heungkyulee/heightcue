@@ -32,7 +32,7 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import video_contracts as vc
 from video_contracts import (STATE_DEAD_LETTER, STATE_GENERATING, STATE_PUBLISHED,
@@ -94,6 +94,14 @@ class LeaseError(QueueError):
 
 class LockTimeout(QueueError):
     """제한 시간 안에 원장 락을 얻지 못했다."""
+
+
+class LedgerCorrupt(QueueError):
+    """ledger.json 이 존재하지만 해석할 수 없다.
+
+    '아직 없음'과 '찢어짐'을 뭉뚱그려 빈 원장으로 시작하면, 다음 쓰기가 큐
+    전체를 조용히 지운다. 손상 파일은 옆으로 보존하고 반드시 소리를 낸다.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -192,24 +200,51 @@ class VideoLedger:
 
     # -- 락 -----------------------------------------------------------------
 
-    def _lock_is_stale(self) -> bool:
-        """락 파일이 죽은 보유자/깨진 내용/너무 오래된 것이면 True."""
+    def _lock_is_stale(self) -> Tuple[bool, Optional[int]]:
+        """락 파일이 죽은 보유자/깨진 내용/너무 오래된 것이면 (True, inode).
+
+        inode 를 함께 돌려주는 이유: 판독과 파기 사이에 락이 교체될 수 있다.
+        파기 직전에 재-stat 해서 같은 inode 인지 확인해야 *살아 있는* 락을
+        지우지 않는다(그러지 않으면 다중 소유 버그가 회수 경로에서 부활한다).
+        """
+        try:
+            ino = os.stat(self.lock_path).st_ino
+        except FileNotFoundError:
+            return False, None
+        except OSError:
+            return False, None
         try:
             with open(self.lock_path, encoding="utf-8") as fh:
                 info = json.load(fh)
         except FileNotFoundError:
-            return False
+            return False, None
         except (ValueError, OSError):
-            return True   # 깨진 락은 붙잡고 있어봐야 영원히 안 풀린다
+            return True, ino   # 깨진 락은 붙잡고 있어봐야 영원히 안 풀린다
         if not isinstance(info, dict):
-            return True
+            return True, ino
         acquired = info.get("acquired_at")
         if isinstance(acquired, (int, float)) and \
                 time.time() - acquired > self.lock_stale_seconds:
-            return True
+            return True, ino
         if info.get("host") == socket.gethostname():
-            return not _pid_alive(info.get("pid"))
-        return False      # 다른 호스트는 판단 불가 — 시간 기준으로만 깬다
+            return (not _pid_alive(info.get("pid"))), ino
+        return False, ino   # 다른 호스트는 판단 불가 — 시간 기준으로만 깬다
+
+    def _break_stale_lock(self, ino: Optional[int]) -> None:
+        """판독 시점과 **같은 inode 일 때만** 락을 파기한다.
+
+        무조건 unlink 하면 그 사이에 락을 정상 획득한 다른 워커의 살아 있는
+        락을 지워버린다. 그 결과 둘 이상이 원장을 동시에 소유하게 된다.
+        """
+        if ino is None:
+            return
+        try:
+            if os.stat(self.lock_path).st_ino != ino:
+                return                      # 이미 교체됐다 — 남의 락이다
+            os.unlink(self.lock_path)
+        except OSError:
+            pass
+
 
     def _try_acquire(self) -> bool:
         """락 파일을 *내용까지 완성한 채* 원자적으로 만든다.
@@ -244,20 +279,23 @@ class VideoLedger:
         deadline = time.time() + self.lock_timeout
         acquired = False
         while True:
+            # 데드라인 검사는 루프 **맨 위**에 있어야 한다. stale 분기가 아래에서
+            # continue 하면 깰 수 없는 락(읽기전용 디렉터리·EPERM)에서 무한 루프에
+            # 빠져 크론 잡이 코어를 태운다.
+            if time.time() >= deadline:
+                if self._try_acquire():
+                    acquired = True
+                    break
+                raise LockTimeout(
+                    f"원장 락 획득 실패({self.lock_timeout}s): {self.lock_path}")
             if self._try_acquire():
                 acquired = True
                 break
-            else:
-                if self._lock_is_stale():
-                    try:
-                        os.unlink(self.lock_path)   # 죽은 보유자의 락을 깬다
-                    except OSError:
-                        pass
-                    continue
-                if time.time() >= deadline:
-                    raise LockTimeout(
-                        f"원장 락 획득 실패({self.lock_timeout}s): {self.lock_path}")
-                time.sleep(0.01)
+            stale, ino = self._lock_is_stale()
+            if stale:
+                self._break_stale_lock(ino)
+                continue
+            time.sleep(0.01)
         try:
             yield
         finally:
@@ -272,11 +310,34 @@ class VideoLedger:
     def _read(self) -> Dict[str, Any]:
         try:
             with open(self.ledger_path, encoding="utf-8") as fh:
-                data = json.load(fh)
-        except (FileNotFoundError, ValueError):
-            data = {}
-        if not isinstance(data, dict):
-            data = {}
+                raw = fh.read()
+        except FileNotFoundError:
+            raw = None
+        if raw is None:
+            data: Any = {}                 # 아직 원장이 없다 — 정상적인 빈 시작
+        elif not raw.strip():
+            data = {}                      # 빈 파일도 빈 원장으로 본다
+        else:
+            try:
+                data = json.loads(raw)
+            except ValueError as exc:
+                aside = f"{self.ledger_path}.corrupt.{int(time.time() * 1000)}"
+                try:
+                    os.replace(self.ledger_path, aside)
+                except OSError:
+                    aside = "(보존 실패)"
+                raise LedgerCorrupt(
+                    f"원장을 해석할 수 없다: {self.ledger_path} — {exc}. "
+                    f"원본을 {aside} 로 보존했다. 사람이 확인해야 한다") from exc
+            if not isinstance(data, dict):
+                aside = f"{self.ledger_path}.corrupt.{int(time.time() * 1000)}"
+                try:
+                    os.replace(self.ledger_path, aside)
+                except OSError:
+                    aside = "(보존 실패)"
+                raise LedgerCorrupt(
+                    f"원장 최상위가 객체가 아니다: {self.ledger_path} "
+                    f"({type(data).__name__}). 원본을 {aside} 로 보존했다")
         data.setdefault("version", 1)
         data.setdefault("jobs", [])
         data.setdefault("index", {})
@@ -341,6 +402,14 @@ class VideoLedger:
             lease = entry.get("lease") or {}
             entry["lease"] = None
             entry["last_error"] = (f"리스 만료 — 워커 {lease.get('worker_id')!r} 응답 없음")
+            was = entry["state"]
+            if was == STATE_PUBLISHING:
+                # 발행 API 호출이 이미 성공했을 수 있다. 그 사실이 events.jsonl
+                # 에만 남으면 발행 워커가 이벤트 로그를 파싱해야 알 수 있다.
+                # status/show 에서 바로 보이도록 원장 자체에 못을 박는다.
+                entry["recovered_from"] = STATE_PUBLISHING
+                entry["publish_attempted_at"] = float(
+                    lease.get("acquired_at") or entry.get("updated_at") or now)
             # 계약의 전이표를 따른다: 소유 중 -> retryable_failed -> queued|dead_letter
             self._set_state(entry, STATE_RETRYABLE_FAILED, reason="lease_expired",
                             worker_id=lease.get("worker_id"))
@@ -602,9 +671,12 @@ class VideoLedger:
 def _summary_line(entry: Dict[str, Any]) -> str:
     lease = entry.get("lease") or {}
     holder = lease.get("worker_id", "-")
-    return (f"{entry['job_id']:<20} {entry['state']:<18} "
+    line = (f"{entry['job_id']:<20} {entry['state']:<18} "
             f"attempts={entry.get('attempts', 0)} worker={holder} "
             f"market={entry.get('market', '-')} product={entry.get('product_id', '-')}")
+    if entry.get("recovered_from"):
+        line += f" recovered_from={entry['recovered_from']}"
+    return line
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -690,10 +762,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(_summary_line(entry))
             return 0
 
-        if args.cmd == "requeue":
-            entry = ledger.requeue(args.job_id)
-            print(_summary_line(entry))
-            return 0
+        # requeue — 하위 파서가 required=True 라 남은 경우는 이것뿐이다.
+        entry = ledger.requeue(args.job_id)
+        print(_summary_line(entry))
+        return 0
 
     except KeyError as exc:
         print(f"없는 잡: {exc}", file=sys.stderr)
@@ -701,9 +773,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     except ContractError as exc:
         print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
         return 3
-
-    parser.error(f"알 수 없는 명령: {args.cmd}")
-    return 2
 
 
 if __name__ == "__main__":
