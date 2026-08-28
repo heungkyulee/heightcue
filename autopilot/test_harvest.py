@@ -26,23 +26,35 @@ def check(name, cond):
 
 def main():
     print("[1] 출력 파서 — Aside는 잡음을 섞어 보낸다")
+    # 최소 증거 레코드 — claim + counter_claim이 증거의 필수 축이다.
+    EV = '{"topic":"sleep","claim":"x","counter_claim":"y"}'
     cases = [
-        ("순수 배열", '[{"a":1}]', 1),
-        ("코드펜스", '```json\n[{"a":1}]\n```', 1),
-        ("앞뒤 잡담", 'Here you go:\n[{"a":1}]\nDone!', 1),
+        ("순수 배열", f'[{EV}]', 1),
+        ("코드펜스", f'```json\n[{EV}]\n```', 1),
+        ("앞뒤 잡담", f'Here you go:\n[{EV}]\nDone!', 1),
         # 2026-08-28 실제 1회차 실패 원인
-        ("ANSI 리셋 꼬리", '[{"a":1}]\x1b[0m\n', 1),
-        ("ANSI 앞뒤 감쌈", '\x1b[32m[{"a":1}]\x1b[0m', 1),
+        ("ANSI 리셋 꼬리", f'[{EV}]\x1b[0m\n', 1),
+        ("ANSI 앞뒤 감쌈", f'\x1b[32m[{EV}]\x1b[0m', 1),
         # 2026-08-28 실제 2회차 실패 원인: 진행 로그의 대괄호를 find('[')가 먼저 잡음
         ("진행 로그 대괄호 선행",
          'Thinking...\n[tool] openTab https://pubmed.ncbi.nlm.nih.gov\n'
-         '[tool] read\nResult:\n[{"topic":"sleep","claim":"x"}]\x1b[0m\n', 1),
+         f'[tool] read\nResult:\n[{EV}]\x1b[0m\n', 1),
         ("로그 + 코드펜스 동시",
-         '[tool] search\n```json\n[{"topic":"sleep","claim":"x"}]\n```\n', 1),
+         f'[tool] search\n```json\n[{EV}]\n```\n', 1),
         ("배열이 여럿이면 증거 배열을 고름",
-         '[1,2,3]\nnotes\n[{"topic":"discipline","claim":"y"}]\n', 1),
+         f'[1,2,3]\nnotes\n[{EV}]\n', 1),
         ("문자열 안 대괄호에 속지 않음",
-         '[{"topic":"sleep","claim":"see [1] and [2]"}]', 1),
+         '[{"topic":"sleep","claim":"see [1] and [2]","counter_claim":"c"}]', 1),
+        # 2026-08-28 실제 3회차 사고: Aside가 끝에 붙인 인용 출처 목록을
+        # 증거로 오인해 빈 레코드 10건이 적재됐다.
+        ("인용 출처 목록만 있으면 0건",
+         '[{"source_id":"A1","url":"https://pubmed.ncbi.nlm.nih.gov/3406323/",'
+         '"title":"Slow wave sleep","excerpt":"x"}]', 0),
+        ("증거 + 인용 목록 공존 시 증거를 고름",
+         '[{"topic":"sleep","claim":"c","counter_claim":"cc"}]\n'
+         '[{"source_id":"A1","url":"https://x","title":"t"}]', 1),
+        ("claim만 있고 counter_claim 없으면 증거 아님",
+         '[{"topic":"sleep","claim":"c"}]', 0),
         ("JSON 없음", 'sorry, could not find anything', 0),
         ("객체만(배열 아님)", '{"a":1}', 0),
         ("깨진 JSON", '[{"a":1,]', 0),
@@ -133,6 +145,23 @@ def main():
         check("실패가 기록됨",
               len(res3["failures"]) == 1
               and res3["failures"][0]["why"] == "timeout")
+
+        print("\n[8] 적재 2차 방어 — 빈 껍데기는 원장에 쌓지 않는다")
+        before = len(read_jsonl(state_path(cfg, "evidence.jsonl")))
+
+        def citations(prompt, account="u0", timeout=None):
+            # 파서를 통과했다고 가정하고 claim 없는 레코드를 흘려보낸다
+            return ('[{"claim":"","counter_claim":"c"},'
+                    '{"claim":"real","counter_claim":"c"}]')
+
+        harvest.run_aside = citations
+        try:
+            res4 = harvest.harvest_once(cfg, topics=["sleep"], count=2)
+        finally:
+            harvest.run_aside = orig
+        after = len(read_jsonl(state_path(cfg, "evidence.jsonl")))
+        check("claim 빈 레코드는 적재 안 됨", res4["harvested"] == 1)
+        check("원장에 1건만 늘어남", after - before == 1)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

@@ -172,11 +172,28 @@ def _balanced_arrays(raw):
     return [raw[a:b] for a, b in spans]
 
 
+def _looks_like_evidence(data):
+    """증거 레코드 배열인지 판정.
+
+    Aside는 답변 끝에 인용 출처 목록(source_id/url/title 구조)을 배열로
+    덧붙인다. 이걸 증거로 오인하면 빈 레코드가 대량 적재된다
+    (2026-08-28: 2건 요청에 인용 10건이 적재되어 전량 반려).
+    증거의 필수 축인 claim/counter_claim을 가진 것만 인정한다.
+    """
+    if not isinstance(data, list) or not data:
+        return False
+    dicts = [d for d in data if isinstance(d, dict)]
+    if not dicts:
+        return False
+    return any(("claim" in d and "counter_claim" in d) for d in dicts)
+
+
 def _extract_json(raw):
     """Aside 출력에서 증거 배열을 건져낸다.
 
-    코드펜스·진행 로그·ANSI 색상코드가 섞여도 견딘다. 배열이 여럿이면
-    '증거 레코드처럼 생긴 것'(dict 원소 + topic/claim 보유)을 우선한다.
+    코드펜스·진행 로그·ANSI 색상코드가 섞여도 견딘다. **증거처럼 생긴
+    배열만** 반환한다 — 인용 목록 등 다른 배열은 fallback으로도 넘기지
+    않는다(빈 레코드 대량 적재 방지).
     """
     if not raw:
         return []
@@ -187,20 +204,14 @@ def _extract_json(raw):
     candidates.extend(fenced)
     candidates.extend(_balanced_arrays(raw))
 
-    fallback = None
     for blob in candidates:
         try:
             data = json.loads(blob)
         except json.JSONDecodeError:
             continue
-        if not isinstance(data, list) or not data:
-            continue
-        dicts = [d for d in data if isinstance(d, dict)]
-        if dicts and any(("claim" in d or "topic" in d) for d in dicts):
+        if _looks_like_evidence(data):
             return data
-        if fallback is None:
-            fallback = data
-    return fallback or []
+    return []
 
 
 def run_aside(prompt, account="u0", timeout=ASIDE_TIMEOUT):
@@ -255,15 +266,20 @@ def harvest_once(cfg, topics=None, count=3, dry_run=False, account="u0"):
                              "raw_tail": raw[-300:] if raw else ""})
             continue
 
-        saved = 0
+        saved, skipped = 0, 0
         for i, item in enumerate(items, 1):
-            if not isinstance(item, dict):
+            # 적재 단계 2차 방어: 파서가 뚫려도 빈 껍데기를 원장에 쌓지 않는다.
+            if not isinstance(item, dict) or not (item.get("claim") or "").strip():
+                skipped += 1
                 continue
             item.setdefault("evidence_id", f"ev-{stamp}-{topic[:4]}-{i:02d}")
             item.setdefault("topic", topic)
             evidence.record_evidence(cfg, item)
             saved += 1
-        log(f"수집 완료({topic}): {saved}건 적재")
+        log(f"수집 완료({topic}): {saved}건 적재"
+            + (f" (형식 미달 {skipped}건 무시)" if skipped else ""))
+        if not saved:
+            failures.append({"topic": topic, "why": "no_valid_records"})
         total += saved
 
     return {"harvested": total, "topics": topics, "failures": failures}
