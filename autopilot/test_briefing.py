@@ -93,12 +93,29 @@ def main():
         check("수집 명령 제시", "harvest.py --topic" in text)
         check("운영자 서사는 수집 대상 아님", "`operator_story`" not in text)
 
-        print("\n[6] 주제 필터")
+        print("\n[6] 엇갈리는 근거 묶기")
+        A = dict(ATOM_STRONG, atom_id="t-a", topic="mindset",
+                 claim="메타분석에서 작은 연관 효과가 보고됐다(d=0.14)",
+                 counter_claim="예측구간이 넓어 편차가 컸다")
+        B = dict(ATOM_STRONG, atom_id="t-b", topic="mindset",
+                 claim="다른 메타분석에서 효과가 작았고(d=0.05)",
+                 counter_claim="출판편향 보정 후 유의하지 않았다")
+        pairs = briefing._find_tensions([A, B])
+        check("상반 결과 쌍을 찾아냄", len(pairs) == 1 and pairs[0][0] == "mindset")
+        tl = "\n".join(briefing.tension_lines([A, B]))
+        check("체리피킹 경고 포함", "한쪽만 골라 쓰면" in tl)
+        check("양쪽 주장 모두 노출", "d=0.14" in tl and "d=0.05" in tl)
+        check("같은 방향 근거는 묶지 않음",
+              not briefing._find_tensions([A, dict(A, atom_id="t-c")]))
+        check("주제가 다르면 묶지 않음",
+              not briefing._find_tensions([A, dict(B, topic="sleep")]))
+
+        print("\n[7] 주제 필터")
         only = briefing.build(cfg, topic="discipline")
         check("해당 주제만 카드로", "소재 카드 (1건)" in only)
         check("다른 주제 카드 제외", ATOM_WEAK["claim"] not in only)
 
-        print("\n[7] 원장이 비어도 죽지 않는다")
+        print("\n[8] 원장이 비어도 죽지 않는다")
         empty = load_config()
         empty["paths"]["state_dir"] = tempfile.mkdtemp(prefix="hc-brief-empty-")
         out = briefing.build(empty)

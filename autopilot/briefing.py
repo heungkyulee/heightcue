@@ -182,6 +182,71 @@ def atom_card(atom, index=None):
     return lines
 
 
+POS_SIGNALS = ("연관 효과", "효과가 보고", "연관됐다", "제한적 효과", "도움이 된")
+NEG_SIGNALS = ("유의하지 않", "무효", "바뀌지 않", "효과가 작", "편차가 컸",
+               "근거가 약", "확인되지 않")
+
+
+def _polarity(atom):
+    """원자의 결론 방향. claim(본론)만 본다.
+
+    counter_claim에는 거의 항상 한계·부정 표현이 들어가므로(반론 필수
+    규칙) 이걸 섞으면 모든 원자가 '양쪽 다'로 판정돼 자기 자신과도
+    엇갈리는 것처럼 보인다.
+    """
+    claim = atom.get("claim") or ""
+    pos = any(k in claim for k in POS_SIGNALS)
+    neg = any(k in claim for k in NEG_SIGNALS)
+    if pos and not neg:
+        return "pos"
+    if neg and not pos:
+        return "neg"
+    return None
+
+
+def _find_tensions(atoms):
+    """같은 주제에서 결론 방향이 반대인 원자 쌍을 찾는다.
+
+    워커가 논쟁의 양쪽을 다 가져오는 경우가 있다(예: 성장 마인드셋
+    d=0.14 vs d=0.05·출판편향 보정 시 무의미). 따로 보면 모순 같지만,
+    묶으면 '학계도 아직 다투는 중'이라는 가장 정직한 소재가 된다.
+    우리 채널의 차별점이 정직함이므로 이걸 놓치면 안 된다.
+    """
+    by_topic = {}
+    for a in atoms:
+        by_topic.setdefault(a.get("topic"), []).append(a)
+    out = []
+    for topic, group in by_topic.items():
+        pos = [a for a in group if _polarity(a) == "pos"]
+        neg = [a for a in group if _polarity(a) == "neg"]
+        for a in pos:
+            for b in neg:
+                out.append((topic, a, b))
+    return out
+
+
+def tension_lines(atoms):
+    pairs = _find_tensions(atoms)
+    if not pairs:
+        return []
+    lines = ["## 엇갈리는 근거 — 가장 좋은 소재", "",
+             "> 같은 주제에서 결과가 갈리는 연구들입니다. 따로 보면 모순 같지만,",
+             "> **묶으면 '전문가들도 아직 다투는 중'이라는 정직한 콘텐츠**가 됩니다.",
+             "> 한쪽만 골라 쓰면 체리피킹이 되니 반드시 함께 다루세요.", ""]
+    for topic, a, b in pairs[:5]:
+        lines += [
+            f"### `{topic}` — 두 근거가 엇갈립니다", "",
+            f"- **A** {a['claim'][:110]}",
+            f"- **B** {b['claim'][:110]}",
+            "- **이렇게 쓰세요** 한쪽을 정답으로 만들지 말고 "
+            "\"이만큼 갈린다 = 확실하지 않다\"를 그대로 전한다. "
+            "부모에게는 '아직 모른다'가 '무조건 해야 한다'보다 도움이 된다.",
+            "- **어울리는 앵글** `myth_bust`(단정하는 쪽을 깬다) · "
+            "`reassurance`(못 해줬다는 죄책감 해소)", "",
+        ]
+    return lines
+
+
 def gap_lines(cfg):
     """재고 격차 — 무엇을 더 모아야 하는가."""
     inv = evidence.inventory(cfg)
@@ -244,6 +309,9 @@ def build(cfg, topic=None, gaps_only=False):
             out += ["_해당 조건의 원자가 없습니다. 아래 격차를 참고해 수집하세요._", ""]
         for i, a in enumerate(atoms, 1):
             out += atom_card(a, index=i) + ["---", ""]
+        tensions = tension_lines(atoms)
+        if tensions:
+            out += tensions + ["---", ""]
 
     out += gap_lines(cfg)
     out += ["", "---", "",
