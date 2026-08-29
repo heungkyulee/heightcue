@@ -276,6 +276,27 @@ class TestHappyPath(Base):
         self.assertIn("too small", low)
         self.assertIn("exactly", low)
 
+    # -- task 26 실측: 실패는 파라미터가 아니라 **프레임 안 글자 크기**를 따라간다.
+    # 모든 암에서 큰 글자(`Ddrops`, `600 IU`)는 살아남고 작은 글자(`ORGANIC`,
+    # `Booster`, 아래첨자 `3`, 잔글씨)는 위조됐다. 그래서 제품 히어로 컷은
+    # 라벨을 **크게** 잡고 잔글씨는 **프레임 밖**으로 뺀다.
+    def test_tight_framing_clause_demands_large_label_and_no_fine_print(self):
+        clause = vg.TIGHT_FRAMING_CLAUSE
+        self.assertIn(clause, vg.PRODUCT_FIDELITY_CLAUSE)
+        low = clause.lower()
+        # 1차 라벨은 프레임 폭의 약 1/3
+        self.assertIn("one third", low)
+        # 잔글씨/성분표는 프레임 밖
+        self.assertIn("out of frame", low)
+        for banned in ("supplement facts", "fine print", "ingredient"):
+            self.assertIn(banned, low)
+
+    def test_tight_framing_clause_reaches_the_bridge(self):
+        bridge = FakeBridge()
+        self.run_generate(bridge=bridge)
+        for call in bridge.calls:
+            self.assertIn(vg.TIGHT_FRAMING_CLAUSE, call["prompt"])
+
     def test_fidelity_clauses_reach_the_bridge(self):
         bridge = FakeBridge()
         self.run_generate(bridge=bridge)
@@ -1330,6 +1351,32 @@ class TestGenerationPromptReachesFal(CutBase):
             image_url="https://cdn.example.test/a.png")
         self.assertEqual(req["payload"]["prompt"],
                          "S1 speaks: <d>[Korean] 안녕.</d>")
+
+    # -- FIX 1 (task 26): fal 의 프롬프트 확장이 우리 반위조 조항을 **삭제**하고
+    # "라벨이 잘 읽히도록 병을 회전한다"를 지어냈다. 확장은 기본으로 끈다.
+    def test_request_disables_prompt_expansion_by_default(self):
+        frame = self.frames["frames"][0]
+        req = vg.build_cut_request(
+            frame, generation_prompt="S1 speaks.", output_path="/t/a.mp4",
+            image_url="https://cdn.example.test/a.png")
+        self.assertEqual(req["payload"]["prompt_expansion_mode"],
+                         vg.PROMPT_EXPANSION_MODE)
+        self.assertEqual(vg.PROMPT_EXPANSION_MODE, "disabled")
+
+    def test_request_pins_a_seed_for_reproducibility(self):
+        frame = self.frames["frames"][0]
+        req = vg.build_cut_request(
+            frame, generation_prompt="S1 speaks.", output_path="/t/a.mp4",
+            image_url="https://cdn.example.test/a.png", seed=260826)
+        self.assertEqual(req["payload"]["seed"], 260826)
+
+    def test_unknown_expansion_mode_is_rejected_before_spending(self):
+        frame = self.frames["frames"][0]
+        with self.assertRaises(vg.CutRequestError):
+            vg.build_cut_request(
+                frame, generation_prompt="S1 speaks.", output_path="/t/a.mp4",
+                image_url="https://cdn.example.test/a.png",
+                prompt_expansion_mode="turbo")
 
     def test_empty_generation_prompt_is_rejected(self):
         frame = self.frames["frames"][0]

@@ -914,5 +914,47 @@ class TestVoiceLineIsJudgedByEvidenceNotSubstring(unittest.TestCase):
         self.assertIn("age 1 and up", sb.cuts[0].voice_line)
 
 
+
+# ---------------------------------------------------------------------------
+# 타이트 프레이밍 (task 26 실측) — 큰 글자만 살아남는다
+# ---------------------------------------------------------------------------
+
+
+class TestTightFraming(unittest.TestCase):
+    """실패는 파라미터가 아니라 프레임 안 **글자 크기**를 따라간다.
+
+    5개 암 전부에서 큰 글자(`Ddrops`, `600 IU`)는 충실했고 작은 글자
+    (`ORGANIC`, `Booster`, 아래첨자 `3`, 잔글씨)만 위조됐다. 그래서
+    스토리보드 자체가 타이트한 제품 컷을 지시해야 한다.
+    """
+
+    def test_system_prompt_demands_tight_product_framing(self):
+        low = vs.SYSTEM_PROMPT.lower()
+        self.assertIn("one third", low)
+        self.assertIn("fine print", low)
+        self.assertIn("supplement facts", low)
+
+    def test_proof_beat_no_longer_asks_for_printed_detail_to_be_read(self):
+        """`proof_moment` 비트가 \"printed on-pack detail\" 을 렌더하라고
+        지시하면 모델이 잔글씨를 지어낸다 — 큰 1차 라벨만 요구해야 한다."""
+        beat = vs._ROLE_BEATS["proof_moment"].lower()
+        self.assertNotIn("printed on-pack detail", beat)
+        self.assertIn("large", beat)
+
+    def test_generation_prompt_carries_the_framing_instruction(self):
+        out = vs.build_generation_prompt(
+            market="US", story_role="proof_moment",
+            action="A parent holds the bottle up",
+            voice_line="Each drop delivers 600 IU vitamin D3.",
+            first_frame_prompt="A parent holds the amber bottle close to camera",
+            motion_prompt="She steadies the bottle in front of her")
+        low = out.lower()
+        self.assertIn("one third", low)
+        self.assertIn("fine print", low)
+        # 기존 반위조 조항은 그대로 살아 있어야 한다
+        self.assertIn("no invented packaging wording", low)
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

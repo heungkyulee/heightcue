@@ -1115,5 +1115,48 @@ class TestOpenMontageInterpreter(unittest.TestCase):
         self.assertTrue(vq.TRANSCRIBER_MODEL_SIZE)
 
 
+
+# ---------------------------------------------------------------------------
+# FIX 3 (task 27) — 생성 후 충실도 검사는 **차단 게이트**로 남는다
+# ---------------------------------------------------------------------------
+
+
+class TestFidelityStaysBlocking(unittest.TestCase):
+    """task 26 최고 성적 암도 4프레임 중 2프레임만 깨끗했다.
+
+    생성은 여전히 신뢰할 수 없으므로 이 검사는 참고(advisory)로 강등될 수
+    없다. 강등되면 위조된 라벨이 조용히 발행된다.
+    """
+
+    def test_product_identity_is_in_the_blocking_check_set(self):
+        self.assertIn(vq.CHECK_PRODUCT_IDENTITY, vq.CHECK_NAMES)
+
+    def test_ai_fidelity_failure_fails_the_check_even_with_a_valid_signoff(self):
+        """사람 서명이 있어도 기계가 위조를 신고하면 실패한다."""
+        frames = [{"path": "/tmp/nope-f1.png", "timestamp": 1.5}]
+        out = vq.check_product_identity_screen(
+            frames, "/tmp/hero.jpg", None,
+            identity_signoff={"signed_off_by": vq.IDENTITY_SIGNOFF_OWNERS[0],
+                              "signed_off_at": "2026-08-30T00:00:00+09:00",
+                              "artifact_sha256": "deadbeef"},
+            artifact_path=None,
+            fidelity_verdict={"passed": False,
+                              "reason": "ORGANIC rendered as CACINI"},
+            artifact_kind=vq.ARTIFACT_CLEAN_MASTER)
+        self.assertFalse(out["passed"])
+        self.assertIn("CACINI", str(out.get("ai_fidelity_reason")))
+
+    def test_missing_fidelity_verdict_fails_closed(self):
+        """검사를 돌리지 못한 것은 통과가 아니다."""
+        frames = [{"path": "/tmp/nope-f1.png", "timestamp": 1.5}]
+        out = vq.check_product_identity_screen(
+            frames, "/tmp/hero.jpg", None,
+            identity_signoff=None, artifact_path=None,
+            fidelity_verdict=None,
+            artifact_kind=vq.ARTIFACT_CLEAN_MASTER)
+        self.assertFalse(out["passed"])
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

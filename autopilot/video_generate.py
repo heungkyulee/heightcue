@@ -138,10 +138,31 @@ LABEL_TEXT_CLAUSE = (
     "in the reference photo, letter for letter, or render it too small, too "
     "soft, or too oblique to read. NEVER invent, approximate, re-letter, or "
     "hallucinate packaging lettering — a misspelt badge on a real nutrition "
-    "label is a factual error, not a cosmetic one. Prefer framings that do "
-    "not require legible small print: let the falling drop, the hand and the "
-    "gesture carry the story rather than a macro of the label. Do not add "
-    "any text, caption, watermark, or graphic that is not on the real pack."
+    "label is a factual error, not a cosmetic one. The primary wording "
+    "survives generation only when it is rendered LARGE; small lettering is "
+    "re-drawn from memory and comes back forged. So show the primary label "
+    "big and close, and keep every band of small print out of the frame. Do "
+    "not add any text, caption, watermark, or graphic that is not on the "
+    "real pack."
+)
+
+#: 타이트 프레이밍 조항 — task 26 유료 실험(5개 암, 첫 프레임·시드 고정)의
+#: **지배적** 발견. 실패는 파라미터가 아니라 **프레임 안 글자 크기**를 따라갔다:
+#: 모든 암(베이스라인 포함)에서 큰 글자(`Ddrops`, `600 IU`)는 정확히 살아남고
+#: 작은 글자(`ORGANIC` 배지, `Booster` 필기체, 아래첨자 `3`, 성분표 잔글씨)만
+#: 위조됐다. 라벨을 3배로 키운 `tightframe` 암만이 1차 문구를 위조→충실로
+#: 뒤집었다. 그래서 제품 히어로 컷은 라벨을 **크게** 잡고 잔글씨는 아예
+#: **프레임 밖**으로 뺀다 — 읽히지 않는 잔글씨를 요구하면 모델이 지어낸다.
+TIGHT_FRAMING_CLAUSE = (
+    "FRAMING (absolute): compose the product tight. The PRIMARY label — the "
+    "brand wordmark and the dose figure — must fill roughly one third of the "
+    "frame width or more, close enough that every one of its letters is "
+    "unambiguously resolved. Small on-pack lettering is what the model "
+    "forges, so keep it OUT OF FRAME entirely: do not show, and never ask to "
+    "be legible, any Supplement Facts panel, ingredient list, directions "
+    "block, barcode, batch code, or other fine print. Crop it away above or "
+    "below the frame edge, or let the hand cover it. Never render the whole "
+    "pack small in a wide shot — a distant label is a forged label."
 )
 
 #: 모든 프레임 프롬프트에 붙는 불변 조항 — 상품은 진실, 나머지는 연출.
@@ -154,6 +175,7 @@ PRODUCT_FIDELITY_CLAUSE = (
     "hands, background, lighting, and camera framing. "
     f"{PHYSICAL_PLAUSIBILITY_CLAUSE} "
     f"{LABEL_TEXT_CLAUSE} "
+    f"{TIGHT_FRAMING_CLAUSE} "
     "Exactly ONE moment, ONE action, ONE benefit — not a collage, "
     "not a storyboard, not a multi-panel image. "
     "Vertical 9:16 portrait still frame."
@@ -790,6 +812,23 @@ FAL_I2V_URL = f"https://queue.fal.run/{VIDEO_ENDPOINT}"
 
 VIDEO_OPERATION = "image_to_video"
 
+#: fal 의 서버측 프롬프트 확장 모드. **`disabled` 가 기본이다.**
+#:
+#: task 26 에서 `expanded_prompt` 를 직접 읽어 확인한 것: 확장은 우리가 쓴
+#: "no invented packaging wording" 조항을 **통째로 삭제**하고, 문제가 아니었던
+#: "no on-screen text" 절반만 남겼다. 더 나쁘게는 우리가 쓴 적 없는
+#: "rotates the bottle to ensure the label is clearly visible and legible" 를
+#: **지어내** 우리가 막으려던 재렌더를 모델에게 지시했다.
+#:
+#: `disabled` 는 fal 의 공개 스키마에 **문서화되지 않은** 리터럴이다 (무료 422
+#: 프로브로 발견). 그래서 OpenMontage 도구는 fal 이 이 값을 거부하면 조용히
+#: `balanced` 로 되돌아가지 않고 **크게 실패**한다 — 조용한 폴백은 이 버그를
+#: 소리 없이 되살린다.
+PROMPT_EXPANSION_MODE = "disabled"
+
+#: fal I2V 의 실제 리터럴 집합 (422 오류 메시지에서 회수).
+PROMPT_EXPANSION_MODES = ("disabled", "fast", "balanced", "quality")
+
 #: 컷 생성은 사람 승인 없이 자동 실행되지만 상한 안에서만 가능하다.
 APPROVAL_POLICY = "auto_within_caps"
 
@@ -1090,6 +1129,8 @@ def build_cut_request(frame: Dict[str, Any], *, generation_prompt: str,
                       resolution: str = VIDEO_RESOLUTION,
                       aspect_ratio: str = VIDEO_ASPECT_RATIO,
                       operation: str = VIDEO_OPERATION,
+                      prompt_expansion_mode: str = PROMPT_EXPANSION_MODE,
+                      seed: Optional[int] = None,
                       image_url: Optional[str] = None) -> Dict[str, Any]:
     """컷 1개의 fal 요청을 조립한다. 고정 계약을 벗어나면 전송 전에 거부.
 
@@ -1115,6 +1156,12 @@ def build_cut_request(frame: Dict[str, Any], *, generation_prompt: str,
     if aspect_ratio != VIDEO_ASPECT_RATIO:
         raise CutRequestError(
             f"화면비는 {VIDEO_ASPECT_RATIO} 고정이다: {aspect_ratio!r}")
+    if prompt_expansion_mode not in PROMPT_EXPANSION_MODES:
+        raise CutRequestError(
+            f"prompt_expansion_mode 는 {list(PROMPT_EXPANSION_MODES)} 중 "
+            f"하나여야 한다: {prompt_expansion_mode!r} — fal 은 잘못된 본문에도 "
+            "200 IN_QUEUE 를 돌려주고 검증을 결과 조회로 미루므로, 지출 전에 "
+            "여기서 거부한다")
 
     if not isinstance(frame, dict):
         raise CutRequestError(f"frame 은 dict 여야 한다: {type(frame)}")
@@ -1139,6 +1186,17 @@ def build_cut_request(frame: Dict[str, Any], *, generation_prompt: str,
             "실패하고, 그 실패는 잘못된 버킷으로 분류돼 다시 지출을 부른다. "
             "지출 전에 거부한다 (업로드는 프로덕션 어댑터가 한다)")
 
+    payload: Dict[str, Any] = {
+        "prompt": prompt,
+        "image_url": url,
+        "duration": duration_seconds,
+        "resolution": resolution,
+        "aspect_ratio": aspect_ratio,
+        "prompt_expansion_mode": prompt_expansion_mode,
+    }
+    if seed is not None:
+        payload["seed"] = int(seed)
+
     return {
         "tool": VIDEO_TOOL,
         "provider": VIDEO_PROVIDER,
@@ -1151,13 +1209,7 @@ def build_cut_request(frame: Dict[str, Any], *, generation_prompt: str,
         "first_frame_path": first_frame_path,
         "first_frame_sha256": first_frame_sha256,
         "output_path": output_path,
-        "payload": {
-            "prompt": prompt,
-            "image_url": url,
-            "duration": duration_seconds,
-            "resolution": resolution,
-            "aspect_ratio": aspect_ratio,
-        },
+        "payload": payload,
     }
 
 
@@ -1225,6 +1277,7 @@ def generate_cuts(storyboard: Any, frames_manifest: Dict[str, Any], *,
                   daily_cap_usd: float = MAX_DAILY_SPEND_USD,
                   today: Optional[str] = None,
                   image_url_for: Optional[Callable] = None,
+                  seed: Optional[int] = None,
                   sleep: Optional[Callable] = None) -> Dict[str, Any]:
     """첫 프레임마다 5초 H3 Max I2V 컷을 정확히 하나씩 만든다.
 
@@ -1323,7 +1376,7 @@ def generate_cuts(storyboard: Any, frames_manifest: Dict[str, Any], *,
             frame, generation_prompt=prompts.get(index, ""),
             output_path=os.path.join(out_dir,
                                      f"{product_id}_cut{index:02d}.mp4"),
-            image_url=uploader(frame))
+            image_url=uploader(frame), seed=seed)
 
     possibly_billed = 0.0
 
@@ -1360,6 +1413,9 @@ def generate_cuts(storyboard: Any, frames_manifest: Dict[str, Any], *,
                 "duration_seconds": CUT_DURATION_SECONDS,
                 "resolution": VIDEO_RESOLUTION,
                 "aspect_ratio": VIDEO_ASPECT_RATIO,
+                "prompt_expansion_mode": request["payload"][
+                    "prompt_expansion_mode"],
+                "seed": request["payload"].get("seed"),
                 "estimated_cost_usd": per_cut_estimate,
                 "rate_usd_per_second": RATE_USD_PER_SECOND_768P,
                 "approval_policy": APPROVAL_POLICY,
@@ -1451,6 +1507,14 @@ def generate_cuts(storyboard: Any, frames_manifest: Dict[str, Any], *,
                 "provider_request_id": str(
                     (response or {}).get("request_id") or ""),
                 "attempts": attempt,
+                #: fal 이 서버측에서 우리 프롬프트를 바꿨는지의 **증거**.
+                #: `prompt_expansion_mode="disabled"` 면 None 이어야 한다.
+                #: None 이 아니면 모델은 우리가 쓴 것과 다른 지시를 받았다 —
+                #: 라벨 위조 버그가 두 런 동안 숨어 있던 바로 그 자리다.
+                "prompt_expansion_mode": request["payload"][
+                    "prompt_expansion_mode"],
+                "seed": request["payload"].get("seed"),
+                "expanded_prompt": (response or {}).get("expanded_prompt"),
                 "estimated_cost_usd": per_cut_estimate,
                 #: provider 가 **청구액**을 준 경우에만 채워진다. 그 외엔 None —
                 #: 추정치가 `actual_` 필드를 차지하는 일은 구조적으로 없다.

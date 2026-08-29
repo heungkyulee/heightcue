@@ -115,9 +115,9 @@ _ROLE_BEATS = {
     "demo_action": ("S1 demonstrates the product the way it is actually used "
                     "at home, keeping both hands and the product inside the "
                     "frame the whole time."),
-    "proof_moment": ("S1 turns the product so the printed on-pack detail they "
-                     "are about to read faces the lens, letting the viewer "
-                     "check it for themselves."),
+    "proof_moment": ("S1 holds the product close to the lens so its large "
+                     "primary label fills much of the frame, letting the "
+                     "viewer check the headline figure for themselves."),
 }
 
 #: 화면 위 글자 요청 신호 — 자막은 **후반 작업 패스**다. 베이스 영상 소재는
@@ -489,7 +489,14 @@ def build_generation_prompt(*, market: str, story_role: str, action: str,
         "words and no others: "
         f"{DIALOGUE_OPEN}[{language}] {voice_line}{DIALOGUE_CLOSE} "
         "S1 stops speaking, keeps holding the product steady, and the shot "
-        "ends. No on-screen text of any kind: no subtitles, no captions, no "
+        "ends. Keep the product framed CLOSE for the whole take: its primary "
+        "label — the brand wordmark and the dose figure — fills roughly one "
+        "third of the frame width or more, and every letter of it is "
+        "reproduced exactly as printed on the real pack. Any fine print "
+        "(Supplement Facts panel, ingredient list, directions, barcode) stays "
+        "OUT OF FRAME or behind the hand — never render it, never make it "
+        "legible. Do not rotate or re-present the pack to show more of it. "
+        "No on-screen text of any kind: no subtitles, no captions, no "
         "lower thirds, no title cards, no graphic overlays, no added logos "
         "and no invented packaging wording — the frame stays clean so text "
         "can be added later in post.\n\n"
@@ -826,6 +833,15 @@ HARD RULES — a violation makes the whole plan invalid:
    would really say out loud in five seconds.
 9. NEVER ask for subtitles, captions, on-screen text or graphic overlays.
    Subtitles are added later in post-production.
+10. TIGHT PRODUCT FRAMING — this is measured, not stylistic. The video model
+   re-draws small on-pack lettering from memory and gets it WRONG (`ORGANIC`
+   came back as `CACINI`, `Booster` as `Broster`). Large glyphs survive; small
+   ones forge. So every `first_frame_prompt` that shows the pack must compose
+   it CLOSE, with the primary label — brand wordmark and dose figure — filling
+   roughly one third of the frame width or more. NEVER write a wide shot with
+   a small pack, and NEVER ask for a Supplement Facts panel, ingredient list,
+   directions block, or any other fine print to be visible or legible: crop it
+   out of frame or let the hand cover it.
 
 LENGTH AND SINGULARITY LIMITS — these are enforced by a hard gate that rejects
 the whole plan, so respect them exactly:
