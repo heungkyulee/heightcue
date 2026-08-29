@@ -138,6 +138,35 @@ class AudioSpy:
         return {"rms_dbfs": self.rms_dbfs, "peak_dbfs": self.peak_dbfs}
 
 
+class EnergyProfileSpy:
+    """OpenMontage AudioEnergy 가 **실제로** 돌려주는 모양.
+
+    첫 유료 실행이 여기서 깨졌다 — 프로브는 ``energy_profile`` 을 주는데
+    검사는 ``rms_dbfs`` 를 읽었다.
+    """
+
+    def __init__(self, lufs_per_second=(-21.0, -19.5, -20.2), *, raw=None):
+        self.raw = raw
+        self.lufs = list(lufs_per_second)
+
+    def __call__(self, video_path):
+        if self.raw is not None:
+            return self.raw
+        return {
+            "energy_profile": [
+                {"time_seconds": i, "loudness_lufs": v, "active": v > -40}
+                for i, v in enumerate(self.lufs)
+            ],
+            "audio_duration": float(len(self.lufs)),
+        }
+
+
+def signoff_for(path, by="haneul-proof"):
+    return {"signed_off_by": by, "signed_off_at": "2026-08-29T10:00:00+09:00",
+            "artifact_sha256": vq._sha256_file(path),
+            "note": "사람이 프레임을 직접 보고 상품 동일성을 확인했다"}
+
+
 # ---------------------------------------------------------------------------
 # 픽스처
 # ---------------------------------------------------------------------------
@@ -199,6 +228,7 @@ class QABase(unittest.TestCase):
             caption=CAPTION_KR,
             overlay_texts=[DISCLOSURE_TEXT["KR"]],
             product_image_path=self.product_image,
+            identity_signoff=signoff_for(self.video),
             frame_sampler=SamplerSpy(),
             transcriber=TranscriberSpy(VOICE_1 + " " + VOICE_2),
             audio_probe=AudioSpy(),
@@ -358,22 +388,163 @@ class TestFailClosed(QABase):
 
 class TestProductIdentity(QABase):
 
-    def test_grossly_divergent_frames_fail_the_screen(self):
-        sampler = SamplerSpy(lambda i, ts: (inverted_rows() if i % 2 else
-                                            flat_rows(200 - i)))
-        self.assertFailed(self.run_qa(frame_sampler=sampler),
+    def test_in_scene_footage_is_not_failed_by_the_advisory_screen(self):
+        """첫 유료 실행의 실제 실패 모양.
+
+        레퍼런스는 흰 배경 카탈로그 컷아웃이고 영상은 주방·손·자연광 속
+        같은 상품이다. dHash 거리가 35 로 임계 16 을 넘었다 — 어떤 정직한
+        인신 I2V 컷도 이 비교를 통과할 수 없다. 거리는 **참고값**으로만
+        보고하고, 게이트는 사람 서명이 진다.
+        """
+        sampler = SamplerSpy(lambda i, ts: inverted_rows())   # 거리 최대
+        report = self.run_qa(frame_sampler=sampler)
+        check = report.checks["product_identity_screen"]
+        self.assertTrue(check["passed"],
+                        f"인신 촬영이 구조 해시 거리로 반려됐다: {check}")
+        self.assertGreater(check["advisory_best_distance"], vq.MAX_DHASH_DISTANCE)
+        self.assertTrue(check["advisory_only"])
+
+    def test_without_human_signoff_identity_fails(self):
+        report = self.run_qa(identity_signoff=None)
+        self.assertFailed(report, "product_identity_screen")
+        self.assertIn("machine", " ".join(
+            report.checks["product_identity_screen"]["limitations"]).lower())
+
+    def test_signoff_for_a_different_artifact_fails(self):
+        bad = dict(signoff_for(self.video), artifact_sha256="0" * 64)
+        self.assertFailed(self.run_qa(identity_signoff=bad),
                           "product_identity_screen")
+
+    def test_signoff_from_an_unknown_owner_fails(self):
+        self.assertFailed(
+            self.run_qa(identity_signoff=signoff_for(self.video, by="nobody")),
+            "product_identity_screen")
+
+    def test_legacy_signoff_owner_is_accepted(self):
+        report = self.run_qa(
+            identity_signoff=signoff_for(self.video, by="mungchi-proof"))
+        self.assertTrue(report.checks["product_identity_screen"]["passed"],
+                        report.failures)
 
     def test_screen_declares_it_does_not_establish_identity(self):
         report = self.run_qa()
         check = report.checks["product_identity_screen"]
         self.assertFalse(check["establishes_identity"])
+        self.assertFalse(check["machine_verified"])
         self.assertTrue(check["limitations"])
         self.assertIn("perceptual", " ".join(check["limitations"]).lower())
 
     def test_module_declares_the_known_verification_gap(self):
         self.assertFalse(vq.PERCEPTUAL_VERIFICATION_AVAILABLE)
         self.assertTrue(vq.IDENTITY_LIMITATIONS)
+
+
+class TestAudioProbeShapes(QABase):
+    """첫 유료 실행 실패 2 — 프로브 키 이름 불일치(배관 버그)."""
+
+    def test_energy_profile_shape_is_understood(self):
+        report = self.run_qa(audio_probe=EnergyProfileSpy())
+        check = report.checks["technical_audio_signal"]
+        self.assertTrue(check["passed"], check)
+        self.assertEqual(check["shape"], "energy_profile")
+
+    def test_silent_energy_profile_still_fails(self):
+        report = self.run_qa(
+            audio_probe=EnergyProfileSpy(lufs_per_second=(-91.0, -120.0, -95.0)))
+        self.assertFailed(report, "technical_audio_signal")
+
+    def test_rms_dbfs_shape_still_works(self):
+        self.assertTrue(self.run_qa().checks["technical_audio_signal"]["passed"])
+
+    def test_unrecognised_probe_shape_fails_loudly_not_as_silence(self):
+        report = self.run_qa(audio_probe=EnergyProfileSpy(
+            raw={"loudness": "quite loud", "unitless": True}))
+        self.assertFailed(report, "technical_audio_signal")
+        detail = report.checks["technical_audio_signal"]["detail"]
+        self.assertIn("loudness", detail)   # 실제 키를 적어 진단 가능해야 한다
+        # 미인식을 무음 판정으로 둔갑시키지 않는다 ("무음이다" 는 무음 판정 문구)
+        self.assertNotIn("무음이다", detail)
+        self.assertNotIn("shape", report.checks["technical_audio_signal"])
+
+    def test_empty_energy_profile_fails(self):
+        self.assertFailed(
+            self.run_qa(audio_probe=EnergyProfileSpy(
+                raw={"energy_profile": []})), "technical_audio_signal")
+
+
+class TestSampleTimestampTail(QABase):
+    """첫 유료 실행 실패 3 — 마지막 샘플이 최종 프레임 뒤로 넘어간다."""
+
+    def test_last_sample_lands_before_the_final_frame(self):
+        stamps = vq.sample_timestamps(10.0, 2, fps=30.0)
+        self.assertLess(max(stamps), 10.0)
+        # 헤더 길이는 마지막 프레임 PTS 보다 최대 한 프레임 길다. 꼬리 샘플은
+        # 마지막에서 두 번째 프레임 시작 이하여야 반드시 실재한다.
+        self.assertLessEqual(max(stamps), 10.0 - 2.0 / 30.0 + 1e-9)
+        self.assertGreater(max(stamps), 9.9)      # 그래도 '끝'을 본다
+
+    def test_tail_sample_is_inside_a_low_fps_video(self):
+        stamps = vq.sample_timestamps(10.0, 2, fps=24.0)
+        self.assertLessEqual(max(stamps), 10.0 - 2.0 / 24.0 + 1e-9)
+
+    def test_old_fixed_offset_would_have_overrun(self):
+        # 회귀 잠금: 24fps 에서 옛 상수 0.05 는 마지막 두 프레임 경계
+        # (10 - 2/24 = 9.9167) 보다 뒤였다 — 그래서 프레임이 안 왔다.
+        self.assertGreater(round(10.0 - 0.05, 3), 10.0 - 2.0 / 24.0)
+
+    def test_sampler_refusing_the_tail_timestamp_still_fails_closed(self):
+        class TailDroppingSampler(SamplerSpy):
+            """헤더보다 한 프레임 짧은 실제 미디어를 흉내낸다."""
+
+            def __call__(self, video_path, timestamps, out_dir):
+                last_real_frame = 10.0 - 1.0 / 30.0
+                stamps = [t for t in timestamps if t <= last_real_frame]
+                return super().__call__(video_path, stamps, out_dir)
+
+        report = self.run_qa(frame_sampler=TailDroppingSampler())
+        self.assertTrue(report.checks["technical_frames"]["passed"],
+                        f"경계가 여전히 실재 프레임 뒤에 있다: {report.failures}")
+
+
+class TestArtifactUnderTest(QABase):
+    """어느 산출물을 봤는지 리포트가 이름으로 말한다.
+
+    베이스 영상 에셋에는 자막이 없다 (사용자 명령). 자막은 별도 후처리
+    패스에서 입힌다. 그래서 고지는 **클린 마스터와 최종 납품물 양쪽**에서
+    확인해야 하고(법적 의무는 전 구간 존재), 캡션 드리프트는 자막이 입혀진
+    **최종 납품물**에서만 판정한다.
+    """
+
+    def test_report_names_the_artifact_each_check_inspected(self):
+        report = self.run_qa()
+        for name in vq.CHECK_NAMES:
+            self.assertIn("artifact_under_test", report.checks[name],
+                          f"{name} 이 어느 산출물을 봤는지 밝히지 않는다")
+            self.assertIn(report.checks[name]["artifact_under_test"],
+                          vq.ARTIFACT_KINDS)
+
+    def test_disclosure_is_verified_on_both_master_and_deliverable(self):
+        report = self.run_qa()
+        check = report.checks["policy_disclosure"]
+        self.assertEqual(set(check["artifacts_verified"]),
+                         {vq.ARTIFACT_CLEAN_MASTER, vq.ARTIFACT_DELIVERABLE})
+
+    def test_disclosure_missing_on_the_clean_master_fails(self):
+        # 최종 납품물 캡션에는 고지가 있으나 마스터 쪽 오버레이/캡션이 비었다.
+        report = self.run_qa(master_caption="아이 키 고민할 때 성분표부터 봤어요")
+        self.assertFailed(report, "policy_disclosure")
+        self.assertIn(vq.ARTIFACT_CLEAN_MASTER,
+                      report.checks["policy_disclosure"]["detail"])
+
+    def test_caption_drift_check_runs_on_the_subtitled_deliverable(self):
+        report = self.run_qa()
+        self.assertEqual(report.checks["policy_forbidden_claims"]
+                         ["artifact_under_test"], vq.ARTIFACT_DELIVERABLE)
+
+    def test_deliverable_defaults_to_the_video_path_when_no_master_given(self):
+        report = self.run_qa(master_caption=None)
+        self.assertTrue(report.checks["policy_disclosure"]["passed"],
+                        report.failures)
 
 
 # ---------------------------------------------------------------------------
@@ -601,6 +772,38 @@ class TestSpokenDriftHardening(QABase):
         check = report.checks["spoken_content"]
         self.assertTrue(check.get("out_of_order_lines"),
                         f"순서 위반 근거가 없다: {check}")
+
+
+class TestTranscriptionNoiseDiagnosis(QABase):
+    """전사 잡음은 **흡수하지 않는다.** 다만 진단은 정확히 붙인다.
+
+    base 모델이 "마인드셋"을 "마인드색"으로 적는 건 기록된 사실이다. 멀쩡한
+    유료 영상이 여기서 반려될 수 있다. 그렇다고 근사 매칭으로 흡수하면
+    한국어에서 1음절 치환이 의미를 뒤집는 경우("잘 커요" / "안 커요")를 함께
+    통과시키게 된다 — 드리프트 감지력의 직접적 손실이다. 그래서 게이트는
+    그대로 닫아두고, 대신 실패 리포트가 '전사 잡음일 가능성'을 명시해
+    운영자가 재생성이 아니라 사람 확인으로 라우팅하게 한다.
+    """
+
+    def test_single_syllable_substitution_still_fails(self):
+        drifted = VOICE_1.replace("습관", "습곤")
+        self.assertFailed(self.run_qa(transcriber=TranscriberSpy(
+            f"{drifted} {VOICE_2}")), "spoken_content")
+
+    def test_near_miss_is_flagged_as_likely_transcription_noise(self):
+        drifted = VOICE_1.replace("습관", "습곤")
+        report = self.run_qa(transcriber=TranscriberSpy(f"{drifted} {VOICE_2}"))
+        check = report.checks["spoken_content"]
+        self.assertTrue(check.get("likely_transcription_noise"), check)
+        near = check["near_misses"][0]
+        self.assertEqual(near["approved_line"], VOICE_1)
+        self.assertEqual(near["edit_distance"], 1)
+
+    def test_a_genuinely_different_line_is_not_flagged_as_noise(self):
+        report = self.run_qa(transcriber=TranscriberSpy(
+            f"이건 완전히 다른 말입니다 {VOICE_2}"))
+        check = report.checks["spoken_content"]
+        self.assertFalse(check.get("likely_transcription_noise"), check)
 
 
 class TestClaimScanSurfaceHonesty(QABase):

@@ -17,29 +17,35 @@
 
 제품 동일성에 대한 정직한 고지 (읽고 넘어가지 말 것)
 -----------------------------------------------------
-Task 10 이 기록한 사실이 지금도 그대로다: 이 파이프라인 어디에도 **지각적
-검증(perceptual verification)이 없다.** 지각 해시 라이브러리도, 임베딩
-유사도 모델도, 사람 검수 게이트도 없다. "상품이 상품답게 유지된다"는 요구는
-현재 **프롬프트 텍스트로만** 강제되고 있다.
+**이 파이프라인은 상품 동일성을 기계로 검증하지 않는다.** 지각 해시
+라이브러리도, 임베딩 유사도 모델도 없다. 이 사실은 Task 10 이래 그대로다.
 
-여기서 구현한 ``product_identity_screen`` 은 그 공백을 메우지 못한다.
-그것은 오프라인·결정적으로 돌릴 수 있는 **거친 스크리닝**이다 — 원본 상품
-이미지와 샘플 프레임의 저해상도 구조 해시를 비교해 *명백한 붕괴*(완전히
-다른 그림, 흑백 반전, 빈 화면)만 걸러낸다. 라벨 오타, 색상 옵션 뒤바뀜,
-용량 표기 변경, 브랜드 로고 왜곡 같은 **실제로 위험한 동일성 위반은 이
-검사로 검출되지 않는다.**
+한때 ``product_identity_screen`` 이 원본 상품 사진과 샘플 프레임의 dHash
+거리를 재 '거친 스크리닝'을 했다. 2026-08-29 첫 유료 실행에서 그 검사가
+정상 영상을 거리 35(임계 16)로 반려했고, 원인은 영상이 아니라 비교였다:
+레퍼런스는 **흰 배경 카탈로그 컷아웃**, 산출물은 **주방·손·자연광 속의
+같은 상품**. dHash 는 프레임 전체 밝기 구조를 보므로 배경이 다르면 상품이
+완벽해도 거리가 벌어진다. 즉 **어떤 정직한 인신 I2V 컷도 통과할 수 없는
+검사**였다. 통과가 구조적으로 불가능한 게이트는 신호가 아니라 잡음이고,
+잡음은 곧 무시되며, 무시되는 게이트는 없는 게이트다.
 
-그래서 이 검사의 리포트에는 항상 ``establishes_identity: False`` 와
-``limitations`` 가 실린다. 통과했다고 해서 "상품 동일성이 검증됐다"고
-읽으면 안 된다. 진짜 동일성 보증은 지각 해시/임베딩 또는 사람 게이트가
-도입돼야 생긴다 — 그 전까지 이 필드가 그 사실을 매 리포트에 적어 남긴다.
+임계를 올려 통과시키지 **않았다** — 그건 검사를 고치는 게 아니라 통과를
+위조하는 것이다. 대신 리포트가 사실을 말한다: ``machine_verified: False``,
+``advisory_only: True``. dHash 거리는 계속 계산해 참고값으로 싣되 판정하지
+않고, 게이트는 **사람 서명**(``identity_signoff``)이 진다. 서명은 산출물
+sha256 에 묶여 재사용될 수 없고, 없으면 실패다.
 
-시임(seam)
-----------
+시임(seam) — 무엇을 검사하는가
+------------------------------
 ``frame_sampler`` / ``transcriber`` / ``audio_probe`` 는 전부 주입 가능한
-호출 가능 객체다. 기본 구현은 OpenMontage 의 ``frame_sampler`` ·
-``transcriber`` 로 셸아웃한다 (재구현하지 않는다). 테스트는 시임에
-합성 로컬 파일을 물려 네트워크 없이 돈다.
+호출 가능 객체다. 기본 구현은 OpenMontage 로 셸아웃한다 (재구현하지 않는다).
+
+**검사 대상 산출물도 시임이다.** 베이스 영상 에셋에는 자막을 넣지 않고
+(사용자 명령) 자막은 별도 후처리 패스에서 붙으므로, 산출물이 둘이다:
+자막 없는 **클린 마스터**(``master_path``)와 자막을 입힌 **최종
+납품물**(``video_path``). 각 검사 결과는 자기가 무엇을 봤는지
+``artifact_under_test`` 로 밝히며, 밝히지 않으면 ``run_qa`` 가 크게 죽는다.
+제휴 고지는 법적 의무라 **양쪽 모두**에서 확인한다.
 """
 
 from __future__ import annotations
@@ -108,8 +114,21 @@ BLACK_MAX_LUMA = 16.0
 #: 8x8 그레이 다운샘플이 이 오차 안에서 같으면 정지/중복 프레임.
 DUPLICATE_MAX_ABS_DIFF = 1
 
-#: dHash(64bit) 해밍 거리 상한 — 이보다 멀면 '명백한 붕괴'로 본다.
-#: 동일성을 *증명*하는 값이 아니다. 모듈 상단 고지 참조.
+#: dHash(64bit) 해밍 거리 — **참고값으로만 보고한다.**
+#:
+#: 2026-08-29 첫 유료 실행에서 이 값이 게이트로 쓰였고, 정상 영상이
+#: 거리 35(임계 16)로 반려됐다. 원인은 영상이 아니라 비교 자체다:
+#: 레퍼런스는 **흰 배경 카탈로그 컷아웃**이고 산출물은 **주방·손·자연광
+#: 속의 같은 상품**이다. dHash 는 프레임 전체의 밝기 구조를 보므로
+#: 배경이 바뀌면 상품이 완벽히 보존돼 있어도 거리가 벌어진다. 즉
+#: **어떤 정직한 인신(in-scene) I2V 컷도 이 비교를 통과할 수 없었다.**
+#: 통과가 구조적으로 불가능한 검사는 신호가 아니라 잡음이고, 잡음은
+#: 곧 무시되며, 무시되는 게이트는 없는 게이트다.
+#:
+#: 그래서 이 값은 이제 판정하지 않는다. 여전히 계산해 리포트에 싣되
+#: (완전 흑백 반전·빈 화면 같은 붕괴는 운영자 눈에 띈다) 합격/불합격은
+#: 아래 사람 서명이 진다. 임계를 올려 통과시키는 짓은 하지 않았다 —
+#: 그건 검사를 고치는 게 아니라 통과를 위조하는 것이다.
 MAX_DHASH_DISTANCE = 16
 
 #: 승인 카피에서 벗어나 **용인되는** 잔여 발화의 최대 글자 수.
@@ -117,20 +136,58 @@ MAX_DHASH_DISTANCE = 16
 #: 완결된 한 단어("무조건", "아니요", "확실히")이므로 절대 흡수하지 않는다.
 MAX_UNAPPROVED_CHARS = 1
 
+#: 승인 카피와 이만큼 이내로 어긋난 미검출 줄은 **전사 잡음 의심**으로
+#: 표시한다. 표시일 뿐 통과가 아니다 — §전사 잡음 참조.
+NEAR_MISS_MAX_EDITS = 2
+
 #: 같은 프로바이더로 재생성을 허용하는 최대 횟수. 넘으면 dead letter.
 MAX_REGEN_ATTEMPTS = 2
 
 #: 이 파이프라인에 지각적 검증이 존재하는가 — 지금은 아니다.
 PERCEPTUAL_VERIFICATION_AVAILABLE = False
 
+#: 상품 동일성 사람 서명을 낼 수 있는 감사 소유자.
+#: 현행: haneul-proof (서하늘) / 레거시: mungchi-proof.
+#: 핸들을 리터럴로 흩뿌리지 않는다 (AGENTS.md §10).
+IDENTITY_SIGNOFF_OWNERS: Tuple[str, ...] = ("haneul-proof", "mungchi-proof")
+
+# ---------------------------------------------------------------------------
+# 검사 대상 산출물 — 각 검사가 **무엇을 봤는지** 이름으로 말한다
+# ---------------------------------------------------------------------------
+#
+# 사용자 명령: "기본 영상 에셋 자체는 자막을 넣지 말도록 해". 그래서 compose 가
+# ① 자막 없는 **클린 마스터**와 ② 자막을 입힌 **최종 납품물** 두 산출물을 낸다
+# (그 분리는 video_compose 를 소유한 다른 에이전트의 작업이다 — 여기서는
+# 건드리지 않는다). QA 는 어느 쪽을 봤는지 리포트에 적어야 한다. 안 적으면
+# "고지 확인됨"이 두 산출물 중 어느 것에 대한 말인지 아무도 모른다.
+#
+# 계약이 아직 문서로 오지 않았으므로(task-21b 리포트 부재) **검사 대상은
+# 명시적 파라미터**다: ``run_qa(video_path=..., artifact_kind=...,
+# master_caption=..., master_overlay_texts=...)``. 계약이 도착하면 호출부만
+# 채우면 되고 검사 로직은 그대로다.
+
+ARTIFACT_CLEAN_MASTER = "clean_master"
+ARTIFACT_DELIVERABLE = "subtitled_deliverable"
+ARTIFACT_KINDS: Tuple[str, ...] = (ARTIFACT_CLEAN_MASTER, ARTIFACT_DELIVERABLE)
+
+#: 프레임 샘플 꼬리 경계 계산에 쓰는 기본 프레임레이트.
+#: mp4 헤더 실측(measure_mp4)은 fps 를 돌려주지 않으므로 렌더 파이프라인의
+#: 값을 쓴다. 낮게 잡을수록 꼬리 샘플이 안쪽으로 들어와 안전하다.
+DEFAULT_SAMPLE_FPS = 30.0
+
 IDENTITY_LIMITATIONS: Tuple[str, ...] = (
-    "no perceptual hash library is installed — this is a coarse structural "
-    "screen (dHash on an 8x8 luma downsample), not a perceptual match",
-    "no embedding similarity model is available offline",
-    "no human review gate exists in this pipeline",
+    "product identity is NOT machine-verified in this pipeline — the gate is "
+    "a recorded human sign-off, not an automated measurement",
+    "no perceptual hash library is installed and no embedding similarity "
+    "model is available offline",
+    "the reported dHash distance is ADVISORY ONLY: the reference is a "
+    "white-background catalogue cutout while the footage is the product "
+    "in-scene, so a large distance is expected for correct video and a small "
+    "distance would not prove correctness either",
     "label text, brand logo fidelity, colour/option variant and capacity "
-    "wording are NOT verified by this check",
-    "passing this check does NOT establish that the product is itself",
+    "wording are NOT verified by any automated check here",
+    "a passing result means only that a named human signed off on this exact "
+    "artifact (sha256-bound), not that any machine established identity",
 )
 
 DEFAULT_OPENMONTAGE_ROOT = os.environ.get(
@@ -412,15 +469,84 @@ def default_transcriber(video_path: str) -> Dict[str, Any]:
     return {"text": text, "language": data.get("language") or ""}
 
 
-def default_audio_probe(video_path: str) -> Dict[str, Any]:
-    """OpenMontage audio_energy 로 실제 오디오 레벨을 잰다."""
-    data = _openmontage_call("audio_energy", "AudioEnergy",
-                             {"input_path": video_path})
-    if "rms_dbfs" not in data:
+#: 오디오 프로브가 돌려줄 수 있는 모양들. **키 이름은 프로브가 정한다.**
+#: 2026-08-29 첫 유료 실행에서 이 검사가 실패한 진짜 이유가 여기였다:
+#: OpenMontage AudioEnergy 는 초당 ``energy_profile`` (LUFS) 를 돌려주는데
+#: 검사는 ``rms_dbfs`` 를 읽고 있었다. 없는 키를 읽으면 KeyError 가 나고,
+#: 그것이 '무음'과 구별되지 않는 실패 문구로 보고돼 영상을 의심하게 만들었다.
+#: 이제 모양을 명시적으로 판별하고, **모르는 모양이면 무음이 아니라
+#: '해석 불가'로 크게 실패한다** (실제 키 목록을 적어 진단 가능하게).
+AUDIO_SHAPE_RMS = "rms_dbfs"
+AUDIO_SHAPE_ENERGY_PROFILE = "energy_profile"
+
+
+def _interpret_audio_levels(levels: Any) -> Dict[str, Any]:
+    """프로브 출력을 {shape, level_db, ...} 로 정규화한다.
+
+    모양을 알아보지 못하면 ``CheckUnavailable`` — 조용히 0/무음 취급하지
+    않는다. 못 읽은 값을 무음으로 적으면 리포트가 운영자를 속인다.
+    """
+    if not isinstance(levels, dict):
         raise CheckUnavailable(
-            f"오디오 프로브가 rms_dbfs 를 돌려주지 않았다: {sorted(data)}")
-    return {"rms_dbfs": float(data["rms_dbfs"]),
-            "peak_dbfs": float(data.get("peak_dbfs", data["rms_dbfs"]))}
+            f"오디오 프로브 출력이 dict 가 아니다: {type(levels).__name__}")
+
+    if AUDIO_SHAPE_RMS in levels:
+        try:
+            rms = float(levels[AUDIO_SHAPE_RMS])
+        except (TypeError, ValueError) as exc:
+            raise CheckUnavailable(
+                f"rms_dbfs 를 수로 읽을 수 없다: {levels[AUDIO_SHAPE_RMS]!r} ({exc})"
+            ) from exc
+        peak = levels.get("peak_dbfs", rms)
+        try:
+            peak = float(peak)
+        except (TypeError, ValueError):
+            peak = rms
+        return {"shape": AUDIO_SHAPE_RMS, "level_db": rms, "peak_db": peak,
+                "unit": "dBFS", "basis": "probe-reported mean RMS"}
+
+    if AUDIO_SHAPE_ENERGY_PROFILE in levels:
+        profile = levels[AUDIO_SHAPE_ENERGY_PROFILE]
+        if not isinstance(profile, list) or not profile:
+            raise CheckUnavailable(
+                "energy_profile 이 비어 있다 — 잰 구간이 없으면 소리가 있는지 "
+                "판단할 수 없다 (무음과 구별되지 않는다)")
+        loudness: List[float] = []
+        for seg in profile:
+            if not isinstance(seg, dict) or "loudness_lufs" not in seg:
+                raise CheckUnavailable(
+                    f"energy_profile 항목에 loudness_lufs 가 없다: {seg!r}")
+            try:
+                loudness.append(float(seg["loudness_lufs"]))
+            except (TypeError, ValueError) as exc:
+                raise CheckUnavailable(
+                    f"loudness_lufs 를 수로 읽을 수 없다: {seg!r} ({exc})") from exc
+        # 가장 큰 초를 판정 기준으로 삼는다: 가장 시끄러운 순간조차 무음
+        # 문턱 아래면 그 영상은 실제로 소리를 내지 않는다. 평균을 쓰면
+        # 앞뒤 무음 여백이 말하는 구간을 희석해 오탐을 낸다.
+        peak = max(loudness)
+        active = [v for v in loudness if v > -120.0]
+        mean = sum(active) / len(active) if active else -120.0
+        return {"shape": AUDIO_SHAPE_ENERGY_PROFILE, "level_db": peak,
+                "peak_db": peak, "mean_db": round(mean, 2), "unit": "LUFS",
+                "seconds_measured": len(loudness),
+                "basis": "loudest 1s window of the probe's energy profile"}
+
+    raise CheckUnavailable(
+        "오디오 프로브 출력의 모양을 알아볼 수 없다 (기대: "
+        f"{AUDIO_SHAPE_RMS} 또는 {AUDIO_SHAPE_ENERGY_PROFILE}; 실제 키: "
+        f"{sorted(levels)}) — 해석하지 못한 출력을 무음으로도 정상으로도 "
+        "적지 않는다")
+
+
+def default_audio_probe(video_path: str) -> Dict[str, Any]:
+    """OpenMontage audio_energy 로 실제 오디오 레벨을 잰다.
+
+    출력 모양을 여기서 판정하지 않는다 — 검사 쪽 ``_interpret_audio_levels``
+    가 정본이다. 프로브는 원본 data 를 그대로 넘긴다 (두 벌 관리 금지).
+    """
+    return _openmontage_call("audio_energy", "AudioEnergy",
+                             {"input_path": video_path})
 
 
 # ---------------------------------------------------------------------------
@@ -485,13 +611,17 @@ def _ok(detail: str = "", **extra: Any) -> Dict[str, Any]:
 
 
 def check_technical_container(video_path: str,
-                              expected_seconds: int) -> Dict[str, Any]:
+                              expected_seconds: int,
+                              artifact_kind: str = ARTIFACT_DELIVERABLE
+                              ) -> Dict[str, Any]:
     """길이·세로·768P-class·H.264/AAC 를 **실측 mp4 박스로만** 판정한다."""
+    base = {"artifact_under_test": artifact_kind}
     try:
         m = measure_mp4(video_path)
     except Exception as exc:                     # noqa: BLE001 — fail closed
-        return _fail(f"실측 실패 — 산출물을 잴 수 없으면 통과시키지 않는다: {exc}",
-                     measured=None)
+        return dict(base, **_fail(
+            f"실측 실패 — 산출물을 잴 수 없으면 통과시키지 않는다: {exc}",
+            measured=None))
 
     problems: List[str] = []
     width, height = m["width"], m["height"]
@@ -523,34 +653,72 @@ def check_technical_container(video_path: str,
                         f"{ALLOWED_TOTAL_DURATIONS} 중 어느 것도 아니다")
 
     if problems:
-        return _fail("; ".join(problems), measured=m)
-    return _ok(f"실측 {width}x{height} {measured}s "
-               f"{m['video_codec_fourcc']}/{m['audio_codec_fourcc']}",
-               measured=m)
+        return dict(base, **_fail("; ".join(problems), measured=m))
+    return dict(base, **_ok(
+        f"실측 {width}x{height} {measured}s "
+        f"{m['video_codec_fourcc']}/{m['audio_codec_fourcc']}",
+        measured=m))
 
 
 def check_audio_signal(video_path: str,
-                       audio_probe: Optional[Callable]) -> Dict[str, Any]:
-    """오디오가 실제로 소리를 내는가. 못 재면 실패."""
+                       audio_probe: Optional[Callable],
+                       artifact_kind: str = ARTIFACT_DELIVERABLE
+                       ) -> Dict[str, Any]:
+    """오디오가 실제로 소리를 내는가. 못 재면 실패.
+
+    프로브의 출력 **모양**은 프로브가 정한다 — 여기서 키 이름을 가정하지
+    않는다. 알아보지 못한 모양은 무음이 아니라 '해석 불가'로 실패한다.
+    """
+    base = {"artifact_under_test": artifact_kind}
     probe = audio_probe or default_audio_probe
     try:
         levels = probe(video_path)
     except Exception as exc:                     # noqa: BLE001 — fail closed
-        return _fail(f"오디오 레벨을 잴 수 없다 ({type(exc).__name__}: {exc}) — "
-                     "돌지 못한 검사는 통과가 아니다", levels=None)
+        return dict(base, **_fail(
+            f"오디오 레벨을 잴 수 없다 ({type(exc).__name__}: {exc}) — "
+            "돌지 못한 검사는 통과가 아니다", levels=None))
     try:
-        rms = float(levels["rms_dbfs"])
-    except (KeyError, TypeError, ValueError) as exc:
-        return _fail(f"오디오 프로브 출력이 rms_dbfs 를 담고 있지 않다: {exc}",
-                     levels=levels)
-    if rms <= SILENCE_RMS_DBFS:
-        return _fail(f"무음이다: RMS {rms:.1f} dBFS <= {SILENCE_RMS_DBFS} dBFS",
-                     levels=levels)
-    return _ok(f"RMS {rms:.1f} dBFS", levels=levels)
+        reading = _interpret_audio_levels(levels)
+    except CheckUnavailable as exc:
+        return dict(base, **_fail(str(exc), levels=levels))
+
+    level = reading["level_db"]
+    if level <= SILENCE_RMS_DBFS:
+        return dict(base, **_fail(
+            f"무음이다: {level:.1f} {reading['unit']} <= {SILENCE_RMS_DBFS} "
+            f"({reading['basis']})", levels=levels, **reading))
+    return dict(base, **_ok(
+        f"{level:.1f} {reading['unit']} ({reading['basis']})",
+        levels=levels, **reading))
 
 
-def sample_timestamps(duration: float, cut_count: int) -> List[float]:
-    """첫/중간/전환/마지막 프레임 타임스탬프 (결정적)."""
+def sample_timestamps(duration: float, cut_count: int,
+                      fps: float = DEFAULT_SAMPLE_FPS) -> List[float]:
+    """첫/중간/전환/마지막 프레임 타임스탬프 (결정적).
+
+    꼬리 경계 — 2026-08-29 첫 유료 실행이 여기서 깨졌다. 3장 중 2장만
+    돌아와 검사가 규칙대로 '부분 샘플'로 반려했는데, 원인은 영상이 아니라
+    이 함수의 고정 오프셋이었다.
+
+    옛 코드는 ``duration - 0.05`` 를 마지막 샘플로 썼다. 이 값은 두 가지를
+    모른 채 정해진 상수다.
+
+    1. **프레임 간격을 모른다.** 24fps 에서 한 프레임은 0.0417초다.
+       0.05초 여유는 한 프레임 하고도 조금밖에 안 되며, 프레임 경계
+       바로 위에 떨어지면 그 시각에 표시되는 프레임이 없다.
+    2. **헤더 길이가 마지막 프레임 PTS 보다 최대 한 프레임 길다.** mp4
+       muxer 는 마지막 프레임의 *표시 구간 끝*을 길이로 적는다. 즉 실제
+       마지막 프레임의 시작은 ``duration - 1/fps`` 이고, 그보다 뒤를
+       요청하면 디코더가 돌려줄 프레임이 없다.
+
+    그래서 꼬리 샘플은 **마지막에서 두 번째 프레임의 시작**
+    (``duration - 2/fps``) 으로 잡는다. 한 프레임 분의 여유를 두면 위 두
+    가지 오차가 겹쳐도 반드시 실재하는 프레임을 가리킨다. 그러면서도
+    영상의 마지막 0.1초 안쪽이라 '끝을 봤다'는 성질은 잃지 않는다.
+
+    fail-closed 규칙(부분 샘플 = 실패)은 그대로다 — 경계를 고쳤을 뿐
+    못 받은 프레임을 봐주지 않는다.
+    """
     stamps = {0.0}
     for k in range(1, max(1, cut_count)):
         boundary = float(CUT_DURATION_SECONDS * k)
@@ -560,14 +728,22 @@ def sample_timestamps(duration: float, cut_count: int) -> List[float]:
         mid = CUT_DURATION_SECONDS * k + CUT_DURATION_SECONDS / 2.0
         if mid < duration:
             stamps.add(round(mid, 3))
-    stamps.add(round(max(0.0, duration - 0.05), 3))
+    frame_step = 1.0 / float(fps or DEFAULT_SAMPLE_FPS)
+    last = max(0.0, duration - 2.0 * frame_step)
+    # 내림으로 자른다 — 반올림하면 다시 프레임 경계 뒤로 넘어갈 수 있다.
+    stamps.add(int(last * 1000) / 1000.0)
     return sorted(stamps)
 
 
 def check_frames(frames: List[Dict[str, Any]], expected_count: int,
                  error: Optional[str] = None,
-                 measured_duration: Optional[float] = None) -> Dict[str, Any]:
+                 measured_duration: Optional[float] = None,
+                 artifact_kind: str = ARTIFACT_CLEAN_MASTER) -> Dict[str, Any]:
     """블랙 프레임·정지(중복) 프레임 검출. 샘플링이 안 됐으면 실패.
+
+    **검사 대상은 클린 마스터다.** 자막을 입힌 납품물에서 재면 자막 픽셀이
+    프레임 간 차이를 만들어 정지 영상 검출을 무력화한다 (자막만 바뀌어도
+    '다른 프레임'이 된다). 움직임은 베이스 에셋에서 판정해야 한다.
 
     추가로 **헤더 길이 vs 실제 미디어 길이 교차검증**을 한다. 컨테이너 검사의
     ``expected_seconds`` 는 선언된 스토리보드에서 온 값이라 독립 증거가 아니다.
@@ -575,20 +751,24 @@ def check_frames(frames: List[Dict[str, Any]], expected_count: int,
     읽은 유일한 증거이므로, 헤더가 10초라고 주장하는데 마지막 진짜 프레임이
     7초라면 여기서 잡는다.
     """
+    base = {"artifact_under_test": artifact_kind}
     if error:
-        return _fail(f"프레임을 샘플링할 수 없다 ({error}) — "
-                     "돌지 못한 검사는 통과가 아니다", sampled=0)
+        return dict(base, **_fail(
+            f"프레임을 샘플링할 수 없다 ({error}) — "
+            "돌지 못한 검사는 통과가 아니다", sampled=0))
     if len(frames) != expected_count:
-        return _fail(f"프레임 {expected_count}장을 요청했는데 {len(frames)}장만 "
-                     "돌아왔다 — 부분 샘플로 판정하지 않는다",
-                     sampled=len(frames), expected=expected_count)
+        return dict(base, **_fail(
+            f"프레임 {expected_count}장을 요청했는데 {len(frames)}장만 "
+            "돌아왔다 — 부분 샘플로 판정하지 않는다",
+            sampled=len(frames), expected=expected_count))
 
     stats, problems = [], []
     for frame in frames:
         try:
             rows, _w, _h = decode_png_gray(frame["path"])
         except CheckUnavailable as exc:
-            return _fail(f"프레임 디코딩 실패: {exc}", sampled=len(frames))
+            return dict(base, **_fail(f"프레임 디코딩 실패: {exc}",
+                                      sampled=len(frames)))
         mean, peak = _luma_stats(rows)
         small = _resize_gray(rows, 8, 8)
         stats.append({"timestamp": frame.get("timestamp"), "mean_luma": round(mean, 2),
@@ -624,84 +804,245 @@ def check_frames(frames: List[Dict[str, Any]], expected_count: int,
                 "선언 길이가 아니라 실제 미디어를 믿는다")
 
     if problems:
-        return _fail("; ".join(problems), sampled=len(frames), frames=summary,
-                     last_actual_timestamp=last_actual,
-                     measured_duration=measured_duration)
-    return _ok(f"{len(frames)}장 검사: 블랙 없음, 중복 없음",
-               sampled=len(frames), frames=summary,
-               last_actual_timestamp=last_actual,
-               measured_duration=measured_duration)
+        return dict(base, **_fail(
+            "; ".join(problems), sampled=len(frames), frames=summary,
+            last_actual_timestamp=last_actual,
+            measured_duration=measured_duration))
+    return dict(base, **_ok(
+        f"{len(frames)}장 검사: 블랙 없음, 중복 없음",
+        sampled=len(frames), frames=summary,
+        last_actual_timestamp=last_actual,
+        measured_duration=measured_duration))
 
 
 def check_product_identity_screen(frames: List[Dict[str, Any]],
                                   product_image_path: Optional[str],
-                                  error: Optional[str] = None) -> Dict[str, Any]:
-    """**부분 검사다.** 명백한 붕괴만 걸러낸다 — 동일성을 증명하지 않는다.
+                                  error: Optional[str] = None,
+                                  identity_signoff: Optional[Dict[str, Any]] = None,
+                                  artifact_path: Optional[str] = None,
+                                  artifact_kind: str = ARTIFACT_CLEAN_MASTER
+                                  ) -> Dict[str, Any]:
+    """상품 동일성은 **기계가 검증하지 않는다.** 사람 서명이 게이트다.
 
-    리포트에 ``establishes_identity=False`` 와 ``limitations`` 를 항상 싣는다.
-    모듈 상단의 고지를 함께 읽을 것.
+    왜 바꿨나 (2026-08-29, 첫 유료 실행)
+    ------------------------------------
+    이 검사는 원래 샘플 프레임의 dHash 를 원본 상품 사진과 비교해
+    거리 16 이하를 요구했다. 첫 유료 영상이 거리 35 로 반려됐고, 확인해
+    보니 영상은 멀쩡했다. 비교가 틀렸다: 레퍼런스는 흰 배경 카탈로그
+    컷아웃이고 산출물은 주방·손·자연광 속의 같은 상품이다. dHash 는
+    프레임 전체 밝기 구조를 보므로 배경이 다르면 상품이 완벽해도 거리가
+    벌어진다. **통과가 구조적으로 불가능한 검사였다.**
+
+    선택지는 셋이었다.
+    ① 임계를 35 이상으로 올린다 → 그러면 아무거나 통과한다. 통과를
+      위조하는 것이지 검사를 고치는 게 아니다.
+    ② 배경에 강인한 진짜 지각 비교를 넣는다 → 이 파이프라인에 지각 해시
+      라이브러리도 임베딩 모델도 없다. 지금 정직하게 만들 수 없다.
+    ③ **기계 검증이 없다는 사실을 리포트에 명시하고 사람 서명을 요구한다.**
+
+    ③ 을 택했다. dHash 거리는 계속 계산해 ``advisory_*`` 로 싣는다 —
+    흑백 반전이나 빈 화면 같은 붕괴는 운영자 눈에 띄고, 나중에 진짜
+    지각 검증이 들어오면 비교할 기준선이 된다. 하지만 **판정하지 않는다.**
+
+    게이트는 서명이다. 서명은 반드시
+    ``{signed_off_by, signed_off_at, artifact_sha256}`` 를 갖고,
+    ``artifact_sha256`` 은 **지금 검사 중인 바로 그 파일**의 해시여야 한다
+    (다른 영상에 대한 승인을 재사용하지 못하게). 서명자는
+    ``IDENTITY_SIGNOFF_OWNERS`` 안에 있어야 하며 구 핸들도 허용한다
+    (AGENTS.md §10 — 개명 소급 무효화 금지).
+
+    서명이 없으면 **실패**다. 우회로는 없다.
     """
-    base = {
+    base: Dict[str, Any] = {
+        "artifact_under_test": artifact_kind,
         "establishes_identity": False,
+        "machine_verified": False,
+        "advisory_only": True,
         "limitations": list(IDENTITY_LIMITATIONS),
-        "method": "dHash(8x8 luma) Hamming distance vs verified source image",
+        "method": "recorded human sign-off (gate) + advisory dHash distance "
+                  "(reported, never judged)",
         "perceptual_verification_available": PERCEPTUAL_VERIFICATION_AVAILABLE,
+        "requires_human_signoff": True,
     }
+
+    # --- 참고값: 돌 수 있으면 재고, 못 재면 그 사실을 적는다 (판정은 안 한다)
+    advisory_error: Optional[str] = None
+    distances: List[Dict[str, Any]] = []
     if error:
-        return dict(base, **_fail(
-            f"프레임을 샘플링할 수 없어 상품 스크리닝을 돌리지 못했다 ({error}) — "
-            "돌지 못한 검사는 통과가 아니다"))
-    if not frames:
-        return dict(base, **_fail("샘플 프레임이 없다 — 스크리닝 불가"))
-    if not product_image_path:
-        return dict(base, **_fail(
-            "검증된 원본 상품 이미지 경로가 주어지지 않았다 — 비교 기준이 없으면 "
-            "통과시키지 않는다"))
-    try:
-        source_rows, _w, _h = decode_png_gray(product_image_path)
-    except CheckUnavailable as exc:
-        return dict(base, **_fail(
-            f"원본 상품 이미지를 읽을 수 없다: {exc} — 비교 기준 없이 통과시키지 않는다"))
-
-    source_hash = dhash(source_rows)
-    base["source_sha256"] = _sha256_file(product_image_path)
-    distances = []
-    for frame in frames:
+        advisory_error = f"프레임 샘플링 실패: {error}"
+    elif not frames:
+        advisory_error = "샘플 프레임이 없다"
+    elif not product_image_path:
+        advisory_error = "원본 상품 이미지 경로가 없다"
+    else:
         try:
-            rows, _fw, _fh = decode_png_gray(frame["path"])
+            source_rows, _w, _h = decode_png_gray(product_image_path)
+            source_hash = dhash(source_rows)
+            base["source_sha256"] = _sha256_file(product_image_path)
+            for frame in frames:
+                rows, _fw, _fh = decode_png_gray(frame["path"])
+                distances.append({"timestamp": frame.get("timestamp"),
+                                  "dhash_distance": hamming(source_hash,
+                                                            dhash(rows))})
         except CheckUnavailable as exc:
-            return dict(base, **_fail(f"프레임 디코딩 실패: {exc}"))
-        distances.append({"timestamp": frame.get("timestamp"),
-                          "dhash_distance": hamming(source_hash, dhash(rows))})
-    base["distances"] = distances
-    best = min(d["dhash_distance"] for d in distances)
-    base["best_distance"] = best
-    base["threshold"] = MAX_DHASH_DISTANCE
+            advisory_error = str(exc)
+            distances = []
 
-    if best > MAX_DHASH_DISTANCE:
+    base["advisory_distances"] = distances
+    base["advisory_best_distance"] = (min(d["dhash_distance"] for d in distances)
+                                      if distances else None)
+    base["advisory_reference_threshold"] = MAX_DHASH_DISTANCE
+    base["advisory_error"] = advisory_error
+    base["advisory_note"] = (
+        "이 거리는 판정에 쓰이지 않는다. 흰 배경 컷아웃 vs 인신 촬영이라 "
+        "정상 영상에서도 크게 나오는 값이다.")
+
+    # --- fail closed: 참고값조차 기록하지 못했으면 통과시키지 않는다.
+    # 거리는 판정에 쓰지 않지만, 사람 서명은 **증거와 함께** 남아야 한다.
+    # 프레임도 원본 이미지도 없이 서명만 있는 리포트는 무엇을 보고 승인했는지
+    # 되짚을 수 없다 — 그래서 여기서 닫는다 (서명 우회로가 아니다).
+    if advisory_error:
         return dict(base, **_fail(
-            f"모든 샘플 프레임이 원본 상품 이미지와 구조적으로 크게 어긋난다 "
-            f"(최소 dHash 거리 {best} > {MAX_DHASH_DISTANCE}) — 상품이 붕괴했을 "
-            "가능성이 높다"))
+            f"동일성 판단에 필요한 증거를 기록하지 못했다 ({advisory_error}) — "
+            "돌지 못한 검사는 통과가 아니다. 사람 서명은 참고 프레임·원본 "
+            "이미지와 함께 남아야 한다"))
+
+    # --- 게이트: 사람 서명
+    if not isinstance(identity_signoff, dict) or not identity_signoff:
+        return dict(base, **_fail(
+            "상품 동일성은 이 파이프라인에서 기계로 검증되지 않는다. "
+            "사람 서명(identity_signoff)이 없으므로 통과시키지 않는다 — "
+            f"필요: signed_off_by({'/'.join(IDENTITY_SIGNOFF_OWNERS)}), "
+            "signed_off_at, artifact_sha256"))
+
+    owner = str(identity_signoff.get("signed_off_by") or "")
+    if owner not in IDENTITY_SIGNOFF_OWNERS:
+        return dict(base, **_fail(
+            f"동일성 서명자 {owner!r} 가 승인된 감사 소유자가 아니다 "
+            f"{IDENTITY_SIGNOFF_OWNERS}", signed_off_by=owner))
+    if not str(identity_signoff.get("signed_off_at") or "").strip():
+        return dict(base, **_fail(
+            "동일성 서명에 signed_off_at 이 없다 — 언제 본 승인인지 알 수 없다",
+            signed_off_by=owner))
+
+    claimed = str(identity_signoff.get("artifact_sha256") or "").lower()
+    if not claimed:
+        return dict(base, **_fail(
+            "동일성 서명에 artifact_sha256 이 없다 — 어느 산출물에 대한 "
+            "승인인지 묶이지 않으면 다른 영상에 재사용된다", signed_off_by=owner))
+    actual = _sha256_file(artifact_path) if artifact_path else ""
+    if not actual:
+        return dict(base, **_fail(
+            f"검사 대상 산출물의 해시를 잴 수 없다 ({artifact_path!r}) — "
+            "서명을 대조할 수 없으면 통과가 아니다", signed_off_by=owner))
+    if claimed != actual:
+        return dict(base, **_fail(
+            f"동일성 서명이 다른 산출물에 대한 것이다: 서명 {claimed[:16]}… != "
+            f"검사 대상 {actual[:16]}… — 승인 재사용을 허용하지 않는다",
+            signed_off_by=owner, signed_artifact_sha256=claimed,
+            artifact_sha256=actual))
+
     return dict(base, **_ok(
-        f"명백한 붕괴는 없다 (최소 dHash 거리 {best} <= {MAX_DHASH_DISTANCE}). "
-        "주의: 이 통과는 상품 동일성을 증명하지 않는다 — limitations 참조"))
+        f"{owner} 가 이 산출물({actual[:16]}…)에 대해 상품 동일성을 사람 눈으로 "
+        f"확인했다 ({identity_signoff.get('signed_off_at')}). 기계 검증은 "
+        f"없다 — 참고 dHash 거리 {base['advisory_best_distance']} "
+        "(판정에 쓰이지 않음). limitations 참조",
+        signed_off_by=owner, artifact_sha256=actual,
+        signed_off_at=identity_signoff.get("signed_off_at"),
+        signoff_note=identity_signoff.get("note")))
+
+
+def _edit_distance(a: str, b: str, cap: int) -> int:
+    """레벤슈타인 거리 (cap 초과는 cap+1 로 잘라 반환 — 진단용이라 충분).
+
+    **판정에 쓰지 않는다.** 실패한 줄이 '전사 잡음스러운가'를 표시하는
+    용도뿐이다. 판정에 쓰는 순간 드리프트 감지력이 깎인다.
+    """
+    if abs(len(a) - len(b)) > cap:
+        return cap + 1
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1,
+                           prev[j - 1] + (ca != cb)))
+        prev = cur
+        if min(prev) > cap:
+            return cap + 1
+    return prev[-1]
+
+
+def _near_misses(normalized: str, missing: Sequence[str]) -> List[Dict[str, Any]]:
+    """검출 실패한 승인 줄 중 전사 잡음으로 설명되는 것들을 찾아 표시한다."""
+    out: List[Dict[str, Any]] = []
+    for line in missing:
+        norm = normalize_speech(line)
+        if not norm:
+            continue
+        best = (NEAR_MISS_MAX_EDITS + 1, "")
+        window = len(norm)
+        for start in range(max(1, len(normalized) - window + 1
+                               + NEAR_MISS_MAX_EDITS)):
+            for width in range(max(1, window - NEAR_MISS_MAX_EDITS),
+                               window + NEAR_MISS_MAX_EDITS + 1):
+                chunk = normalized[start:start + width]
+                if not chunk:
+                    continue
+                d = _edit_distance(norm, chunk, NEAR_MISS_MAX_EDITS)
+                if d < best[0]:
+                    best = (d, chunk)
+        if best[0] <= NEAR_MISS_MAX_EDITS:
+            out.append({"approved_line": line, "heard_as": best[1],
+                        "edit_distance": best[0]})
+    return out
 
 
 def check_spoken_content(transcript: Optional[str],
                          approved_lines: Sequence[str],
-                         error: Optional[str] = None) -> Dict[str, Any]:
-    """실제 발화가 승인된 카피와 같은가. 전사가 안 되면 실패."""
+                         error: Optional[str] = None,
+                         artifact_kind: str = ARTIFACT_CLEAN_MASTER
+                         ) -> Dict[str, Any]:
+    """실제 발화가 승인된 카피와 같은가. 전사가 안 되면 실패.
+
+    **검사 대상은 클린 마스터의 오디오다.** 자막 패스는 오디오를 건드리지
+    않으므로 마스터에서 재는 게 맞고, 자막 렌더링 실패가 발화 판정을
+    오염시키지도 않는다.
+
+    전사 잡음에 대한 결정 (2026-08-29)
+    ----------------------------------
+    faster-whisper base 가 "마인드셋"을 "마인드색"으로 적는 건 실측된
+    사실이고, 그래서 **멀쩡한 유료 영상이 여기서 반려될 수 있다.**
+    그럼에도 근사 매칭으로 흡수하지 **않는다**:
+
+    한국어는 1음절 치환이 의미를 뒤집는다. "잘 커요"/"안 커요",
+    "됩니다"/"안됩니다", "있어요"/"없어요". 편집거리 1~2 를 통과시키면
+    이 쌍들이 전부 같은 문장이 된다 — 승인 카피 대조가 존재하는 이유가
+    바로 그 차이를 잡는 것인데, 그걸 포기하는 셈이다. 전사기는 브랜드명을
+    틀리지만 **모델이 다른 말을 하는 드리프트도 대개 몇 글자다.** 잡음과
+    드리프트를 문자열 거리로는 구별할 수 없다.
+
+    그래서 게이트는 닫아둔 채, 실패 리포트에 ``near_misses`` 와
+    ``likely_transcription_noise`` 를 붙인다. 운영자는 이 표시를 보고
+    "재생성"이 아니라 "사람이 1분 듣고 판단"으로 라우팅할 수 있다.
+    오탐 비용을 게이트 완화가 아니라 **정확한 진단**으로 낮춘 것이다.
+    진짜 해법은 승인 카피를 TTS 로 읽혀 기준 전사를 만들어 두는 것인데
+    (같은 모델의 같은 오류가 양쪽에 나타나 상쇄된다), 그건 생성 쪽 작업이라
+    여기서 하지 않는다 — 미해결로 남긴다.
+    """
+    base = {"artifact_under_test": artifact_kind}
     if error:
-        return _fail(f"오디오를 전사할 수 없다 ({error}) — 승인 카피 대조를 "
-                     "돌리지 못했으므로 통과가 아니다", transcript=None)
+        return dict(base, **_fail(
+            f"오디오를 전사할 수 없다 ({error}) — 승인 카피 대조를 "
+            "돌리지 못했으므로 통과가 아니다", transcript=None))
     if not approved_lines:
-        return _fail("승인된 나레이션이 스토리보드에 하나도 없다 — "
-                     "무엇과 대조해야 할지 알 수 없다")
+        return dict(base, **_fail(
+            "승인된 나레이션이 스토리보드에 하나도 없다 — "
+            "무엇과 대조해야 할지 알 수 없다"))
     normalized = normalize_speech(transcript)
     if not normalized:
-        return _fail("전사 결과가 비어 있다 — 영상이 실제로 말을 하는지 확인 불가",
-                     transcript=transcript)
+        return dict(base, **_fail(
+            "전사 결과가 비어 있다 — 영상이 실제로 말을 하는지 확인 불가",
+            transcript=transcript))
 
     # 컷 순서대로만 찾는다 — 3컷 서사에서 순서가 뒤바뀌면 다른 영상이다.
     # 각 줄은 직전 줄이 끝난 지점(cursor) 이후에서만 매칭된다.
@@ -728,64 +1069,128 @@ def check_spoken_content(transcript: Optional[str],
     residual = "".join(residual_parts)
 
     if missing:
-        return _fail(
+        near = _near_misses(normalized, missing)
+        return dict(base, **_fail(
             f"승인된 나레이션 {len(missing)}줄이 실제 발화에 없다: {missing!r} — "
-            f"전사: {str(transcript)[:200]!r}",
+            f"전사: {str(transcript)[:200]!r}"
+            + (f" | 주의: {len(near)}줄이 편집거리 {NEAR_MISS_MAX_EDITS} 이내로 "
+               "가깝다 — 전사기 오류일 수 있으니 재생성 전에 사람이 들어볼 것"
+               if near else ""),
             transcript=transcript, missing_lines=missing,
-            out_of_order_lines=out_of_order)
+            near_misses=near, likely_transcription_noise=bool(near),
+            out_of_order_lines=out_of_order))
     if out_of_order:
-        return _fail(
+        return dict(base, **_fail(
             f"승인된 나레이션 {len(out_of_order)}줄이 스토리보드 컷 순서와 다른 "
             f"자리에서 발화됐다: {out_of_order!r} — 순서가 바뀌면 다른 서사다",
             transcript=transcript, out_of_order_lines=out_of_order,
-            missing_lines=[])
+            near_misses=[], likely_transcription_noise=False,
+            missing_lines=[]))
     if len(residual) > MAX_UNAPPROVED_CHARS:
-        return _fail(
+        return dict(base, **_fail(
             f"승인되지 않은 발화가 {len(residual)}자 섞여 있다: {residual[:120]!r} — "
             "승인되지 않은 말은 영상이 하지 않는다",
-            transcript=transcript, unapproved_residual=residual)
+            transcript=transcript, unapproved_residual=residual,
+            near_misses=[], likely_transcription_noise=False))
     # 통과해도 흡수된 잔여를 리포트에 남긴다 — 운영자가 무엇이 용인됐는지 본다.
-    return _ok(f"승인 나레이션 {len(approved_lines)}줄과 순서까지 일치 "
-               f"(용인된 잔여 {len(residual)}자: {residual!r})",
-               transcript=transcript, unapproved_residual=residual,
-               unapproved_residual_tolerance=MAX_UNAPPROVED_CHARS,
-               out_of_order_lines=[])
+    return dict(base, **_ok(
+        f"승인 나레이션 {len(approved_lines)}줄과 순서까지 일치 "
+        f"(용인된 잔여 {len(residual)}자: {residual!r})",
+        transcript=transcript, unapproved_residual=residual,
+        unapproved_residual_tolerance=MAX_UNAPPROVED_CHARS,
+        near_misses=[], likely_transcription_noise=False,
+        out_of_order_lines=[]))
 
 
 def check_disclosure(caption: str, overlay_texts: Sequence[str],
                      market: str,
-                     storyboard: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """제휴 고지 불변 문구가 그대로 살아 있는가 (SSOT 불변 규칙 2)."""
+                     storyboard: Optional[Dict[str, Any]] = None,
+                     master_caption: Optional[str] = None,
+                     master_overlay_texts: Optional[Sequence[str]] = None
+                     ) -> Dict[str, Any]:
+    """제휴 고지 불변 문구가 그대로 살아 있는가 (SSOT 불변 규칙 2).
+
+    **양쪽 산출물에서 확인한다.** 베이스 영상 에셋에는 자막을 넣지 않고
+    자막은 별도 후처리 패스에서 붙이지만, 제휴 고지는 자막이 아니라 **법적
+    의무**이고 전 구간에 존재해야 한다. 자막 패스가 실패하거나 마스터가
+    단독으로 유출돼도 고지는 붙어 있어야 하므로, 클린 마스터와 최종
+    납품물 **둘 다** 검사한다. 한쪽만 보면 "고지 확인됨"이 어느 산출물에
+    대한 말인지 알 수 없다.
+
+    마스터 쪽 텍스트를 주지 않으면 납품물 텍스트를 마스터 텍스트로도
+    본다 (compose 분리 전 단일 산출물 경로 — 그때는 실제로 같은 파일이다).
+    """
+    caption = str(caption or "")
+    overlays = [str(t or "") for t in (overlay_texts or [])]
+    if master_caption is None:
+        master_caption = caption
+        master_overlays = list(overlays)
+    else:
+        master_caption = str(master_caption)
+        master_overlays = [str(t or "") for t in (master_overlay_texts or [])]
+
+    base: Dict[str, Any] = {
+        "artifact_under_test": ARTIFACT_DELIVERABLE,
+        "artifacts_verified": [ARTIFACT_CLEAN_MASTER, ARTIFACT_DELIVERABLE],
+    }
     try:
         required = vs.DISCLOSURE_TEXT[market]
     except KeyError:
-        return _fail(f"알 수 없는 시장이라 고지 문구를 정할 수 없다: {market!r}")
+        return dict(base, **_fail(
+            f"알 수 없는 시장이라 고지 문구를 정할 수 없다: {market!r}"))
 
     obligation = ((storyboard or {}).get("disclosure") or {})
     if obligation and not obligation.get("required", True):
-        return _fail("스토리보드가 제휴 고지 의무를 해제하려 한다 — "
-                     "고지는 해제 대상이 아니다 (SSOT 불변 규칙 2)")
+        return dict(base, **_fail(
+            "스토리보드가 제휴 고지 의무를 해제하려 한다 — "
+            "고지는 해제 대상이 아니다 (SSOT 불변 규칙 2)"))
     if obligation and obligation.get("text") and obligation["text"] != required:
-        return _fail(f"스토리보드 고지 문구가 불변 문구와 다르다: "
-                     f"{obligation['text']!r} != {required!r}")
+        return dict(base, **_fail(
+            f"스토리보드 고지 문구가 불변 문구와 다르다: "
+            f"{obligation['text']!r} != {required!r}"))
 
-    in_caption = required in str(caption or "")
-    in_overlay = any(required in str(t or "") for t in (overlay_texts or []))
-    if not in_caption:
-        return _fail(f"캡션에 {market} 제휴 고지 불변 문구가 없다 (문구 변형·생략 금지): "
-                     f"{required!r}", in_caption=False, in_overlay=in_overlay)
-    return _ok(f"{market} 고지 문구 확인 (caption={in_caption}, overlay={in_overlay})",
-               in_caption=in_caption, in_overlay=in_overlay)
+    per_artifact = {
+        ARTIFACT_CLEAN_MASTER: {
+            "in_caption": required in master_caption,
+            "in_overlay": any(required in t for t in master_overlays),
+        },
+        ARTIFACT_DELIVERABLE: {
+            "in_caption": required in caption,
+            "in_overlay": any(required in t for t in overlays),
+        },
+    }
+    base["per_artifact"] = per_artifact
+
+    failed = [kind for kind in ARTIFACT_KINDS
+              if not per_artifact[kind]["in_caption"]]
+    if failed:
+        return dict(base, **_fail(
+            f"{failed} 에 {market} 제휴 고지 불변 문구가 없다 "
+            f"(문구 변형·생략 금지): {required!r} — 고지는 클린 마스터와 최종 "
+            "납품물 양쪽에 있어야 한다",
+            in_caption=per_artifact[ARTIFACT_DELIVERABLE]["in_caption"],
+            in_overlay=per_artifact[ARTIFACT_DELIVERABLE]["in_overlay"],
+            missing_on=failed))
+    return dict(base, **_ok(
+        f"{market} 고지 문구를 {list(ARTIFACT_KINDS)} 양쪽에서 확인",
+        in_caption=per_artifact[ARTIFACT_DELIVERABLE]["in_caption"],
+        in_overlay=per_artifact[ARTIFACT_DELIVERABLE]["in_overlay"],
+        missing_on=[]))
 
 
 def check_forbidden_claims(caption: str, transcript: Optional[str],
                            overlay_texts: Sequence[str]) -> Dict[str, Any]:
     """캡션·전사·오버레이 세 면 전부에서 금지 표현을 스캔한다.
 
+    **검사 대상은 자막이 입혀진 최종 납품물이다.** 화면에 실제로 뜨는
+    글자(=자막/오버레이)가 여기서 판정되며, 자막 패스가 새 텍스트를 넣을
+    수 있으므로 클린 마스터만 봐서는 안 된다.
+
     전사가 실패해 본문이 없으면 그 면은 ``scanned`` 가 아니라 ``unscanned``
     로 보고한다 — 읽지 못한 면을 '깨끗하다'고 적으면 리포트가 운영자를 속인다.
     (게이트 자체는 ``spoken_content`` 에서 이미 fail closed 된다.)
     """
+    base = {"artifact_under_test": ARTIFACT_DELIVERABLE}
     surfaces = {
         "caption": [str(caption or "")],
         "transcript": [str(transcript or "")],
@@ -805,13 +1210,15 @@ def check_forbidden_claims(caption: str, transcript: Optional[str],
             hits[name] = sorted(set(found))
     if hits:
         parts = [f"{k}: {v}" for k, v in sorted(hits.items())]
-        return _fail("금지 표현(효능 암시·가짜 체험담) 검출 — " + "; ".join(parts),
-                     hits=hits, scanned=scanned, unscanned=unscanned)
+        return dict(base, **_fail(
+            "금지 표현(효능 암시·가짜 체험담) 검출 — " + "; ".join(parts),
+            hits=hits, scanned=scanned, unscanned=unscanned))
     detail = f"{len(scanned)}개 면에서 금지 표현 없음"
     if unscanned:
         detail += (f" — 단 {unscanned} 면은 본문이 없어 **스캔하지 못했다** "
                    "(깨끗하다는 뜻이 아니다)")
-    return _ok(detail, hits={}, scanned=scanned, unscanned=unscanned)
+    return dict(base, **_ok(detail, hits={}, scanned=scanned,
+                            unscanned=unscanned))
 
 
 def _sha256_file(path: str) -> str:
@@ -834,6 +1241,11 @@ def run_qa(*, job_id: str, run_id: str, video_path: str,
            storyboard: Dict[str, Any], caption: str,
            overlay_texts: Optional[Sequence[str]] = None,
            product_image_path: Optional[str] = None,
+           identity_signoff: Optional[Dict[str, Any]] = None,
+           master_path: Optional[str] = None,
+           master_caption: Optional[str] = None,
+           master_overlay_texts: Optional[Sequence[str]] = None,
+           fps: float = DEFAULT_SAMPLE_FPS,
            frame_sampler: Optional[Callable] = None,
            transcriber: Optional[Callable] = None,
            audio_probe: Optional[Callable] = None,
@@ -842,9 +1254,24 @@ def run_qa(*, job_id: str, run_id: str, video_path: str,
 
     돌지 못한 검사는 실패로 집계된다 (fail closed). 결과는 검사별 pass/fail 과
     진단 정보를 담은 계약 ``QAReport`` 다.
+
+    검사 대상 산출물 (seam)
+    -----------------------
+    베이스 영상 에셋에는 자막이 없고 자막은 별도 후처리 패스에서 붙는다.
+    그래서 **어느 산출물을 검사하는지는 호출자가 명시한다**:
+
+    - ``video_path`` = 최종 납품물 (자막 포함). 컨테이너·오디오·금지표현.
+    - ``master_path`` = 자막 없는 클린 마스터. 프레임 움직임·발화·상품
+      동일성 서명. 생략하면 ``video_path`` 를 쓴다 (compose 분리 전 경로 —
+      그때는 실제로 같은 파일이므로 정직하다).
+    - 제휴 고지는 **양쪽 모두**에서 확인한다 (법적 의무, 전 구간 존재).
+
+    각 검사 결과에는 ``artifact_under_test`` 가 실린다. 이 값을 리포트에서
+    빼면 "고지 확인됨"이 어느 파일에 대한 말인지 아무도 모른다.
     """
     storyboard = storyboard or {}
     overlay_texts = list(overlay_texts or [])
+    master_path = master_path or video_path
     market = storyboard.get("market") or ""
     cuts = storyboard.get("cuts") or []
     cut_count = max(1, len(cuts))
@@ -853,17 +1280,18 @@ def run_qa(*, job_id: str, run_id: str, video_path: str,
 
     checks: Dict[str, Any] = {}
 
-    # 1. 컨테이너 실측
+    # 1. 컨테이너 실측 — 최종 납품물 (실제로 발행되는 파일)
     checks[CHECK_TECHNICAL_CONTAINER] = check_technical_container(
-        video_path, expected_seconds)
+        video_path, expected_seconds, ARTIFACT_DELIVERABLE)
 
-    # 2. 오디오 신호
-    checks[CHECK_TECHNICAL_AUDIO] = check_audio_signal(video_path, audio_probe)
+    # 2. 오디오 신호 — 최종 납품물 (자막 패스가 오디오를 잃어버리는 경우도 잡는다)
+    checks[CHECK_TECHNICAL_AUDIO] = check_audio_signal(
+        video_path, audio_probe, ARTIFACT_DELIVERABLE)
 
-    # 3. 프레임 샘플링 (실측 길이 우선, 못 재면 계획 길이)
+    # 3. 프레임 샘플링 — 클린 마스터 (자막 픽셀이 정지 검출을 무력화하지 않게)
     measured = (checks[CHECK_TECHNICAL_CONTAINER].get("measured") or {})
     duration = float(measured.get("duration_seconds") or expected_seconds)
-    stamps = sample_timestamps(duration, cut_count)
+    stamps = sample_timestamps(duration, cut_count, fps)
 
     tmp_holder = None
     if workdir is None:
@@ -875,7 +1303,7 @@ def run_qa(*, job_id: str, run_id: str, video_path: str,
     frames: List[Dict[str, Any]] = []
     sample_error: Optional[str] = None
     try:
-        frames = list(sampler(video_path, stamps, frames_dir) or [])
+        frames = list(sampler(master_path, stamps, frames_dir) or [])
     except Exception as exc:                     # noqa: BLE001 — fail closed
         sample_error = f"{type(exc).__name__}: {exc}"
 
@@ -883,27 +1311,33 @@ def run_qa(*, job_id: str, run_id: str, video_path: str,
         frames, len(stamps), sample_error,
         measured_duration=(float(measured["duration_seconds"])
                            if measured.get("duration_seconds") is not None
-                           else None))
+                           else None),
+        artifact_kind=ARTIFACT_CLEAN_MASTER)
     checks[CHECK_PRODUCT_IDENTITY] = check_product_identity_screen(
-        frames, product_image_path, sample_error)
+        frames, product_image_path, sample_error,
+        identity_signoff=identity_signoff, artifact_path=master_path,
+        artifact_kind=ARTIFACT_CLEAN_MASTER)
 
-    # 4. 발화 내용
+    # 4. 발화 내용 — 클린 마스터의 오디오 (자막 패스는 오디오를 바꾸지 않는다)
     transcribe = transcriber or default_transcriber
     transcript: Optional[str] = None
     transcribe_error: Optional[str] = None
     try:
-        result = transcribe(video_path)
+        result = transcribe(master_path)
         transcript = (result.get("text") if isinstance(result, dict)
                       else str(result or ""))
     except Exception as exc:                     # noqa: BLE001 — fail closed
         transcribe_error = f"{type(exc).__name__}: {exc}"
 
     checks[CHECK_SPOKEN_CONTENT] = check_spoken_content(
-        transcript, approved_voice_lines(storyboard), transcribe_error)
+        transcript, approved_voice_lines(storyboard), transcribe_error,
+        artifact_kind=ARTIFACT_CLEAN_MASTER)
 
-    # 5. 정책
+    # 5. 정책 — 고지는 양쪽, 금지표현은 자막이 입혀진 납품물
     checks[CHECK_POLICY_DISCLOSURE] = check_disclosure(
-        caption, overlay_texts, market, storyboard)
+        caption, overlay_texts, market, storyboard,
+        master_caption=master_caption,
+        master_overlay_texts=master_overlay_texts)
     checks[CHECK_POLICY_CLAIMS] = check_forbidden_claims(
         caption, transcript, overlay_texts)
 
@@ -914,6 +1348,15 @@ def run_qa(*, job_id: str, run_id: str, video_path: str,
     missing = [n for n in CHECK_NAMES if n not in checks]
     if missing:
         raise QAError(f"검사 결과가 누락됐다: {missing} — 부분 리포트로 발행하지 않는다")
+
+    # 어느 산출물을 봤는지 밝히지 않은 검사도 구멍이다 — 리포트를 읽는 사람이
+    # "고지 확인됨"을 잘못된 파일에 대한 말로 읽게 된다.
+    unnamed = [n for n in CHECK_NAMES
+               if checks[n].get("artifact_under_test") not in ARTIFACT_KINDS]
+    if unnamed:
+        raise QAError(
+            f"검사 {unnamed} 가 어느 산출물을 봤는지 밝히지 않았다 — "
+            "대상 없는 판정은 리포트에 싣지 않는다")
 
     failures = [f"{name}: {checks[name].get('detail') or 'failed'}"
                 for name in CHECK_NAMES if not checks[name]["passed"]]
