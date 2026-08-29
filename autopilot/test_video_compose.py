@@ -1177,5 +1177,108 @@ class TestStoryboardOwnsTheCta(unittest.TestCase):
         self.assertEqual(board.to_dict()["cta"]["text"], vs.CTA_TEXT["KR"])
 
 
+class TestDisclosureIsQuiet(unittest.TestCase):
+    """고지는 '보이기만' 하면 되는 게 아니라 **조용해야** 한다.
+
+    운영자 검수(2026-08-29): "고지를 좀 더 작게, 더 눈에 안 띄게 만들어줘.
+    그냥 보이기만 하면 되는 거 아니야?"
+
+    그러나 제휴 고지는 법적 의무다. 아래 테스트는 양쪽을 동시에 못 박는다 —
+    상한(눈에 덜 띄게)과 하한(읽을 수 있게)을 둘 다 검사한다.
+    """
+
+    def _style(self):
+        plan = vcm.build_master_overlay_plan(
+            disclosure_text=DISCLOSURE_TEXT["KR"], total_seconds=10)
+        return plan["disclosure"]["style"]
+
+    def test_disclosure_type_is_small_but_above_the_legibility_floor(self):
+        style = self._style()
+        # 768px 폭 세로 프레임 기준. 하한 미만이면 폰에서 못 읽는다.
+        self.assertGreaterEqual(style["font_size_px"],
+                                vcm.MIN_DISCLOSURE_FONT_PX)
+        self.assertLessEqual(style["font_size_px"],
+                             vcm.MAX_DISCLOSURE_FONT_PX,
+                             "고지가 타이틀 카드처럼 커졌다")
+
+    def test_disclosure_weight_is_not_bold(self):
+        self.assertLessEqual(self._style()["font_weight"],
+                             vcm.DISCLOSURE_FONT_WEIGHT)
+
+    def test_disclosure_scrim_is_subtle_but_present(self):
+        style = self._style()
+        self.assertTrue(style["background_scrim"], "스크림 제거는 밝은 배경에서 "
+                                                   "고지를 지우는 것과 같다")
+        self.assertLessEqual(style["scrim_opacity"], 0.40,
+                             "스크림이 여전히 무거운 검은 띠다")
+        self.assertGreaterEqual(style["scrim_opacity"], 0.20,
+                                "스크림이 너무 옅어 밝은 영상에서 고지가 날아간다")
+
+    def test_disclosure_text_stays_fully_opaque(self):
+        # 크기·굵기·스크림으로 조용하게 만들되, 글자 자체를 흐리지는 않는다.
+        self.assertEqual(self._style()["opacity"], 1.0)
+
+    def test_disclosure_layer_still_spans_the_whole_runtime(self):
+        plan = vcm.build_master_overlay_plan(
+            disclosure_text=DISCLOSURE_TEXT["KR"], total_seconds=15)
+        disc = plan["disclosure"]
+        self.assertEqual((disc["start_seconds"], disc["end_seconds"]), (0, 15))
+
+
+class TestKoreanWrapIsVisualOnly(unittest.TestCase):
+    """한국어 줄바꿈은 **레이아웃에서만** 일어난다.
+
+    `video_qa.py` 는 번인 카피를 승인 voice_line 과 축자 비교하고 어긋나면
+    CaptionDriftError 를 낸다. 따라서 개행문자 삽입·하이픈·말줄임·재배열은
+    전부 금지다. 줄바꿈은 CSS(`word-break: keep-all` + `text-wrap: balance`)
+    가 그리는 것이지 문자열을 바꾸는 것이 아니다.
+    """
+
+    APPROVED = [
+        "아이가 설명서 그대로, 하루 한 번이면 끝",
+        "밤에 자기 전에 한 스푼",
+    ]
+    CTA = "프로필 링크에서 성분표 확인하세요"
+
+    def _plan(self):
+        return vcm.build_subtitle_overlay_plan(
+            captions=list(self.APPROVED), cta=self.CTA, total_seconds=10)
+
+    def test_caption_source_strings_are_byte_identical_to_approved_lines(self):
+        layers = [l for l in self._plan()["text_layers"]
+                  if l["role"] == "caption"]
+        self.assertEqual(len(layers), len(self.APPROVED))
+        for layer, approved in zip(layers, self.APPROVED):
+            self.assertEqual(layer["text"], approved)
+            self.assertEqual(layer["text"].encode("utf-8"),
+                             approved.encode("utf-8"))
+
+    def test_cta_source_string_is_byte_identical(self):
+        cta = [l for l in self._plan()["text_layers"] if l["role"] == "cta"][0]
+        self.assertEqual(cta["text"].encode("utf-8"), self.CTA.encode("utf-8"))
+
+    def test_no_layer_text_contains_an_inserted_line_break(self):
+        for layer in self._plan()["text_layers"]:
+            self.assertNotIn("\n", layer["text"])
+            self.assertNotIn("\u2028", layer["text"])
+            self.assertNotIn("\u00ad", layer["text"])  # soft hyphen
+            self.assertNotIn("…", layer["text"])
+
+    def test_layers_declare_korean_aware_wrapping(self):
+        for layer in self._plan()["text_layers"]:
+            style = layer["style"]
+            self.assertEqual(style["word_break"], "keep-all",
+                             "어절 중간에서 끊기면 한국어가 어색해진다")
+            self.assertEqual(style["text_wrap"], "balance",
+                             "마지막 줄에 한 음절만 남는 고아 줄을 막는다")
+
+    def test_disclosure_also_wraps_on_word_boundaries(self):
+        style = vcm.build_master_overlay_plan(
+            disclosure_text=DISCLOSURE_TEXT["KR"],
+            total_seconds=10)["disclosure"]["style"]
+        self.assertEqual(style["word_break"], "keep-all")
+        self.assertEqual(style["text_wrap"], "balance")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

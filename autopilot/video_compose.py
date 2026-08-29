@@ -74,8 +74,53 @@ ALLOWED_VIDEO_FOURCC = ("avc1", "avc3", "h264")
 ALLOWED_AUDIO_FOURCC = ("mp4a",)
 
 #: 고지 가독성 하한. 이보다 작으면 '있긴 한데 안 보이는' 고지다.
-MIN_DISCLOSURE_FONT_PX = 28
+#: 768x1360 세로 프레임 기준 22px = 프레임 폭의 2.9%. 6.1" 폰(논리폭 약
+#: 390pt)에서 약 11pt 로 렌더되며, 이는 iOS Caption2(11pt)와 같은 급이다 —
+#: 작지만 확실히 읽힌다.
+MIN_DISCLOSURE_FONT_PX = 22
+#: 고지 **상한**. 운영자 검수(2026-08-29): "고지를 좀 더 작게, 더 눈에 안
+#: 띄게". 이보다 크면 고지가 타이틀 카드처럼 프레임을 지배한다.
+MAX_DISCLOSURE_FONT_PX = 26
+#: 실제 사용 크기. 하한에 붙여 최대한 조용하게 두되 하한 아래로는 절대 안 간다.
+DISCLOSURE_FONT_SIZE_PX = MIN_DISCLOSURE_FONT_PX
+#: 굵기 상한 — 700(bold)은 법적 문구를 헤드라인처럼 보이게 한다. 500(medium)은
+#: 대비를 유지하면서도 시선을 끌지 않는다.
+DISCLOSURE_FONT_WEIGHT = 500
+#: 스크림 불투명도. 0.62 짜리 검은 띠는 화면 상단을 잘라먹었다. 0.32 는 밝은
+#: 영상 위에서도 흰 글자 대비를 확보하면서 배경을 지우지 않는다. 스크림 자체를
+#: 없애면 흰 배경 컷에서 고지가 사라지므로 제거는 금지다.
+DISCLOSURE_SCRIM_OPACITY = 0.32
 MIN_SAFE_AREA_MARGIN_PX = 48
+
+# ---------------------------------------------------------------------------
+# 한국어 줄바꿈 — 레이아웃에서만 일어난다
+#
+# 운영자 검수(2026-08-29): "줄바꿈도 어색한 느낌이야."
+# 실제 프레임에서 CTA 가 "프로필 링크에서 성분표 / 확인하세요" 로,
+# 캡션이 "... 하루 한 번이면 / 끝" 으로 끊겼다 — 어절 중간 분리와 고아 음절.
+#
+# 브라우저 표준 해법 두 가지를 함께 건다.
+#   word-break: keep-all  — CJK 를 음절 단위가 아니라 **어절(공백) 단위**로
+#                           끊는다. 조사가 명사에서 떨어지지 않는다.
+#   text-wrap: balance    — 마지막 줄에 한두 음절만 남기지 않고 줄 길이를
+#                           고르게 맞춘다 (Chromium 114+, Remotion 4.0.484 의
+#                           헤드리스 Chrome 이 지원).
+#
+# **문자열은 건드리지 않는다.** 개행문자 삽입·하이픈·말줄임·재배열 금지 —
+# `video_qa.py` 가 승인 voice_line 과 축자 비교한다.
+# ---------------------------------------------------------------------------
+
+#: CJK 어절 보존. 음절 중간 분리를 막는다.
+TEXT_WORD_BREAK = "keep-all"
+#: 균형 줄바꿈. 고아 음절(마지막 줄 1~2자)을 막는다.
+TEXT_WRAP_STYLE = "balance"
+
+#: 모든 텍스트 레이어가 공유하는 한국어 줄바꿈 규칙. 순수 시각 속성이며
+#: 텍스트 내용에는 절대 영향을 주지 않는다.
+KOREAN_WRAP_STYLE = {
+    "word_break": TEXT_WORD_BREAK,
+    "text_wrap": TEXT_WRAP_STYLE,
+}
 
 #: 캡션의 유일한 출처. 합성 단계에서 다시 쓰지 않는다.
 CAPTION_SOURCE = "storyboard.cuts[].voice_line"
@@ -699,7 +744,8 @@ def _caption_layers(captions: List[str]) -> List[Dict[str, Any]]:
         "start_seconds": i * CUT_DURATION_SECONDS,
         "end_seconds": (i + 1) * CUT_DURATION_SECONDS,
         "style": {"font_size_px": 44, "safe_area_margin_px": 96,
-                  "background_scrim": True, "position": "lower_third"},
+                  "background_scrim": True, "position": "lower_third",
+                  **KOREAN_WRAP_STYLE},
     } for i, text in enumerate(captions)]
 
 
@@ -711,7 +757,8 @@ def _cta_layer(cta: str, total_seconds: int) -> Dict[str, Any]:
         "start_seconds": max(0, total_seconds - CUT_DURATION_SECONDS),
         "end_seconds": total_seconds,
         "style": {"font_size_px": 40, "safe_area_margin_px": 96,
-                  "background_scrim": True, "position": "center"},
+                  "background_scrim": True, "position": "center",
+                  **KOREAN_WRAP_STYLE},
     }
 
 
@@ -724,10 +771,14 @@ def _disclosure_layer(disclosure_text: str,
         # 고지는 영상 전 구간을 덮는다 — 스크롤로 지나쳐도 보이도록.
         "start_seconds": 0,
         "end_seconds": total_seconds,
-        "style": {"font_size_px": MIN_DISCLOSURE_FONT_PX,
+        "style": {"font_size_px": DISCLOSURE_FONT_SIZE_PX,
+                  "font_weight": DISCLOSURE_FONT_WEIGHT,
                   "safe_area_margin_px": MIN_SAFE_AREA_MARGIN_PX,
-                  "background_scrim": True, "position": "top",
-                  "opacity": 1.0},
+                  "background_scrim": True,
+                  "scrim_opacity": DISCLOSURE_SCRIM_OPACITY,
+                  "position": "top",
+                  "opacity": 1.0,
+                  **KOREAN_WRAP_STYLE},
     }
 
 
