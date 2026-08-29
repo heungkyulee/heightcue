@@ -85,6 +85,39 @@ CAPTION_SOURCE = "storyboard.cuts[].voice_line"
 #: 발동하지 않는 사각지대가 생긴다 (승인 집합에 스스로를 넣어버리므로).
 CTA_SOURCE = "storyboard.cta.text"
 
+# ---------------------------------------------------------------------------
+# 2단 분리 — 클린 마스터 / 자막 패스
+#
+# 운영자 지시(2026-08-29): "기본 영상 에셋 자체는 자막을 넣지 말도록 해.
+# 자막은 opencut 같은 걸로 후보정해서 넣는 게 맞지 않겠어?"
+#
+# 첫 유료 렌더에서 클로즈업 컷의 캡션이 제품 라벨 위에 앉아 못 쓰게 됐다.
+# 그래서 합성은 두 단계로 쪼갠다.
+#
+#   STAGE_MASTER    — 컷 이어붙이기 + 모델 원음 유지 + **제휴 고지만** 번인.
+#                     voice_line 캡션도 CTA 도 굽지 않는다. 여기에 사이드카
+#                     자막 파일(SRT)이 함께 나온다.
+#   STAGE_SUBTITLED — 마스터를 입력으로 받아 캡션 + CTA 를 얹은 **별개**
+#                     산출물. 마스터는 그대로 남는다.
+#
+# 고지는 마스터에서 빠지지 않는다. 법적 의무이며 캡션과 운명을 같이하지
+# 않는다 (SSOT 불변 규칙 2).
+# ---------------------------------------------------------------------------
+
+STAGE_MASTER = "clean_master"
+STAGE_SUBTITLED = "subtitled_deliverable"
+
+#: 사이드카 자막 형식. SRT 는 OpenCut·DaVinci·Premiere·ffmpeg 가 전부 읽는
+#: 최소 공통분모다. 승인 카피를 **바이트 그대로** 담으며 재줄바꿈·말줄임·
+#: 대소문자 변경을 하지 않는다.
+SUBTITLE_SIDECAR_FORMAT = "srt"
+
+#: 스테이징 하위 경로 — Remotion `public/` 기준. 첫 유료 실행에서
+#: `OffthreadVideo` 가 절대경로 `file://` 를 거부해 운영자가 손으로 클립을
+#: public/ 에 복사해야 했다. 이제 자동으로 스테이징하고, 복사본을 **다시
+#: 해시**해 계보가 끊기지 않았는지 확인한다.
+STAGED_CLIP_SUBDIR = "heightcue-staged"
+
 #: 고지가 **픽셀에** 남았는지 확인하는 단계의 이름. 지금은 오프라인이라
 #: 프레임을 샘플링하거나 OCR 할 수 없으므로, 이 파이프라인은 고지 생존을
 #: '렌더러 보고'로만 안다. 실제 게이팅된 렌더 태스크에서 프레임 샘플/OCR
@@ -637,35 +670,54 @@ def build_overlay_plan(*, captions: List[str], cta: str,
     """결정론적 오버레이 계획. 텍스트는 전부 승인본에서 그대로 온다.
 
     ``cta`` 는 반드시 :func:`extract_cta` 가 스토리보드에서 꺼낸 값이다.
+
+    .. deprecated::
+       캡션·CTA·고지를 한 판에 굽던 **단일 단계** 계획이다. 운영자 지시로
+       합성이 2단으로 쪼개진 뒤로 신규 경로는
+       :func:`build_master_overlay_plan` / :func:`build_subtitle_overlay_plan`
+       를 쓴다. 이 함수는 기존 계약 테스트를 위해 남는다.
     """
     cta = str(cta or "").strip()
     if not cta:
         raise CaptionDriftError(
             "승인된 CTA 가 비어 있다 — CTA 없는 발행본은 만들지 않는다")
 
-    layers: List[Dict[str, Any]] = []
-    for i, text in enumerate(captions):
-        layers.append({
-            "role": "caption",
-            "cut_index": i + 1,
-            "text": text,
-            "verbatim_from": CAPTION_SOURCE,
-            "start_seconds": i * CUT_DURATION_SECONDS,
-            "end_seconds": (i + 1) * CUT_DURATION_SECONDS,
-            "style": {"font_size_px": 44, "safe_area_margin_px": 96,
-                      "background_scrim": True, "position": "lower_third"},
-        })
-    layers.append({
+    layers = _caption_layers(captions) + [_cta_layer(cta, total_seconds)]
+    disclosure = _disclosure_layer(disclosure_text, total_seconds)
+    layers.append(dict(disclosure))
+    return {"text_layers": layers, "disclosure": disclosure,
+            "rendered_by": RENDER_RUNTIME,
+            "note": "텍스트는 영상 모델이 아니라 Remotion 이 결정론적으로 렌더한다"}
+
+
+def _caption_layers(captions: List[str]) -> List[Dict[str, Any]]:
+    return [{
+        "role": "caption",
+        "cut_index": i + 1,
+        "text": text,
+        "verbatim_from": CAPTION_SOURCE,
+        "start_seconds": i * CUT_DURATION_SECONDS,
+        "end_seconds": (i + 1) * CUT_DURATION_SECONDS,
+        "style": {"font_size_px": 44, "safe_area_margin_px": 96,
+                  "background_scrim": True, "position": "lower_third"},
+    } for i, text in enumerate(captions)]
+
+
+def _cta_layer(cta: str, total_seconds: int) -> Dict[str, Any]:
+    return {
         "role": "cta",
-        "cut_index": len(captions),
         "text": cta,
         "verbatim_from": CTA_SOURCE,
         "start_seconds": max(0, total_seconds - CUT_DURATION_SECONDS),
         "end_seconds": total_seconds,
         "style": {"font_size_px": 40, "safe_area_margin_px": 96,
                   "background_scrim": True, "position": "center"},
-    })
-    disclosure = {
+    }
+
+
+def _disclosure_layer(disclosure_text: str,
+                      total_seconds: int) -> Dict[str, Any]:
+    return {
         "role": "disclosure",
         "text": disclosure_text,
         "required": True,
@@ -677,10 +729,142 @@ def build_overlay_plan(*, captions: List[str], cta: str,
                   "background_scrim": True, "position": "top",
                   "opacity": 1.0},
     }
-    layers.append(dict(disclosure))
-    return {"text_layers": layers, "disclosure": disclosure,
+
+
+def build_master_overlay_plan(*, disclosure_text: str,
+                              total_seconds: int) -> Dict[str, Any]:
+    """**클린 마스터**의 오버레이 계획 — 제휴 고지 단 한 겹뿐이다.
+
+    voice_line 캡션도 CTA 도 여기 들어가지 않는다. 첫 유료 렌더에서 캡션이
+    제품 라벨을 가린 사고가 이 분리의 이유다. 반대로 고지는 **캡션과 함께
+    빠지지 않는다** — 법적 의무이고 마스터 자체가 발행 가능한 에셋이다.
+    """
+    disclosure = _disclosure_layer(disclosure_text, total_seconds)
+    return {"text_layers": [dict(disclosure)], "disclosure": disclosure,
             "rendered_by": RENDER_RUNTIME,
-            "note": "텍스트는 영상 모델이 아니라 Remotion 이 결정론적으로 렌더한다"}
+            "stage": STAGE_MASTER,
+            "note": ("클린 마스터 — 제휴 고지만 번인한다. 자막·CTA 는 별도 "
+                     "자막 패스(compose_subtitled) 또는 사이드카 SRT 로 "
+                     "외부 편집기가 얹는다")}
+
+
+def build_subtitle_overlay_plan(*, captions: List[str], cta: str,
+                                total_seconds: int) -> Dict[str, Any]:
+    """**자막 패스**의 오버레이 계획 — 캡션 + CTA. 고지는 다시 굽지 않는다.
+
+    고지는 이미 마스터 픽셀에 있다. 여기서 한 겹 더 얹으면 화면에 고지가 두
+    개 뜬다.
+    """
+    cta = str(cta or "").strip()
+    if not cta:
+        raise CaptionDriftError(
+            "승인된 CTA 가 비어 있다 — CTA 없는 발행본은 만들지 않는다")
+    layers = _caption_layers(captions) + [_cta_layer(cta, total_seconds)]
+    return {"text_layers": layers,
+            "rendered_by": RENDER_RUNTIME,
+            "stage": STAGE_SUBTITLED,
+            "disclosure_inherited_from_master": True,
+            "note": ("자막 패스 — 고지는 마스터 픽셀에 이미 있으므로 다시 "
+                     "굽지 않는다 (두 겹으로 뜬다)")}
+
+
+# ---------------------------------------------------------------------------
+# 사이드카 자막 (SRT) — 외부 후보정 도구의 입력
+# ---------------------------------------------------------------------------
+
+
+def srt_timestamp(seconds: float) -> str:
+    """``HH:MM:SS,mmm`` — SRT 규격 타임스탬프."""
+    if seconds < 0:
+        raise CaptionDriftError(f"음수 타임스탬프: {seconds!r}")
+    total_ms = int(round(float(seconds) * 1000))
+    ms = total_ms % 1000
+    total_s = total_ms // 1000
+    return (f"{total_s // 3600:02d}:{(total_s % 3600) // 60:02d}:"
+            f"{total_s % 60:02d},{ms:03d}")
+
+
+def build_srt(captions: List[str]) -> str:
+    """승인된 ``voice_line`` 을 컷 경계 타이밍의 SRT 로 직렬화한다.
+
+    **텍스트는 바이트 그대로 나간다.** 재줄바꿈·자르기·말줄임·대소문자
+    변경을 하지 않는다 — ``video_qa`` 가 승인 집합과 축자 대조하며, 여기서
+    한 글자라도 손대면 그 게이트가 무의미해진다.
+    """
+    if not captions:
+        raise CaptionDriftError("자막으로 만들 승인 카피가 하나도 없다")
+    blocks: List[str] = []
+    for i, text in enumerate(captions):
+        if not str(text or "").strip():
+            raise CaptionDriftError(
+                f"컷 {i + 1} 의 카피가 비어 있다 — 빈 큐를 조용히 건너뛰면 "
+                "자막과 승인본의 줄 수가 어긋난다")
+        start = i * CUT_DURATION_SECONDS
+        end = (i + 1) * CUT_DURATION_SECONDS
+        blocks.append(f"{i + 1}\n{srt_timestamp(start)} --> "
+                      f"{srt_timestamp(end)}\n{text}\n")
+    return "\n".join(blocks)
+
+
+def write_subtitle_sidecar(path: str, captions: List[str]) -> str:
+    """사이드카 SRT 를 UTF-8 로 쓴다. 외부 편집기(OpenCut 등)의 입력."""
+    body = build_srt(captions)
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(body)
+    os.replace(tmp, path)
+    return path
+
+
+# ---------------------------------------------------------------------------
+# 클립 스테이징 — Remotion 은 절대 경로를 읽지 못한다
+# ---------------------------------------------------------------------------
+
+
+def stage_clips_for_remotion(cuts: List[Dict[str, Any]], *, job_id: str,
+                             composer_dir: Optional[str] = None,
+                             ) -> List[Dict[str, Any]]:
+    """컷을 Remotion ``public/`` 안으로 복사하고 **다시 해시**한다.
+
+    첫 유료 실행에서 ``OffthreadVideo`` 가 절대경로 ``file://`` 소스를
+    거부해 운영자가 클립을 손으로 ``remotion-composer/public/`` 에 복사해야
+    했다. 그 수작업을 여기로 흡수한다. 복사 뒤 sha256 을 다시 재서 원본과
+    같은지 확인하므로 계보는 그대로 유지된다 — 다르면 계보 오류다.
+    """
+    composer = composer_dir or REMOTION_COMPOSER_DIR
+    public = os.path.join(composer, "public")
+    if not os.path.isdir(public):
+        raise RuntimeUnavailableError(
+            f"Remotion public 디렉터리가 없다: {public!r} — 클립을 스테이징할 "
+            "수 없다. 다른 런타임으로 대체하지 않고 중단한다")
+
+    staged_dir = os.path.join(public, STAGED_CLIP_SUBDIR, job_id)
+    os.makedirs(staged_dir, exist_ok=True)
+
+    out: List[Dict[str, Any]] = []
+    for cut in cuts:
+        index = int(cut["cut_index"])
+        name = f"cut{index:02d}.mp4"
+        dest = os.path.join(staged_dir, name)
+        with open(cut["output_path"], "rb") as src, open(dest, "wb") as dst:
+            for block in iter(lambda: src.read(1024 * 1024), b""):
+                dst.write(block)
+        actual = sha256_file(dest)
+        if actual != cut["output_sha256"]:
+            raise ComposeLineageError(
+                f"컷 {index} 스테이징 복사본 해시가 원본과 다르다: {actual} != "
+                f"{cut['output_sha256']} ({dest}) — 계보가 끊긴 바이트는 "
+                "렌더에 넣지 않는다")
+        out.append({
+            "cut_index": index,
+            "src": f"{STAGED_CLIP_SUBDIR}/{job_id}/{name}",
+            "staged_path": dest,
+            "staged_sha256": actual,
+            "source_path": cut["output_path"],
+            "duration_seconds": cut["duration_seconds"],
+        })
+    return out
 
 
 def assert_rendered_text(rendered: Any, *, approved: List[str],
@@ -983,5 +1167,450 @@ def compose_video(*, storyboard: Dict[str, Any], cut_lineage: Any,
         "disclosure_reported_by_renderer": True,
         "disclosure_pixel_verified": False,
         "fallback_taken": False,
+    })
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 2단 합성 — 스테이지 1: 자막 없는 클린 마스터 (+ 사이드카 SRT)
+# ---------------------------------------------------------------------------
+
+
+def compose_master(*, storyboard: Dict[str, Any], cut_lineage: Any,
+                   edit_decisions: Dict[str, Any], job_id: str,
+                   output_path: str, renderer: Callable,
+                   runtime_probe: Optional[Callable] = None,
+                   ) -> Dict[str, Any]:
+    """**스테이지 1 — 클린 마스터.** 컷을 잇고 원음을 살리고 고지만 굽는다.
+
+    화면에 들어가는 텍스트는 제휴 고지 **한 겹뿐**이다. 승인된 voice_line
+    캡션도 CTA 도 여기서는 굽지 않는다 — 첫 유료 렌더에서 캡션이 클로즈업
+    컷의 제품 라벨을 덮어써서 못 쓰게 된 것이 이 분리의 이유다.
+
+    같은 디렉터리에 승인 카피를 축자로 담은 사이드카 ``.srt`` 를 함께
+    쓴다. 그것이 OpenCut 같은 외부 편집기가 소비할 표준 입력이다.
+
+    반환된 dict 는 그대로 :func:`compose_subtitled` 의 ``master=`` 인자다.
+    """
+    if not isinstance(storyboard, dict):
+        raise ComposeLineageError(
+            f"storyboard 는 dict 여야 한다: {type(storyboard)}")
+
+    run_id = str(storyboard.get("run_id") or "").strip()
+    storyboard_id = str(storyboard.get("storyboard_id") or "").strip()
+    product_id = str(storyboard.get("product_id") or "").strip()
+    market = str(storyboard.get("market") or "").strip()
+    content_draft_id = str(storyboard.get("content_draft_id") or "").strip()
+    job = str(job_id or "").strip()
+
+    for name, value in (("job_id", job), ("run_id", run_id),
+                        ("storyboard_id", storyboard_id),
+                        ("product_id", product_id)):
+        if not value:
+            raise ComposeLineageError(f"{name} 가 비어 있다 — 계보 없는 합성 금지")
+    if market not in MARKETS:
+        raise ComposeLineageError(f"market 는 {MARKETS} 중 하나여야 한다: {market!r}")
+    if not str(output_path or "").strip():
+        raise ComposeLineageError("output_path 가 비어 있다")
+
+    settings = assert_runtime_lock(edit_decisions)
+
+    cuts = list(storyboard.get("cuts") or [])
+    expected_seconds = len(cuts) * CUT_DURATION_SECONDS
+    if expected_seconds not in ALLOWED_TOTAL_DURATIONS:
+        raise ComposeDurationError(
+            f"컷 {len(cuts)} 개 = {expected_seconds}초 — 총 길이는 "
+            f"{ALLOWED_TOTAL_DURATIONS} 중 하나여야 한다")
+
+    disclosure_text = extract_disclosure(storyboard, market)
+
+    # 캡션은 마스터에 굽지 않지만 **사이드카를 만들기 위해** 지금 축자
+    # 회수한다. 회수 자체가 검증이다 — 빈 voice_line 은 여기서 죽는다.
+    captions = extract_captions(storyboard)
+
+    overlay_plan = build_master_overlay_plan(
+        disclosure_text=disclosure_text, total_seconds=expected_seconds)
+
+    inputs = verify_input_cuts(cut_lineage, len(cuts))
+    runtime = assert_remotion_available(runtime_probe)
+
+    # Remotion 은 절대경로 file:// 를 읽지 못한다 — public/ 으로 스테이징한다.
+    staged = stage_clips_for_remotion(inputs, job_id=job)
+
+    out_dir = os.path.dirname(os.path.abspath(output_path))
+    os.makedirs(out_dir, exist_ok=True)
+    events = os.path.join(out_dir, "compose_events.jsonl")
+
+    sidecar_path = os.path.join(
+        out_dir, f"{job}_subtitles.{SUBTITLE_SIDECAR_FORMAT}")
+    write_subtitle_sidecar(sidecar_path, captions)
+
+    props = {
+        "job_id": job, "run_id": run_id, "storyboard_id": storyboard_id,
+        "product_id": product_id, "market": market,
+        "composition_id": COMPOSITION_ID,
+        "stage": STAGE_MASTER,
+        "width": COMPOSITION_WIDTH, "height": COMPOSITION_HEIGHT, "fps": FPS,
+        "duration_seconds": expected_seconds,
+        "clips": [{"cut_index": c["cut_index"], "src": c["src"],
+                   "sha256": c["staged_sha256"],
+                   "duration_seconds": c["duration_seconds"]}
+                  for c in staged],
+        # 마스터는 캡션을 굽지 않는다. 승인 카피는 사이드카로만 나간다.
+        "captions": [],
+        "caption_source": CAPTION_SOURCE,
+        "cta": "",
+        "disclosure": dict(overlay_plan["disclosure"]),
+        "overlay_plan": overlay_plan,
+    }
+    props_path = os.path.join(out_dir, f"{job}_master_remotion_props.json")
+    atomic_write_json(props_path, props)
+
+    request = {
+        "operation": "remotion_render",
+        "stage": STAGE_MASTER,
+        "render_runtime": RENDER_RUNTIME,
+        "composition_mode": COMPOSITION_MODE,
+        "composition_id": COMPOSITION_ID,
+        "props_path": props_path, "props": props,
+        "input_cuts": [dict(c) for c in inputs],
+        "staged_clips": [dict(c) for c in staged],
+        "overlay_plan": overlay_plan,
+        "output_path": output_path,
+        "width": COMPOSITION_WIDTH, "height": COMPOSITION_HEIGHT,
+        "fps": FPS, "duration_seconds": expected_seconds,
+        "video_codec": "h264", "audio_codec": "aac",
+        "aspect_ratio": VIDEO_ASPECT_RATIO, "resolution": VIDEO_RESOLUTION,
+    }
+
+    append_event(events, {
+        "event": "master_started", "job_id": job, "run_id": run_id,
+        "stage": STAGE_MASTER, "render_runtime": RENDER_RUNTIME,
+        "runtime_version": runtime["version"], "cuts": len(inputs),
+        "captions_burned_in": False, "disclosure_required": True,
+        "fallback_runtime_available": False,
+    })
+
+    rendered_path = ""
+    try:
+        response = renderer(request)
+        if not isinstance(response, dict):
+            raise ComposeError(f"렌더러가 dict 가 아닌 {type(response)} 를 반환했다")
+        reported = response.get("runtime")
+        if reported not in ALLOWED_RENDER_RUNTIMES:
+            raise RuntimeSwapError(
+                f"렌더러가 런타임 {reported!r} 로 렌더했다고 보고했다 — "
+                f"{RENDER_RUNTIME!r} 이어야 한다")
+        rendered_path = str(response.get("output_path") or output_path)
+        if not os.path.isfile(rendered_path):
+            raise ComposeFormatError(f"렌더 산출물이 없다: {rendered_path}")
+
+        # 마스터의 승인 집합은 **비어 있다** — 고지 외 어떤 텍스트도 화면에
+        # 있어선 안 된다. 승인된 캡션이 들어가도 계약 위반이다.
+        rendered_texts = assert_rendered_text(
+            response.get("text_layers"), approved=[],
+            disclosure_text=disclosure_text)
+
+        measured = assert_measured_output(rendered_path, expected_seconds)
+    except Exception:
+        _discard(rendered_path, output_path)
+        append_event(events, {
+            "event": "master_rejected", "job_id": job, "run_id": run_id,
+            "stage": STAGE_MASTER, "output_discarded": True,
+            "fallback_taken": False,
+        })
+        raise
+
+    result = {
+        "job_id": job, "run_id": run_id, "storyboard_id": storyboard_id,
+        "product_id": product_id, "market": market,
+        "content_draft_id": content_draft_id,
+        "stage": STAGE_MASTER,
+        "captions_burned_in": False,
+        "render_runtime": RENDER_RUNTIME,
+        "runtime_version": runtime["version"],
+        "runtime_checked_at": runtime["checked_at"],
+        "composition_mode": COMPOSITION_MODE,
+        "composition_id": COMPOSITION_ID,
+        "render_settings": dict(settings, width=COMPOSITION_WIDTH,
+                                height=COMPOSITION_HEIGHT, fps=FPS,
+                                video_codec="h264", audio_codec="aac",
+                                composition_id=COMPOSITION_ID),
+        "input_cuts": inputs,
+        "input_cut_sha256": [c["output_sha256"] for c in inputs],
+        "staged_clips": staged,
+        "clips_staged": True,
+        "props_path": props_path,
+        "output_path": rendered_path,
+        "output_sha256": sha256_file(rendered_path),
+        "output_bytes": measured["bytes"],
+        "expected_duration_seconds": expected_seconds,
+        "measured_duration_seconds": measured["duration_seconds"],
+        "measured_width": measured["width"],
+        "measured_height": measured["height"],
+        "measured_by": measured["measured_by"],
+        "duration_basis": measured["duration_basis"],
+        "coded_duration_seconds": measured["coded_duration_seconds"],
+        "dimension_basis": measured["dimension_basis"],
+        "codec_basis": measured["codec_basis"],
+        "mdat_bytes": measured["mdat_bytes"],
+        "video_codec_fourcc": measured["video_codec_fourcc"],
+        "audio_codec_fourcc": measured["audio_codec_fourcc"],
+        # 승인 카피는 굽지 않았지만 **사이드카/자막 패스로 넘길 값**으로
+        # 계보에 남긴다. 여기가 사이드카와 자막 패스의 공통 출처다.
+        "captions": list(captions),
+        "caption_source": CAPTION_SOURCE,
+        "subtitle_sidecar_path": sidecar_path,
+        "subtitle_sidecar_format": SUBTITLE_SIDECAR_FORMAT,
+        "rendered_text_layers": rendered_texts,
+        "disclosure_reported_by_renderer": True,
+        "disclosure_verification_basis": "renderer_reported_text_layers",
+        "disclosure_pixel_verified": False,
+        "disclosure_pixel_verification_hook":
+            DISCLOSURE_PIXEL_VERIFICATION_HOOK,
+        "disclosure_text": disclosure_text,
+        "overlay_plan": overlay_plan,
+        "created_at": _now(),
+    }
+    atomic_write_json(
+        os.path.join(out_dir, f"{job}_master_manifest.json"), result)
+    append_event(events, {
+        "event": "master_finished", "job_id": job, "run_id": run_id,
+        "stage": STAGE_MASTER, "output_sha256": result["output_sha256"],
+        "subtitle_sidecar_path": sidecar_path,
+        "captions_burned_in": False, "fallback_taken": False,
+    })
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 2단 합성 — 스테이지 2: 자막 패스 (캡션 + CTA)
+# ---------------------------------------------------------------------------
+
+
+def compose_subtitled(*, master: Dict[str, Any], storyboard: Dict[str, Any],
+                      edit_decisions: Dict[str, Any], job_id: str,
+                      output_path: str, renderer: Callable,
+                      runtime_probe: Optional[Callable] = None,
+                      ) -> Dict[str, Any]:
+    """**스테이지 2 — 자막 패스.** 클린 마스터 위에 캡션 + CTA 를 얹는다.
+
+    ``master`` 는 :func:`compose_master` 가 돌려준 매니페스트다. 마스터
+    파일을 **다시 해시**해 계보를 확인하고, 마스터를 유일한 클립으로 삼아
+    별개의 산출물을 만든다. 마스터는 손대지 않고 그대로 남는다 — 그것이
+    이 분리의 요점이다 (외부 후보정 도구가 언제든 원본을 쓸 수 있어야 한다).
+
+    고지는 여기서 다시 굽지 않는다. 이미 마스터 픽셀에 있다.
+    """
+    if not isinstance(master, dict):
+        raise ComposeLineageError(f"master 는 dict 여야 한다: {type(master)}")
+    if master.get("stage") != STAGE_MASTER:
+        raise ComposeLineageError(
+            f"master.stage 가 {master.get('stage')!r} 다 — {STAGE_MASTER!r} "
+            "산출물만 자막 패스의 입력이 된다")
+
+    master_path = str(master.get("output_path") or "")
+    declared = str(master.get("output_sha256") or "")
+    if not master_path or not os.path.isfile(master_path):
+        raise ComposeLineageError(f"마스터 파일이 없다: {master_path!r}")
+    if not declared:
+        raise ComposeLineageError("마스터에 output_sha256 이 없다")
+    actual = sha256_file(master_path)
+    if actual != declared:
+        raise ComposeLineageError(
+            f"마스터 해시가 계보와 다르다: {actual} != {declared} "
+            f"({master_path}) — 마스터 단계가 검증한 그 바이트가 아니다")
+
+    job = str(job_id or "").strip()
+    if not job:
+        raise ComposeLineageError("job_id 가 비어 있다 — 계보 없는 합성 금지")
+    if not str(output_path or "").strip():
+        raise ComposeLineageError("output_path 가 비어 있다")
+    if os.path.abspath(output_path) == os.path.abspath(master_path):
+        raise ComposeLineageError(
+            "자막 패스가 마스터를 덮어쓰려 한다 — 클린 마스터는 별개 산출물로 "
+            "남아야 외부 후보정이 가능하다")
+
+    settings = assert_runtime_lock(edit_decisions)
+
+    market = str(storyboard.get("market") or "").strip()
+    if market not in MARKETS:
+        raise ComposeLineageError(f"market 는 {MARKETS} 중 하나여야 한다: {market!r}")
+
+    expected_seconds = int(master.get("expected_duration_seconds") or 0)
+    if expected_seconds not in ALLOWED_TOTAL_DURATIONS:
+        raise ComposeDurationError(
+            f"마스터 길이 {expected_seconds}초가 계약을 벗어난다 "
+            f"({ALLOWED_TOTAL_DURATIONS})")
+
+    # 캡션·CTA 는 여전히 **승인본에서만** 온다.
+    captions = extract_captions(storyboard)
+    cta = extract_cta(storyboard)
+    overlay_plan = build_subtitle_overlay_plan(
+        captions=captions, cta=cta, total_seconds=expected_seconds)
+    approved_texts = [l["text"] for l in overlay_plan["text_layers"]]
+
+    disclosure_text = extract_disclosure(storyboard, market)
+    runtime = assert_remotion_available(runtime_probe)
+
+    staged = stage_clips_for_remotion(
+        [{"cut_index": 1, "output_path": master_path,
+          "output_sha256": actual, "duration_seconds": expected_seconds}],
+        job_id=f"{job}-subtitled")
+
+    out_dir = os.path.dirname(os.path.abspath(output_path))
+    os.makedirs(out_dir, exist_ok=True)
+    events = os.path.join(out_dir, "compose_events.jsonl")
+
+    props = {
+        "job_id": job,
+        "run_id": master.get("run_id", ""),
+        "storyboard_id": master.get("storyboard_id", ""),
+        "product_id": master.get("product_id", ""),
+        "market": market,
+        "composition_id": COMPOSITION_ID,
+        "stage": STAGE_SUBTITLED,
+        "disclosure_inherited_from_master": True,
+        "width": COMPOSITION_WIDTH, "height": COMPOSITION_HEIGHT, "fps": FPS,
+        "duration_seconds": expected_seconds,
+        "clips": [{"cut_index": 1, "src": staged[0]["src"],
+                   "sha256": staged[0]["staged_sha256"],
+                   "duration_seconds": expected_seconds}],
+        "captions": list(captions),
+        "caption_source": CAPTION_SOURCE,
+        "cta": cta, "cta_source": CTA_SOURCE,
+        "overlay_plan": overlay_plan,
+    }
+    props_path = os.path.join(out_dir, f"{job}_subtitled_remotion_props.json")
+    atomic_write_json(props_path, props)
+
+    request = {
+        "operation": "remotion_render",
+        "stage": STAGE_SUBTITLED,
+        "render_runtime": RENDER_RUNTIME,
+        "composition_mode": COMPOSITION_MODE,
+        "composition_id": COMPOSITION_ID,
+        "props_path": props_path, "props": props,
+        "master_path": master_path, "master_sha256": actual,
+        "staged_clips": [dict(c) for c in staged],
+        "overlay_plan": overlay_plan,
+        "output_path": output_path,
+        "width": COMPOSITION_WIDTH, "height": COMPOSITION_HEIGHT,
+        "fps": FPS, "duration_seconds": expected_seconds,
+        "video_codec": "h264", "audio_codec": "aac",
+        "aspect_ratio": VIDEO_ASPECT_RATIO, "resolution": VIDEO_RESOLUTION,
+    }
+
+    append_event(events, {
+        "event": "subtitle_pass_started", "job_id": job,
+        "stage": STAGE_SUBTITLED, "render_runtime": RENDER_RUNTIME,
+        "runtime_version": runtime["version"], "master_sha256": actual,
+        "captions": len(captions), "fallback_runtime_available": False,
+    })
+
+    rendered_path = ""
+    try:
+        response = renderer(request)
+        if not isinstance(response, dict):
+            raise ComposeError(f"렌더러가 dict 가 아닌 {type(response)} 를 반환했다")
+        reported = response.get("runtime")
+        if reported not in ALLOWED_RENDER_RUNTIMES:
+            raise RuntimeSwapError(
+                f"렌더러가 런타임 {reported!r} 로 렌더했다고 보고했다 — "
+                f"{RENDER_RUNTIME!r} 이어야 한다")
+        rendered_path = str(response.get("output_path") or output_path)
+        if not os.path.isfile(rendered_path):
+            raise ComposeFormatError(f"렌더 산출물이 없다: {rendered_path}")
+
+        # 이 단계가 **새로** 굽는 텍스트는 캡션 + CTA 뿐이다. 고지는 마스터
+        # 픽셀에서 오므로 렌더러 보고 목록에 없는 것이 정상이다.
+        rendered = response.get("text_layers")
+        if not isinstance(rendered, (list, tuple)):
+            raise CaptionDriftError(
+                f"렌더 결과에 text_layers 가 없다 ({type(rendered)})")
+        actual_texts = [str(t) for t in rendered]
+        missing = [t for t in approved_texts if t not in actual_texts]
+        if missing:
+            raise CaptionDriftError(
+                f"승인된 카피가 자막 패스 결과에 없다: {missing!r}")
+        extra = sorted({t for t in actual_texts
+                        if t not in set(approved_texts) | {disclosure_text}})
+        if extra:
+            raise CaptionDriftError(
+                f"승인되지 않은 텍스트가 렌더됐다: {extra!r}")
+
+        measured = assert_measured_output(rendered_path, expected_seconds)
+    except Exception:
+        _discard(rendered_path, output_path)
+        append_event(events, {
+            "event": "subtitle_pass_rejected", "job_id": job,
+            "stage": STAGE_SUBTITLED, "output_discarded": True,
+            "master_preserved": os.path.isfile(master_path),
+            "fallback_taken": False,
+        })
+        raise
+
+    result = {
+        "job_id": job,
+        "run_id": master.get("run_id", ""),
+        "storyboard_id": master.get("storyboard_id", ""),
+        "product_id": master.get("product_id", ""),
+        "market": market,
+        "content_draft_id": master.get("content_draft_id", ""),
+        "stage": STAGE_SUBTITLED,
+        "captions_burned_in": True,
+        "disclosure_inherited_from_master": True,
+        "master_path": master_path,
+        "master_sha256": actual,
+        "subtitle_sidecar_path": master.get("subtitle_sidecar_path", ""),
+        "subtitle_sidecar_format": SUBTITLE_SIDECAR_FORMAT,
+        "render_runtime": RENDER_RUNTIME,
+        "runtime_version": runtime["version"],
+        "runtime_checked_at": runtime["checked_at"],
+        "composition_mode": COMPOSITION_MODE,
+        "composition_id": COMPOSITION_ID,
+        "render_settings": dict(settings, width=COMPOSITION_WIDTH,
+                                height=COMPOSITION_HEIGHT, fps=FPS,
+                                video_codec="h264", audio_codec="aac",
+                                composition_id=COMPOSITION_ID),
+        "staged_clips": staged,
+        "clips_staged": True,
+        "props_path": props_path,
+        "output_path": rendered_path,
+        "output_sha256": sha256_file(rendered_path),
+        "output_bytes": measured["bytes"],
+        "expected_duration_seconds": expected_seconds,
+        "measured_duration_seconds": measured["duration_seconds"],
+        "measured_width": measured["width"],
+        "measured_height": measured["height"],
+        "measured_by": measured["measured_by"],
+        "duration_basis": measured["duration_basis"],
+        "coded_duration_seconds": measured["coded_duration_seconds"],
+        "dimension_basis": measured["dimension_basis"],
+        "codec_basis": measured["codec_basis"],
+        "mdat_bytes": measured["mdat_bytes"],
+        "video_codec_fourcc": measured["video_codec_fourcc"],
+        "audio_codec_fourcc": measured["audio_codec_fourcc"],
+        "captions": list(captions),
+        "caption_source": CAPTION_SOURCE,
+        "cta": cta, "cta_source": CTA_SOURCE,
+        "rendered_text_layers": actual_texts,
+        "disclosure_text": disclosure_text,
+        # 이 단계는 고지를 굽지 않았다 — 고지 픽셀 검증은 마스터 대상이다.
+        "disclosure_reported_by_renderer": False,
+        "disclosure_verification_basis": "inherited_from_master_pixels",
+        "disclosure_pixel_verified": False,
+        "disclosure_pixel_verification_hook":
+            DISCLOSURE_PIXEL_VERIFICATION_HOOK,
+        "overlay_plan": overlay_plan,
+        "created_at": _now(),
+    }
+    atomic_write_json(
+        os.path.join(out_dir, f"{job}_subtitled_manifest.json"), result)
+    append_event(events, {
+        "event": "subtitle_pass_finished", "job_id": job,
+        "stage": STAGE_SUBTITLED, "output_sha256": result["output_sha256"],
+        "master_preserved": os.path.isfile(master_path),
+        "captions_burned_in": True, "fallback_taken": False,
     })
     return result

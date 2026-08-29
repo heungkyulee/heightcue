@@ -270,6 +270,14 @@ class ComposeTestBase(unittest.TestCase):
         self.tmp = self._tmp.name
         self.out = os.path.join(self.tmp, "out", "final.mp4")
         self.addCleanup(self._tmp.cleanup)
+        # 스테이징은 실제 ~/OpenMontage/remotion-composer/public 에 파일을
+        # 복사한다. 테스트가 개발자의 작업 트리를 오염시키면 안 되므로
+        # 컴포저 디렉터리를 임시 디렉터리로 돌린다.
+        self.composer = os.path.join(self.tmp, "composer")
+        os.makedirs(os.path.join(self.composer, "public"))
+        patcher = mock.patch.object(vcm, "REMOTION_COMPOSER_DIR", self.composer)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def compose(self, *, n_cuts=2, storyboard=None, edit_decisions=None,
                 renderer=None, probe=None, cut_lineage=None, **kw):
@@ -864,6 +872,309 @@ class TestProbeRunsInComposerDir(unittest.TestCase):
                 result = vcm._subprocess_probe()
         self.assertEqual(result["version"], "4.0.484",
                          "Node 버전(22.23.2)을 집어서도 안 된다")
+
+
+# ---------------------------------------------------------------------------
+# 9. 2단 분리 — 자막 없는 클린 마스터 + 별도 자막 패스
+#
+# 운영자 승인 사항: "기본 영상 에셋 자체는 자막을 넣지 말도록 해. 자막은
+# opencut 같은 걸로 후보정해서 넣는 게 맞지 않겠어?"
+#
+# 규칙:
+#  * 마스터에는 제휴 고지만 굽는다 (법적 의무). voice_line 캡션·CTA 금지.
+#  * 자막 패스는 마스터를 입력으로 받아 캡션+CTA 를 얹은 **별개 산출물**을 만든다.
+#  * 사이드카(SRT)는 마스터와 함께 나온다 — 외부 편집기(OpenCut 등)의 입력.
+# ---------------------------------------------------------------------------
+
+
+class TestCleanMaster(ComposeTestBase):
+
+    def master(self, *, n_cuts=2, storyboard=None, renderer=None, probe=None,
+               cut_lineage=None, **kw):
+        sb = storyboard if storyboard is not None else make_storyboard(n_cuts)
+        lineage = (cut_lineage if cut_lineage is not None
+                   else write_cuts(self.tmp, n_cuts))
+        return vcm.compose_master(
+            storyboard=sb, cut_lineage=lineage,
+            edit_decisions=dict(EDIT_DECISIONS),
+            job_id=kw.pop("job_id", JOB_ID),
+            output_path=kw.pop("output_path",
+                               os.path.join(self.tmp, "out", "master.mp4")),
+            renderer=renderer if renderer is not None else RendererSpy(),
+            runtime_probe=probe if probe is not None else ProbeSpy(),
+            **kw)
+
+    def test_master_overlay_plan_has_no_caption_or_cta_layers(self):
+        result = self.master()
+        roles = sorted({l["role"] for l in
+                        result["overlay_plan"]["text_layers"]})
+        self.assertEqual(roles, ["disclosure"],
+                         "클린 마스터에 캡션·CTA 가 구워지면 안 된다")
+
+    def test_master_still_burns_the_disclosure_for_the_whole_runtime(self):
+        result = self.master()
+        disc = result["overlay_plan"]["disclosure"]
+        self.assertEqual(disc["text"], DISCLOSURE_TEXT["KR"])
+        self.assertEqual(disc["start_seconds"], 0)
+        self.assertEqual(disc["end_seconds"], 10)
+        self.assertTrue(disc["required"])
+
+    def test_master_stage_is_labelled(self):
+        result = self.master()
+        self.assertEqual(result["stage"], vcm.STAGE_MASTER)
+        self.assertFalse(result["captions_burned_in"])
+
+    def test_render_that_burns_a_caption_into_the_master_is_rejected(self):
+        """마스터에 승인된 캡션이라도 들어가면 계약 위반이다."""
+        renderer = RendererSpy(
+            text_layers=[DISCLOSURE_TEXT["KR"], CAPTIONS[0]])
+        with self.assertRaises(vcm.CaptionDriftError):
+            self.master(renderer=renderer)
+
+    def test_master_that_drops_the_disclosure_is_rejected(self):
+        renderer = RendererSpy(drop_disclosure=True)
+        with self.assertRaises(vcm.DisclosureError):
+            self.master(renderer=renderer)
+
+    def test_master_does_not_require_a_cta(self):
+        """CTA 는 이제 자막/후보정 단계 소유다 — 마스터는 없어도 성립한다."""
+        sb = make_storyboard(2)
+        sb.pop("cta")
+        result = self.master(storyboard=sb)
+        self.assertEqual(result["stage"], vcm.STAGE_MASTER)
+
+    def test_master_carries_the_approved_lines_for_the_sidecar(self):
+        result = self.master()
+        self.assertEqual(result["captions"], CAPTIONS)
+        self.assertEqual(result["caption_source"], vcm.CAPTION_SOURCE)
+
+
+class TestSubtitleSidecar(ComposeTestBase):
+
+    def test_srt_timestamps_are_srt_formatted(self):
+        self.assertEqual(vcm.srt_timestamp(0), "00:00:00,000")
+        self.assertEqual(vcm.srt_timestamp(5), "00:00:05,000")
+        self.assertEqual(vcm.srt_timestamp(65.5), "00:01:05,500")
+
+    def test_srt_cues_follow_the_cut_boundaries(self):
+        srt = vcm.build_srt(CAPTIONS)
+        self.assertIn("00:00:00,000 --> 00:00:05,000", srt)
+        self.assertIn("00:00:05,000 --> 00:00:10,000", srt)
+
+    def test_srt_text_is_byte_identical_to_the_approved_lines(self):
+        srt = vcm.build_srt(CAPTIONS)
+        for line in CAPTIONS:
+            self.assertIn(line, srt,
+                          "자막은 승인된 voice_line 과 바이트 단위로 같아야 한다")
+
+    def test_srt_never_rewraps_or_truncates_a_long_line(self):
+        long_line = "가" * 118
+        srt = vcm.build_srt([long_line])
+        self.assertIn(long_line, srt)
+        self.assertNotIn("…", srt)
+        self.assertNotIn("...", srt)
+
+    def test_empty_line_is_rejected_rather_than_silently_dropped(self):
+        with self.assertRaises(vcm.CaptionDriftError):
+            vcm.build_srt(["ok", "  "])
+
+    def test_sidecar_is_written_next_to_the_master(self):
+        out = os.path.join(self.tmp, "out", "master.mp4")
+        result = vcm.compose_master(
+            storyboard=make_storyboard(2),
+            cut_lineage=write_cuts(self.tmp, 2),
+            edit_decisions=dict(EDIT_DECISIONS), job_id=JOB_ID,
+            output_path=out, renderer=RendererSpy(), runtime_probe=ProbeSpy())
+        path = result["subtitle_sidecar_path"]
+        self.assertTrue(path.endswith(".srt"))
+        self.assertTrue(os.path.isfile(path))
+        with open(path, encoding="utf-8") as fh:
+            body = fh.read()
+        for line in CAPTIONS:
+            self.assertIn(line, body)
+        self.assertEqual(result["subtitle_sidecar_format"], "srt")
+
+
+class TestSubtitlePass(ComposeTestBase):
+
+    def _master(self, n_cuts=2):
+        out = os.path.join(self.tmp, "out", "master.mp4")
+        return vcm.compose_master(
+            storyboard=make_storyboard(n_cuts),
+            cut_lineage=write_cuts(self.tmp, n_cuts),
+            edit_decisions=dict(EDIT_DECISIONS), job_id=JOB_ID,
+            output_path=out, renderer=RendererSpy(), runtime_probe=ProbeSpy())
+
+    def subtitled(self, *, master=None, storyboard=None, renderer=None,
+                  probe=None, **kw):
+        m = master if master is not None else self._master()
+        return vcm.compose_subtitled(
+            master=m,
+            storyboard=(storyboard if storyboard is not None
+                        else make_storyboard(2)),
+            edit_decisions=dict(EDIT_DECISIONS),
+            job_id=kw.pop("job_id", JOB_ID),
+            output_path=kw.pop("output_path",
+                               os.path.join(self.tmp, "out", "subbed.mp4")),
+            renderer=renderer if renderer is not None else RendererSpy(),
+            runtime_probe=probe if probe is not None else ProbeSpy(),
+            **kw)
+
+    def test_subtitled_pass_burns_captions_and_cta(self):
+        result = self.subtitled()
+        roles = sorted({l["role"] for l in
+                        result["overlay_plan"]["text_layers"]})
+        self.assertEqual(roles, ["caption", "cta"])
+        texts = [l["text"] for l in result["overlay_plan"]["text_layers"]]
+        for line in CAPTIONS + [CTA]:
+            self.assertIn(line, texts)
+
+    def test_subtitled_pass_is_a_distinct_artifact(self):
+        m = self._master()
+        s = self.subtitled(master=m)
+        self.assertNotEqual(m["output_path"], s["output_path"])
+        self.assertTrue(os.path.isfile(m["output_path"]),
+                        "클린 마스터는 자막 패스 이후에도 그대로 남아야 한다")
+        self.assertEqual(s["stage"], vcm.STAGE_SUBTITLED)
+        self.assertTrue(s["captions_burned_in"])
+
+    def test_subtitled_pass_consumes_the_master_by_hash(self):
+        m = self._master()
+        s = self.subtitled(master=m)
+        self.assertEqual(s["master_sha256"], m["output_sha256"])
+        self.assertEqual(s["master_path"], m["output_path"])
+
+    def test_tampered_master_is_rejected(self):
+        m = self._master()
+        with open(m["output_path"], "ab") as fh:
+            fh.write(b"\x00")
+        with self.assertRaises(vcm.ComposeLineageError):
+            self.subtitled(master=m)
+
+    def test_subtitle_pass_requires_an_approved_cta(self):
+        sb = make_storyboard(2)
+        sb.pop("cta")
+        with self.assertRaises(vcm.CaptionDriftError):
+            self.subtitled(storyboard=sb)
+
+    def test_subtitle_pass_does_not_reburn_the_disclosure(self):
+        """고지는 마스터 픽셀에 이미 있다 — 두 번 구우면 화면에 두 개가 뜬다."""
+        result = self.subtitled()
+        self.assertTrue(result["disclosure_inherited_from_master"])
+        roles = {l["role"] for l in result["overlay_plan"]["text_layers"]}
+        self.assertNotIn("disclosure", roles)
+
+    def test_subtitle_pass_caption_drift_is_rejected(self):
+        renderer = RendererSpy(
+            mutate_caption=lambda t: t.replace("한 스푼", "두 스푼"))
+        with self.assertRaises(vcm.CaptionDriftError):
+            self.subtitled(renderer=renderer)
+
+    def test_subtitle_pass_is_remotion_only(self):
+        with self.assertRaises(vcm.RuntimeSwapError):
+            self.subtitled(renderer=RendererSpy(runtime="ffmpeg"))
+
+    def test_subtitle_pass_props_declare_the_stage(self):
+        result = self.subtitled()
+        with open(result["props_path"], encoding="utf-8") as fh:
+            import json
+            props = json.load(fh)
+        self.assertEqual(props["stage"], vcm.STAGE_SUBTITLED)
+        self.assertTrue(props["disclosure_inherited_from_master"])
+        self.assertEqual(len(props["clips"]), 1)
+
+
+class TestClipStaging(ComposeTestBase):
+    """Remotion 은 절대 경로 file:// 를 읽지 못했다 — 스테이징을 자동화한다."""
+
+    def test_clips_are_staged_into_the_composer_public_dir(self):
+        with tempfile.TemporaryDirectory() as composer:
+            os.makedirs(os.path.join(composer, "public"))
+            lineage = write_cuts(self.tmp, 2)
+            staged = vcm.stage_clips_for_remotion(
+                lineage, job_id=JOB_ID, composer_dir=composer)
+            for entry in staged:
+                self.assertFalse(entry["src"].startswith("/"),
+                                 "스테이징된 src 는 public 기준 상대경로여야 한다")
+                self.assertTrue(os.path.isfile(
+                    os.path.join(composer, "public", entry["src"])))
+
+    def test_staging_rehashes_and_preserves_lineage(self):
+        with tempfile.TemporaryDirectory() as composer:
+            os.makedirs(os.path.join(composer, "public"))
+            lineage = write_cuts(self.tmp, 2)
+            staged = vcm.stage_clips_for_remotion(
+                lineage, job_id=JOB_ID, composer_dir=composer)
+            for src, out in zip(lineage, staged):
+                self.assertEqual(out["staged_sha256"], src["output_sha256"],
+                                 "복사본 해시가 원본과 달라지면 계보가 끊긴다")
+
+    def test_staging_detects_a_corrupted_copy(self):
+        with tempfile.TemporaryDirectory() as composer:
+            os.makedirs(os.path.join(composer, "public"))
+            lineage = write_cuts(self.tmp, 1)
+            lineage[0]["output_sha256"] = "0" * 64
+            with self.assertRaises(vcm.ComposeLineageError):
+                vcm.stage_clips_for_remotion(
+                    lineage, job_id=JOB_ID, composer_dir=composer)
+
+    def test_missing_composer_dir_fails_closed(self):
+        lineage = write_cuts(self.tmp, 1)
+        with self.assertRaises(vcm.RuntimeUnavailableError):
+            vcm.stage_clips_for_remotion(
+                lineage, job_id=JOB_ID,
+                composer_dir="/nonexistent/remotion-composer")
+
+    def test_master_props_reference_staged_relative_paths(self):
+        with tempfile.TemporaryDirectory() as composer:
+            os.makedirs(os.path.join(composer, "public"))
+            with mock.patch.object(vcm, "REMOTION_COMPOSER_DIR", composer):
+                result = vcm.compose_master(
+                    storyboard=make_storyboard(2),
+                    cut_lineage=write_cuts(self.tmp, 2),
+                    edit_decisions=dict(EDIT_DECISIONS), job_id=JOB_ID,
+                    output_path=os.path.join(self.tmp, "out", "master.mp4"),
+                    renderer=RendererSpy(), runtime_probe=ProbeSpy())
+            import json
+            with open(result["props_path"], encoding="utf-8") as fh:
+                props = json.load(fh)
+            for clip in props["clips"]:
+                self.assertFalse(clip["src"].startswith("/"))
+                self.assertFalse(clip["src"].startswith("file://"))
+            self.assertTrue(result["clips_staged"])
+
+
+class TestStoryboardOwnsTheCta(unittest.TestCase):
+    """스토리보드가 cta 를 내지 않아 운영자가 손으로 넣던 구멍을 막는다."""
+
+    def test_storyboard_module_defines_market_cta_copy(self):
+        import video_storyboard as vs
+        self.assertIn("KR", vs.CTA_TEXT)
+        self.assertIn("US", vs.CTA_TEXT)
+        for market, text in vs.CTA_TEXT.items():
+            self.assertTrue(text.strip(), market)
+
+    def test_cta_for_returns_an_approved_block(self):
+        import video_storyboard as vs
+        block = vs.cta_for("KR")
+        self.assertEqual(block["text"], vs.CTA_TEXT["KR"])
+        self.assertEqual(block["market"], "KR")
+
+    def test_cta_copy_contains_no_forbidden_claim(self):
+        import video_storyboard as vs
+        for text in vs.CTA_TEXT.values():
+            for rx in vs.forbidden_patterns():
+                self.assertIsNone(rx.search(text),
+                                  f"CTA 카피에 금지 표현: {text!r}")
+
+    def test_grounded_storyboard_serialises_a_cta(self):
+        import video_storyboard as vs
+        board = vs.GroundedStoryboard(
+            storyboard_id="sb", run_id="r", product_id="p", market="KR",
+            content_draft_id="d", viral_pattern_ids=["v"],
+            complexity="standard", cuts=[],
+            disclosure=vs.disclosure_for("KR"))
+        self.assertEqual(board.to_dict()["cta"]["text"], vs.CTA_TEXT["KR"])
 
 
 if __name__ == "__main__":
