@@ -176,18 +176,26 @@ ARTIFACT_KINDS: Tuple[str, ...] = (ARTIFACT_CLEAN_MASTER, ARTIFACT_DELIVERABLE)
 DEFAULT_SAMPLE_FPS = 30.0
 
 IDENTITY_LIMITATIONS: Tuple[str, ...] = (
-    "product identity is NOT machine-verified in this pipeline — the gate is "
-    "a recorded human sign-off, not an automated measurement",
+    "the machine layer is an AI VISION comparison (generated frame vs the "
+    "real staged product photographs); it reads on-pack lettering and counts "
+    "product openings, and it is a MANDATORY PRE-FILTER, not the gate",
+    "the AI verdict is itself fallible and non-deterministic: it produced "
+    "false positives during calibration, so it may only FAIL a run, never "
+    "substitute for the recorded human sign-off that still gates release",
     "no perceptual hash library is installed and no embedding similarity "
     "model is available offline",
     "the reported dHash distance is ADVISORY ONLY: the reference is a "
     "white-background catalogue cutout while the footage is the product "
     "in-scene, so a large distance is expected for correct video and a small "
     "distance would not prove correctness either",
-    "label text, brand logo fidelity, colour/option variant and capacity "
-    "wording are NOT verified by any automated check here",
-    "a passing result means only that a named human signed off on this exact "
-    "artifact (sha256-bound), not that any machine established identity",
+    "the AI check samples a bounded number of frames, so a defect visible "
+    "only in an unsampled frame is not seen",
+    "colour/option variant and capacity wording are only as verified as the "
+    "reference photographs make them; a wrong-but-plausible variant that "
+    "matches the references' wording would not be caught",
+    "a passing result means a named human signed off on this exact artifact "
+    "(sha256-bound) AND the AI pre-filter found no forged text or impossible "
+    "geometry — not that identity is proven",
 )
 
 DEFAULT_OPENMONTAGE_ROOT = os.environ.get(
@@ -819,6 +827,7 @@ def check_product_identity_screen(frames: List[Dict[str, Any]],
                                   product_image_path: Optional[str],
                                   error: Optional[str] = None,
                                   identity_signoff: Optional[Dict[str, Any]] = None,
+                                  fidelity_verdict: Optional[Dict[str, Any]] = None,
                                   artifact_path: Optional[str] = None,
                                   artifact_kind: str = ARTIFACT_CLEAN_MASTER
                                   ) -> Dict[str, Any]:
@@ -856,11 +865,12 @@ def check_product_identity_screen(frames: List[Dict[str, Any]],
     base: Dict[str, Any] = {
         "artifact_under_test": artifact_kind,
         "establishes_identity": False,
-        "machine_verified": False,
+        "machine_verified": True,
         "advisory_only": True,
         "limitations": list(IDENTITY_LIMITATIONS),
-        "method": "recorded human sign-off (gate) + advisory dHash distance "
-                  "(reported, never judged)",
+        "method": "AI vision fidelity pre-filter (frame vs real product "
+                  "photos; mandatory) + recorded human sign-off (gate) + "
+                  "advisory dHash distance (reported, never judged)",
         "perceptual_verification_available": PERCEPTUAL_VERIFICATION_AVAILABLE,
         "requires_human_signoff": True,
     }
@@ -885,6 +895,13 @@ def check_product_identity_screen(frames: List[Dict[str, Any]],
                                   "dhash_distance": hamming(source_hash,
                                                             dhash(rows))})
         except CheckUnavailable as exc:
+            # **참고값이 못 나오는 것과 검사가 못 도는 것은 다르다.**
+            # 스테이징 상품 자산은 전부 JPEG 인데 이 디코더는 PNG 전용이라,
+            # 예전에는 여기서 항상 예외가 나 advisory_error 가 채워졌고 아래
+            # fail closed 에 걸려 **product_identity 가 구조적으로 절대 통과할
+            # 수 없었다**. 그런데 dHash 는 애초에 판정에 쓰지 않는 참고값이다.
+            # 참고값 하나 못 쟀다고 게이트를 닫는 것은 fail closed 가 아니라
+            # 그냥 고장이다. 진짜 증거는 아래 AI 충실도 판정과 사람 서명이다.
             advisory_error = str(exc)
             distances = []
 
@@ -901,13 +918,50 @@ def check_product_identity_screen(frames: List[Dict[str, Any]],
     # 거리는 판정에 쓰지 않지만, 사람 서명은 **증거와 함께** 남아야 한다.
     # 프레임도 원본 이미지도 없이 서명만 있는 리포트는 무엇을 보고 승인했는지
     # 되짚을 수 없다 — 그래서 여기서 닫는다 (서명 우회로가 아니다).
-    if advisory_error:
+    # --- fail closed: 볼 프레임조차 없으면 통과시키지 않는다.
+    # 사람 서명은 **증거와 함께** 남아야 한다. 프레임도 없이 서명만 있는
+    # 리포트는 무엇을 보고 승인했는지 되짚을 수 없다.
+    #
+    # 단, dHash 참고값을 못 쟀다는 것만으로는 닫지 않는다 (위 주석 참조) —
+    # 그건 판정에 쓰지 않는 값이고, 스테이징 자산이 JPEG 라 늘 실패한다.
+    if error or not frames:
         return dict(base, **_fail(
-            f"동일성 판단에 필요한 증거를 기록하지 못했다 ({advisory_error}) — "
-            "돌지 못한 검사는 통과가 아니다. 사람 서명은 참고 프레임·원본 "
-            "이미지와 함께 남아야 한다"))
+            f"동일성 판단에 필요한 증거를 기록하지 못했다 "
+            f"({advisory_error or error}) — 돌지 못한 검사는 통과가 아니다. "
+            "사람 서명은 참고 프레임과 함께 남아야 한다"))
 
-    # --- 게이트: 사람 서명
+    # --- 1단 게이트: AI 비전 충실도 (사람에게 묻기 **전에** 통과해야 한다)
+    #
+    # 왜 사람 서명을 대체하지 않고 앞에 두는가
+    # -----------------------------------------
+    # 비전 모델은 오답을 낸다 — 캘리브레이션에서 실제로 확신 0.98 로 결함을
+    # 신고했다. 그래서 이것은 **사람의 대체재가 아니라 사람의 필터**다.
+    # 기계가 잡을 수 있는 것(위조 글자·불가능 형상)은 기계가 먼저 잡아
+    # 사람이 그 쓰레기에 서명하는 일이 없게 하고, 기계가 못 잡는 것은
+    # 여전히 사람 눈이 진다. 두 방향 모두 실패 방향으로만 작동한다:
+    # AI 가 통과시켜도 서명이 없으면 실패고, AI 가 막으면 서명이 있어도
+    # 실패다. 어느 쪽도 다른 쪽을 무마할 수 없다.
+    #
+    # 사람 서명을 **제거하지 않은** 이유: 이 검사의 오탐률은 아래 캘리브레이션
+    # 기준으로 0 이 아니며, 무엇보다 이 검사가 볼 수 없는 것들(옵션·용량 변형,
+    # 브랜드 정체성의 미묘한 훼손)이 남아 있다. 검증되지 않은 모델 판정으로
+    # 사람 게이트를 걷어내는 것은 검사를 강화하는 게 아니라 책임을 없애는 것이다.
+    base["ai_fidelity"] = fidelity_verdict
+    if not isinstance(fidelity_verdict, dict) or not fidelity_verdict:
+        return dict(base, **_fail(
+            "AI 상품 충실도 판정(fidelity_verdict)이 없다 — 기계가 잡을 수 "
+            "있는 결함을 걸러내기 전에는 사람에게 서명을 요구하지 않는다. "
+            "돌지 못한 검사는 통과가 아니다"))
+    if not fidelity_verdict.get("passed"):
+        return dict(base, **_fail(
+            "AI 상품 충실도 검사가 생성 프레임과 실제 상품 사진의 불일치를 "
+            f"보고했다: {fidelity_verdict.get('reason')} — 사람 서명 이전에 "
+            "실패한다 (사람에게 결함 있는 프레임을 승인시키지 않는다)",
+            ai_fidelity_reason=fidelity_verdict.get("reason")))
+    base["ai_fidelity_passed"] = True
+    base["machine_prefilter"] = "ai_vision_product_fidelity"
+
+    # --- 2단 게이트: 사람 서명 (여전히 필수)
     if not isinstance(identity_signoff, dict) or not identity_signoff:
         return dict(base, **_fail(
             "상품 동일성은 이 파이프라인에서 기계로 검증되지 않는다. "
@@ -1242,6 +1296,9 @@ def run_qa(*, job_id: str, run_id: str, video_path: str,
            overlay_texts: Optional[Sequence[str]] = None,
            product_image_path: Optional[str] = None,
            identity_signoff: Optional[Dict[str, Any]] = None,
+           product_asset_dir: Optional[str] = None,
+           fidelity_checker: Optional[Callable] = None,
+           fidelity_max_calls: int = 4,
            master_path: Optional[str] = None,
            master_caption: Optional[str] = None,
            master_overlay_texts: Optional[Sequence[str]] = None,
@@ -1313,9 +1370,35 @@ def run_qa(*, job_id: str, run_id: str, video_path: str,
                            if measured.get("duration_seconds") is not None
                            else None),
         artifact_kind=ARTIFACT_CLEAN_MASTER)
+    # AI 비전 충실도 — 사람에게 서명을 요구하기 **전에** 도는 기계 필터.
+    # 호출 예산(fidelity_max_calls)으로 QA 1회 비용이 묶인다.
+    fidelity_verdict: Optional[Dict[str, Any]] = None
+    if fidelity_checker is not None:
+        try:
+            fidelity_verdict = fidelity_checker(
+                [f["path"] for f in frames], product_asset_dir,
+                fidelity_max_calls)
+        except Exception as exc:                 # noqa: BLE001 — fail closed
+            fidelity_verdict = {
+                "passed": False,
+                "reason": f"AI 충실도 검사 실행 실패: {type(exc).__name__}: {exc}"}
+    else:
+        try:
+            import product_fidelity as _pf
+            refs = _pf.reference_photos(product_asset_dir or "")
+            fidelity_verdict = _pf.check_frames(
+                [f["path"] for f in frames], refs,
+                known_wording=_pf.known_wording(product_asset_dir or ""),
+                max_calls=fidelity_max_calls)
+        except Exception as exc:                 # noqa: BLE001 — fail closed
+            fidelity_verdict = {
+                "passed": False,
+                "reason": f"AI 충실도 검사 실행 실패: {type(exc).__name__}: {exc}"}
+
     checks[CHECK_PRODUCT_IDENTITY] = check_product_identity_screen(
         frames, product_image_path, sample_error,
         identity_signoff=identity_signoff, artifact_path=master_path,
+        fidelity_verdict=fidelity_verdict,
         artifact_kind=ARTIFACT_CLEAN_MASTER)
 
     # 4. 발화 내용 — 클린 마스터의 오디오 (자막 패스는 오디오를 바꾸지 않는다)

@@ -229,6 +229,11 @@ class QABase(unittest.TestCase):
             overlay_texts=[DISCLOSURE_TEXT["KR"]],
             product_image_path=self.product_image,
             identity_signoff=signoff_for(self.video),
+            # AI 충실도는 이제 사람 서명 앞의 필수 기계 필터다. 테스트는
+            # 전부 오프라인이어야 하므로 시임으로 통과 판정을 주입한다.
+            # (검사 자체의 회귀는 test_product_fidelity.py 가 진다.)
+            fidelity_checker=lambda paths, asset_dir, budget: {
+                "passed": True, "reason": "stubbed offline", "calls": 0},
             frame_sampler=SamplerSpy(),
             transcriber=TranscriberSpy(VOICE_1 + " " + VOICE_2),
             audio_probe=AudioSpy(),
@@ -359,14 +364,37 @@ class TestFailClosed(QABase):
         self.assertFailed(self.run_qa(frame_sampler=SamplerSpy(short=True)),
                           "technical_frames")
 
-    def test_missing_product_image_fails_identity_screen(self):
-        os.unlink(self.product_image)
-        self.assertFailed(self.run_qa(), "product_identity_screen")
+    def test_missing_product_image_records_the_advisory_gap_without_gating(self):
+        """참고용 dHash 이미지가 없다고 게이트를 닫지는 않는다.
 
-    def test_undecodable_product_image_fails_rather_than_skipping(self):
+        예전에는 닫았다. 그런데 스테이징 상품 자산은 **전부 JPEG** 이고 이
+        디코더는 PNG 전용이라, 그 규칙은 product_identity 를 구조적으로
+        통과 불가능하게 만들었다 (통과 불가능한 게이트 = 없는 게이트).
+        dHash 는 애초에 판정에 쓰지 않는 참고값이다. 진짜 기계 증거는 AI
+        비전 대조이고, 그것은 아래 두 테스트가 진다.
+        """
+        os.unlink(self.product_image)
+        report = self.run_qa()
+        check = report.checks["product_identity_screen"]
+        self.assertTrue(check["passed"], report.failures)
+        self.assertTrue(check["advisory_error"])       # 사실은 기록된다
+        self.assertIsNone(check["advisory_best_distance"])
+
+    def test_jpeg_product_image_does_not_break_the_check(self):
+        """스테이징 자산은 전부 JPEG 다 — 그것 때문에 검사가 죽으면 안 된다."""
         with open(self.product_image, "wb") as fh:
-            fh.write(b"\xff\xd8\xff\xe0 not a png")
-        self.assertFailed(self.run_qa(), "product_identity_screen")
+            fh.write(b"\xff\xd8\xff\xe0 a real jpeg would go here")
+        report = self.run_qa()
+        self.assertTrue(report.checks["product_identity_screen"]["passed"],
+                        report.failures)
+
+    def test_ai_fidelity_failure_still_gates_when_advisory_is_absent(self):
+        """참고값이 없어도 AI 판정은 여전히 게이트다 — 구멍이 아니다."""
+        os.unlink(self.product_image)
+        self.assertFailed(
+            self.run_qa(fidelity_checker=lambda p, a, b: {
+                "passed": False, "reason": "두 번째 병목"}),
+            "product_identity_screen")
 
     def test_no_seams_supplied_still_fails_closed_offline(self):
         # 시임을 주지 않으면 기본 구현이 OpenMontage 를 찾는다. 이 환경에
@@ -421,6 +449,7 @@ class TestProductIdentity(QABase):
             "product_identity_screen")
 
     def test_legacy_signoff_owner_is_accepted(self):
+        # 현행: haneul-proof / 레거시: mungchi-proof — 과거 서명 호환성 회귀
         report = self.run_qa(
             identity_signoff=signoff_for(self.video, by="mungchi-proof"))
         self.assertTrue(report.checks["product_identity_screen"]["passed"],
@@ -430,9 +459,34 @@ class TestProductIdentity(QABase):
         report = self.run_qa()
         check = report.checks["product_identity_screen"]
         self.assertFalse(check["establishes_identity"])
-        self.assertFalse(check["machine_verified"])
+        # 기계 계층(AI 비전 대조)이 생겼으므로 machine_verified 는 True 다.
+        # 그러나 그것이 동일성을 '확립'하지는 않으며 사람 서명은 여전히 필수다.
+        self.assertTrue(check["machine_verified"])
+        self.assertTrue(check["requires_human_signoff"])
         self.assertTrue(check["limitations"])
         self.assertIn("perceptual", " ".join(check["limitations"]).lower())
+
+    def test_ai_fidelity_is_a_mandatory_prefilter_before_the_human_signoff(self):
+        """AI 가 결함을 보고하면 사람 서명이 유효해도 통과하지 않는다.
+
+        기계 필터는 사람의 대체재가 아니라 사람 앞의 체다 — 사람이 결함
+        있는 프레임에 도장을 찍는 일이 없게 한다.
+        """
+        report = self.run_qa(
+            fidelity_checker=lambda paths, asset_dir, budget: {
+                "passed": False, "reason": "ORCAIN 위조"})
+        self.assertFailed(report, "product_identity_screen")
+        self.assertIn("ORCAIN",
+                      report.checks["product_identity_screen"]["detail"])
+
+    def test_missing_ai_fidelity_verdict_fails_closed(self):
+        report = self.run_qa(
+            fidelity_checker=lambda paths, asset_dir, budget: None)
+        self.assertFailed(report, "product_identity_screen")
+
+    def test_ai_fidelity_pass_does_not_waive_the_human_signoff(self):
+        report = self.run_qa(identity_signoff=None)
+        self.assertFailed(report, "product_identity_screen")
 
     def test_module_declares_the_known_verification_gap(self):
         self.assertFalse(vq.PERCEPTUAL_VERIFICATION_AVAILABLE)
