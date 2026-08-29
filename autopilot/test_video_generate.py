@@ -834,6 +834,31 @@ class TestPinnedRequestShape(CutBase):
             vg.build_cut_request(frame, generation_prompt="x", output_path="/t/a.mp4",
                                  operation="text_to_video")
 
+    def test_ken_burns_cut_can_never_become_a_paid_request(self):
+        """task 28 — 정지 컷은 **요청 자체를 만들 수 없다.**
+
+        이것이 구조적 보장의 전부다: 요청 생성 지점이 이 함수 하나뿐이므로,
+        여기서 막히면 정지 컷이 fal 로 나가는 코드 경로가 존재하지 않는다.
+        """
+        frame = self.frames["frames"][0]
+        with self.assertRaises(vg.CutRequestError) as ctx:
+            vg.build_cut_request(
+                frame, generation_prompt="S1 speaks.",
+                output_path="/t/a.mp4",
+                image_url="https://example.com/a.png",
+                cut_kind=vs.CUT_KIND_STILL)
+        self.assertIn("ken_burns", str(ctx.exception))
+
+    def test_unknown_cut_kind_is_rejected(self):
+        frame = self.frames["frames"][0]
+        with self.assertRaises(vg.CutRequestError):
+            vg.build_cut_request(
+                frame, generation_prompt="S1 speaks.",
+                output_path="/t/a.mp4",
+                image_url="https://example.com/a.png",
+                cut_kind="slideshow")
+
+
 
 class TestCostGate(CutBase):
     def test_pricing_constants(self):

@@ -41,7 +41,9 @@ from typing import Any, Callable, Dict, List, Optional
 from video_contracts import (ALLOWED_TOTAL_DURATIONS, CUT_DURATION_SECONDS,
                              MARKETS, VIDEO_ASPECT_RATIO, VIDEO_RESOLUTION,
                              ContractError, append_event, atomic_write_json)
-from video_storyboard import DISCLOSURE_TEXT
+from video_storyboard import (CUT_KIND_MOTION, CUT_KIND_STILL,
+                              DEFAULT_KEN_BURNS_MOVE, DISCLOSURE_TEXT,
+                              KEN_BURNS_MOVES)
 
 # ---------------------------------------------------------------------------
 # 고정 계약 — pipeline_defs/heightcue-ugc.yaml 의 잠긴 metadata 와 1:1
@@ -696,17 +698,45 @@ def extract_cta(storyboard: Dict[str, Any]) -> str:
     return text
 
 
-def extract_captions(storyboard: Dict[str, Any]) -> List[str]:
-    """승인된 컷 카피(`voice_line`)를 **축자** 회수한다. 재작성 금지."""
-    captions: List[str] = []
+def extract_caption_cues(storyboard: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """승인된 컷 카피를 **컷 인덱스와 함께** 축자 회수한다.
+
+    task 28 이후 스토리보드에는 발화가 **없는** 컷이 있다 — Ken-Burns 정지
+    컷이다. 정지 사진에는 네이티브 오디오가 없으므로 그 컷에는 애초에 대사를
+    배정하지 않으며(스토리보드가 강제한다), 여기서 자막을 만들지도 않는다.
+
+    **자막 타이밍이 리스트 위치가 아니라 ``cut_index`` 에서 나오는 이유**가
+    이것이다. 정지 컷을 리스트에서 빼면서 위치 기반 타이밍을 유지하면 2·3번
+    컷의 자막이 0~5초·5~10초에 찍혀 화면과 어긋난다.
+    """
+    cues: List[Dict[str, Any]] = []
     for cut in storyboard.get("cuts") or []:
-        text = str((cut or {}).get("voice_line") or "").strip()
+        cut = cut or {}
+        index = int(cut.get("index") or 0)
+        kind = str(cut.get("cut_kind") or CUT_KIND_MOTION)
+        text = str(cut.get("voice_line") or "").strip()
+        if kind == CUT_KIND_STILL:
+            if text:
+                raise CaptionDriftError(
+                    f"컷 {index} 은 정지(Ken-Burns) 컷인데 voice_line 이 "
+                    f"있다: {text!r} — 정지 사진은 소리를 내지 않으므로 이 "
+                    "대사는 전사본에 나타날 수 없고 QA 가 떨어진다")
+            continue
         if not text:
             raise CaptionDriftError(
-                f"컷 {(cut or {}).get('index')!r} 의 voice_line 이 비어 있다 — "
+                f"컷 {index!r} 의 voice_line 이 비어 있다 — "
                 "합성 단계에서 카피를 지어내지 않는다")
-        captions.append(text)
-    return captions
+        cues.append({"cut_index": index, "text": text})
+    if not cues:
+        raise CaptionDriftError(
+            "발화 컷이 하나도 없다 — 자막으로 만들 승인 카피가 없다")
+    return cues
+
+
+def extract_captions(storyboard: Dict[str, Any]) -> List[str]:
+    """승인된 컷 카피(`voice_line`)를 **축자** 회수한다. 재작성 금지."""
+    return [c["text"] for c in extract_caption_cues(storyboard)]
+
 
 
 def build_overlay_plan(*, captions: List[str], cta: str,
@@ -735,18 +765,36 @@ def build_overlay_plan(*, captions: List[str], cta: str,
             "note": "텍스트는 영상 모델이 아니라 Remotion 이 결정론적으로 렌더한다"}
 
 
-def _caption_layers(captions: List[str]) -> List[Dict[str, Any]]:
+def _normalise_cues(captions: List[Any]) -> List[Dict[str, Any]]:
+    """문자열 리스트든 큐 dict 리스트든 ``{cut_index, text}`` 로 정규화한다.
+
+    문자열만 오면 위치가 곧 컷 인덱스다 (정지 컷이 없던 시절의 계약).
+    """
+    cues: List[Dict[str, Any]] = []
+    for i, item in enumerate(captions or []):
+        if isinstance(item, dict):
+            cues.append({"cut_index": int(item.get("cut_index") or (i + 1)),
+                         "text": str(item.get("text") or "")})
+        else:
+            cues.append({"cut_index": i + 1, "text": str(item or "")})
+    return cues
+
+
+def _caption_layers(captions: List[Any]) -> List[Dict[str, Any]]:
     return [{
         "role": "caption",
-        "cut_index": i + 1,
-        "text": text,
+        "cut_index": cue["cut_index"],
+        "text": cue["text"],
         "verbatim_from": CAPTION_SOURCE,
-        "start_seconds": i * CUT_DURATION_SECONDS,
-        "end_seconds": (i + 1) * CUT_DURATION_SECONDS,
+        # 타이밍은 리스트 위치가 아니라 **컷 인덱스**에서 나온다 — 무발화
+        # 정지 컷이 리스트에서 빠져도 나머지 자막이 밀리지 않는다.
+        "start_seconds": (cue["cut_index"] - 1) * CUT_DURATION_SECONDS,
+        "end_seconds": cue["cut_index"] * CUT_DURATION_SECONDS,
         "style": {"font_size_px": 44, "safe_area_margin_px": 96,
                   "background_scrim": True, "position": "lower_third",
                   **KOREAN_WRAP_STYLE},
-    } for i, text in enumerate(captions)]
+    } for cue in _normalise_cues(captions)]
+
 
 
 #: CTA 가 캡션 띠와 같은 ``lower_third`` 를 쓰면서도 겹치지 않으려면,
@@ -858,24 +906,29 @@ def srt_timestamp(seconds: float) -> str:
             f"{total_s % 60:02d},{ms:03d}")
 
 
-def build_srt(captions: List[str]) -> str:
+def build_srt(captions: List[Any]) -> str:
     """승인된 ``voice_line`` 을 컷 경계 타이밍의 SRT 로 직렬화한다.
 
     **텍스트는 바이트 그대로 나간다.** 재줄바꿈·자르기·말줄임·대소문자
     변경을 하지 않는다 — ``video_qa`` 가 승인 집합과 축자 대조하며, 여기서
     한 글자라도 손대면 그 게이트가 무의미해진다.
+
+    타이밍은 큐의 ``cut_index`` 에서 나온다 — 무발화 정지 컷이 있는
+    스토리보드에서도 자막이 화면과 어긋나지 않는다.
     """
-    if not captions:
+    cues = _normalise_cues(captions)
+    if not cues:
         raise CaptionDriftError("자막으로 만들 승인 카피가 하나도 없다")
     blocks: List[str] = []
-    for i, text in enumerate(captions):
+    for n, cue in enumerate(cues, start=1):
+        text = cue["text"]
         if not str(text or "").strip():
             raise CaptionDriftError(
-                f"컷 {i + 1} 의 카피가 비어 있다 — 빈 큐를 조용히 건너뛰면 "
-                "자막과 승인본의 줄 수가 어긋난다")
-        start = i * CUT_DURATION_SECONDS
-        end = (i + 1) * CUT_DURATION_SECONDS
-        blocks.append(f"{i + 1}\n{srt_timestamp(start)} --> "
+                f"컷 {cue['cut_index']} 의 카피가 비어 있다 — 빈 큐를 조용히 "
+                "건너뛰면 자막과 승인본의 줄 수가 어긋난다")
+        start = (cue["cut_index"] - 1) * CUT_DURATION_SECONDS
+        end = cue["cut_index"] * CUT_DURATION_SECONDS
+        blocks.append(f"{n}\n{srt_timestamp(start)} --> "
                       f"{srt_timestamp(end)}\n{text}\n")
     return "\n".join(blocks)
 
@@ -905,6 +958,11 @@ def stage_clips_for_remotion(cuts: List[Dict[str, Any]], *, job_id: str,
     거부해 운영자가 클립을 손으로 ``remotion-composer/public/`` 에 복사해야
     했다. 그 수작업을 여기로 흡수한다. 복사 뒤 sha256 을 다시 재서 원본과
     같은지 확인하므로 계보는 그대로 유지된다 — 다르면 계보 오류다.
+
+    **정지(Ken-Burns) 컷도 같은 경로를 쓴다** (task 28). 다른 점은 옮기는
+    바이트가 mp4 가 아니라 **원본 제품 사진**이라는 것뿐이며, 해시 재검증은
+    오히려 더 중요하다: 그 사진의 픽셀이 라벨 진정성의 유일한 근거이므로,
+    한 바이트라도 달라지면 렌더에 넣지 않는다.
     """
     composer = composer_dir or REMOTION_COMPOSER_DIR
     public = os.path.join(composer, "public")
@@ -919,7 +977,12 @@ def stage_clips_for_remotion(cuts: List[Dict[str, Any]], *, job_id: str,
     out: List[Dict[str, Any]] = []
     for cut in cuts:
         index = int(cut["cut_index"])
-        name = f"cut{index:02d}.mp4"
+        kind = str(cut.get("cut_kind") or CUT_KIND_MOTION)
+        if kind == CUT_KIND_STILL:
+            ext = os.path.splitext(cut["output_path"])[1].lower() or ".jpg"
+            name = f"cut{index:02d}_still{ext}"
+        else:
+            name = f"cut{index:02d}.mp4"
         dest = os.path.join(staged_dir, name)
         with open(cut["output_path"], "rb") as src, open(dest, "wb") as dst:
             for block in iter(lambda: src.read(1024 * 1024), b""):
@@ -930,15 +993,21 @@ def stage_clips_for_remotion(cuts: List[Dict[str, Any]], *, job_id: str,
                 f"컷 {index} 스테이징 복사본 해시가 원본과 다르다: {actual} != "
                 f"{cut['output_sha256']} ({dest}) — 계보가 끊긴 바이트는 "
                 "렌더에 넣지 않는다")
-        out.append({
+        entry = {
             "cut_index": index,
+            "cut_kind": kind,
             "src": f"{STAGED_CLIP_SUBDIR}/{job_id}/{name}",
             "staged_path": dest,
             "staged_sha256": actual,
             "source_path": cut["output_path"],
             "duration_seconds": cut["duration_seconds"],
-        })
+        }
+        if kind == CUT_KIND_STILL:
+            entry["ken_burns_move"] = str(
+                cut.get("ken_burns_move") or DEFAULT_KEN_BURNS_MOVE)
+        out.append(entry)
     return out
+
 
 
 def assert_rendered_text(rendered: Any, *, approved: List[str],
@@ -1019,10 +1088,27 @@ def verify_input_cuts(cut_lineage: Any, expected_count: int) -> List[Dict[str, A
         if duration != CUT_DURATION_SECONDS:
             raise ComposeDurationError(
                 f"컷 {index} 길이가 {duration}초다 — {CUT_DURATION_SECONDS}초 고정")
-        verified.append({"cut_index": index, "output_path": path,
-                         "output_sha256": actual,
-                         "duration_seconds": duration,
-                         "output_bytes": os.path.getsize(path)})
+        kind = str(cut.get("cut_kind") or CUT_KIND_MOTION)
+        if kind not in (CUT_KIND_MOTION, CUT_KIND_STILL):
+            raise ComposeLineageError(
+                f"컷 {index} 의 cut_kind 를 모른다: {kind!r}")
+        entry = {"cut_index": index, "output_path": path,
+                 "cut_kind": kind,
+                 "output_sha256": actual,
+                 "duration_seconds": duration,
+                 "output_bytes": os.path.getsize(path)}
+        if kind == CUT_KIND_STILL:
+            # 정지 컷의 바이트는 **원본 제품 사진**이다. 생성물이 아니라는
+            # 사실이 이 컷의 라벨 진정성 근거 전부이므로 계보에 명시한다.
+            move = str(cut.get("ken_burns_move") or DEFAULT_KEN_BURNS_MOVE)
+            if move not in KEN_BURNS_MOVES:
+                raise ComposeLineageError(
+                    f"컷 {index} 의 ken_burns_move 를 모른다: {move!r} "
+                    f"— 허용: {list(KEN_BURNS_MOVES)}")
+            entry["ken_burns_move"] = move
+            entry["generated"] = False
+            entry["label_provenance"] = "original_photograph_pixels"
+        verified.append(entry)
     return verified
 
 
@@ -1085,9 +1171,10 @@ def compose_video(*, storyboard: Dict[str, Any], cut_lineage: Any,
     disclosure_text = extract_disclosure(storyboard, market)
 
     # 5) 승인 카피 — 축자 회수 + CTA.
-    captions = extract_captions(storyboard)
+    caption_cues = extract_caption_cues(storyboard)
+    captions = [c["text"] for c in caption_cues]
     cta = extract_cta(storyboard)
-    overlay_plan = build_overlay_plan(captions=captions, cta=cta,
+    overlay_plan = build_overlay_plan(captions=caption_cues, cta=cta,
                                       disclosure_text=disclosure_text,
                                       total_seconds=expected_seconds)
     approved_texts = [layer["text"] for layer in overlay_plan["text_layers"]
@@ -1300,7 +1387,8 @@ def compose_master(*, storyboard: Dict[str, Any], cut_lineage: Any,
 
     # 캡션은 마스터에 굽지 않지만 **사이드카를 만들기 위해** 지금 축자
     # 회수한다. 회수 자체가 검증이다 — 빈 voice_line 은 여기서 죽는다.
-    captions = extract_captions(storyboard)
+    caption_cues = extract_caption_cues(storyboard)
+    captions = [c["text"] for c in caption_cues]
 
     overlay_plan = build_master_overlay_plan(
         disclosure_text=disclosure_text, total_seconds=expected_seconds)
@@ -1317,7 +1405,7 @@ def compose_master(*, storyboard: Dict[str, Any], cut_lineage: Any,
 
     sidecar_path = os.path.join(
         out_dir, f"{job}_subtitles.{SUBTITLE_SIDECAR_FORMAT}")
-    write_subtitle_sidecar(sidecar_path, captions)
+    write_subtitle_sidecar(sidecar_path, caption_cues)
 
     props = {
         "job_id": job, "run_id": run_id, "storyboard_id": storyboard_id,
@@ -1328,6 +1416,11 @@ def compose_master(*, storyboard: Dict[str, Any], cut_lineage: Any,
         "duration_seconds": expected_seconds,
         "clips": [{"cut_index": c["cut_index"], "src": c["src"],
                    "sha256": c["staged_sha256"],
+                   # Ken-Burns 정지 컷은 Remotion 이 <Img> 로 받아 후반에서
+                   # 밀어 넣는다. 이 두 필드가 없으면 컴포지션은 그것을
+                   # 영상으로 읽으려다 실패한다.
+                   "cut_kind": c.get("cut_kind", CUT_KIND_MOTION),
+                   "ken_burns_move": c.get("ken_burns_move"),
                    "duration_seconds": c["duration_seconds"]}
                   for c in staged],
         # 마스터는 캡션을 굽지 않는다. 승인 카피는 사이드카로만 나간다.
@@ -1518,10 +1611,11 @@ def compose_subtitled(*, master: Dict[str, Any], storyboard: Dict[str, Any],
             f"({ALLOWED_TOTAL_DURATIONS})")
 
     # 캡션·CTA 는 여전히 **승인본에서만** 온다.
-    captions = extract_captions(storyboard)
+    caption_cues = extract_caption_cues(storyboard)
+    captions = [c["text"] for c in caption_cues]
     cta = extract_cta(storyboard)
     overlay_plan = build_subtitle_overlay_plan(
-        captions=captions, cta=cta, total_seconds=expected_seconds)
+        captions=caption_cues, cta=cta, total_seconds=expected_seconds)
     approved_texts = [l["text"] for l in overlay_plan["text_layers"]]
 
     disclosure_text = extract_disclosure(storyboard, market)

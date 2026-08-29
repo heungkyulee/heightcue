@@ -642,5 +642,37 @@ class TestNoNetwork(unittest.TestCase):
             self.assertNotIn(banned, src)
 
 
+class TestGenerationManifestAllowsStillCutGaps(unittest.TestCase):
+    """생성 매니페스트는 스토리보드 컷의 **부분집합**이다 (task 28).
+
+    Ken-Burns 정지 컷은 생성되지 않으므로 매니페스트에 존재할 수 없다.
+    3컷 스토리보드의 생성 매니페스트가 [2, 3] 인 것은 정상이다.
+    """
+
+    def test_subset_starting_above_one_is_accepted(self):
+        cuts = [type("C", (), {"index": i})() for i in (2, 3)]
+        vc._require_increasing_subset(cuts)   # must not raise
+
+    def test_storyboard_ordering_stays_strict(self):
+        cuts = [type("C", (), {"index": i})() for i in (2, 3)]
+        with self.assertRaises(vc.ContractError):
+            vc._require_sequential(cuts)
+
+    def test_out_of_order_is_still_rejected(self):
+        cuts = [type("C", (), {"index": i})() for i in (3, 2)]
+        with self.assertRaises(vc.ContractError):
+            vc._require_increasing_subset(cuts)
+
+    def test_duplicate_index_is_still_rejected(self):
+        cuts = [type("C", (), {"index": i})() for i in (2, 2)]
+        with self.assertRaises(vc.ContractError):
+            vc._require_increasing_subset(cuts)
+
+    def test_out_of_range_index_is_still_rejected(self):
+        cuts = [type("C", (), {"index": i})() for i in (2, 9)]
+        with self.assertRaises(vc.ContractError):
+            vc._require_increasing_subset(cuts)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

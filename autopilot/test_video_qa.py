@@ -1158,5 +1158,36 @@ class TestFidelityStaysBlocking(unittest.TestCase):
 
 
 
+class TestCutKindSummary(unittest.TestCase):
+    """리포트는 어느 구간이 생성물이고 어느 구간이 촬영 원본인지 밝힌다."""
+
+    BOARD = {"cuts": [
+        {"index": 1, "cut_kind": "ken_burns", "voice_line": ""},
+        {"index": 2, "cut_kind": "motion", "voice_line": "line two"},
+        {"index": 3, "cut_kind": "motion", "voice_line": "line three"},
+    ]}
+
+    def test_still_cut_label_provenance_is_the_original_photograph(self):
+        summary = vq.cut_kind_summary(self.BOARD)
+        rows = {r["cut_index"]: r for r in summary["cuts"]}
+        self.assertEqual(rows[1]["label_provenance"],
+                         "original_photograph_pixels")
+        self.assertFalse(rows[1]["generated"])
+        self.assertFalse(rows[1]["has_speech"])
+        self.assertEqual(rows[2]["label_provenance"], "generated_by_i2v_model")
+
+    def test_paid_cut_count_is_reported_and_within_cap(self):
+        summary = vq.cut_kind_summary(self.BOARD)
+        self.assertEqual(summary["paid_motion_cuts"], 2)
+        self.assertEqual(summary["still_cuts"], 1)
+        self.assertLessEqual(summary["paid_motion_cuts"],
+                             summary["max_paid_motion_cuts"])
+
+    def test_approved_voice_lines_skip_the_silent_still_cut(self):
+        """정지 컷에 대사가 없는 것은 **설계**다 — 누락이 아니다."""
+        self.assertEqual(vq.approved_voice_lines(self.BOARD),
+                         ["line two", "line three"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

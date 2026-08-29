@@ -654,12 +654,48 @@ def normalize_speech(text: Any) -> str:
 
 
 def approved_voice_lines(storyboard: Dict[str, Any]) -> List[str]:
+    """전사본과 대조할 승인 발화만 회수한다.
+
+    Ken-Burns 정지 컷은 ``voice_line`` 을 갖지 않으므로 (스토리보드가
+    강제한다) 여기서 자연히 빠진다. 그 컷 구간은 소리가 나지 않는 것이
+    **의도된 설계**이지 누락이 아니다 — 승인된 대사는 전부 모션 컷에 실려
+    있고, 이 함수가 돌려주는 목록이 곧 실제로 들려야 할 전부다.
+    """
     lines = []
     for cut in storyboard.get("cuts") or []:
         line = str((cut or {}).get("voice_line") or "").strip()
         if line:
             lines.append(line)
     return lines
+
+
+def cut_kind_summary(storyboard: Dict[str, Any]) -> Dict[str, Any]:
+    """컷 종류 내역 — 어느 컷이 유료 생성물이고 어느 컷이 원본 사진인가.
+
+    라벨 진정성 감사가 읽는 값이다. ``ken_burns`` 로 표시된 컷의 라벨은
+    생성물이 아니라 촬영 원본이므로 위조 자체가 성립하지 않는다.
+    """
+    rows = []
+    for cut in storyboard.get("cuts") or []:
+        cut = cut or {}
+        kind = str(cut.get("cut_kind") or vs.CUT_KIND_MOTION)
+        rows.append({
+            "cut_index": int(cut.get("index") or 0),
+            "cut_kind": kind,
+            "generated": kind == vs.CUT_KIND_MOTION,
+            "paid": kind == vs.CUT_KIND_MOTION,
+            "has_speech": bool(str(cut.get("voice_line") or "").strip()),
+            "label_provenance": ("generated_by_i2v_model"
+                                 if kind == vs.CUT_KIND_MOTION
+                                 else "original_photograph_pixels"),
+        })
+    return {
+        "cuts": rows,
+        "paid_motion_cuts": sum(1 for r in rows if r["paid"]),
+        "still_cuts": sum(1 for r in rows if not r["paid"]),
+        "max_paid_motion_cuts": vs.MAX_PAID_MOTION_CUTS,
+    }
+
 
 
 def find_forbidden_claims(text: str) -> List[str]:
@@ -1497,6 +1533,10 @@ def run_qa(*, job_id: str, run_id: str, video_path: str,
         identity_signoff=identity_signoff, artifact_path=master_path,
         fidelity_verdict=fidelity_verdict,
         artifact_kind=ARTIFACT_CLEAN_MASTER)
+    # 라벨 진정성의 출처를 리포트에 명시한다 — 어느 구간이 생성물이고 어느
+    # 구간이 촬영 원본인지 밝히지 않으면 사람 서명이 무엇을 승인하는지 모호해진다.
+    checks[CHECK_PRODUCT_IDENTITY]["cut_kinds"] = cut_kind_summary(storyboard)
+
 
     # 4. 발화 내용 — 클린 마스터의 오디오 (자막 패스는 오디오를 바꾸지 않는다)
     transcribe = transcriber or default_transcriber

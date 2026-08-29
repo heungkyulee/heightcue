@@ -1322,5 +1322,67 @@ class TestKoreanWrapIsVisualOnly(unittest.TestCase):
         self.assertEqual(style["text_wrap"], "balance")
 
 
+class TestKenBurnsStillCutsInCompose(unittest.TestCase):
+    """정지 컷은 발화가 없고, 그래서 자막 타이밍은 위치가 아니라 컷 인덱스다."""
+
+    def _board(self):
+        return {"cuts": [
+            {"index": 1, "cut_kind": "ken_burns", "voice_line": ""},
+            {"index": 2, "cut_kind": "motion", "voice_line": "line two"},
+            {"index": 3, "cut_kind": "motion", "voice_line": "line three"},
+        ]}
+
+    def test_still_cut_contributes_no_caption(self):
+        cues = vcm.extract_caption_cues(self._board())
+        self.assertEqual([c["text"] for c in cues], ["line two", "line three"])
+        self.assertEqual([c["cut_index"] for c in cues], [2, 3])
+
+    def test_caption_timing_follows_cut_index_not_list_position(self):
+        """정지 컷을 빼면서 위치 기반 타이밍을 쓰면 자막이 5초씩 앞당겨진다."""
+        cues = vcm.extract_caption_cues(self._board())
+        layers = vcm._caption_layers(cues)
+        self.assertEqual([(l["start_seconds"], l["end_seconds"])
+                          for l in layers], [(5, 10), (10, 15)])
+
+    def test_srt_timing_follows_cut_index_too(self):
+        srt = vcm.build_srt(vcm.extract_caption_cues(self._board()))
+        self.assertIn("00:00:05,000 --> 00:00:10,000", srt)
+        self.assertIn("00:00:10,000 --> 00:00:15,000", srt)
+        self.assertNotIn("00:00:00,000 -->", srt)
+
+    def test_voice_line_on_a_still_cut_is_rejected_not_silently_dropped(self):
+        board = self._board()
+        board["cuts"][0]["voice_line"] = "never audible"
+        with self.assertRaises(vcm.CaptionDriftError):
+            vcm.extract_caption_cues(board)
+
+    def test_still_cut_lineage_records_original_photograph_provenance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "hero.jpeg")
+            with open(path, "wb") as fh:
+                fh.write(b"\xff\xd8\xff" + b"x" * 400)
+            digest = hashlib.sha256(open(path, "rb").read()).hexdigest()
+            out = vcm.verify_input_cuts([{
+                "cut_index": 1, "output_path": path, "output_sha256": digest,
+                "duration_seconds": 5, "cut_kind": "ken_burns",
+                "ken_burns_move": "push_in"}], 1)
+        self.assertEqual(out[0]["cut_kind"], "ken_burns")
+        self.assertFalse(out[0]["generated"])
+        self.assertEqual(out[0]["label_provenance"],
+                         "original_photograph_pixels")
+
+    def test_unknown_ken_burns_move_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "hero.jpeg")
+            with open(path, "wb") as fh:
+                fh.write(b"\xff\xd8\xff" + b"x" * 400)
+            digest = hashlib.sha256(open(path, "rb").read()).hexdigest()
+            with self.assertRaises(vcm.ComposeLineageError):
+                vcm.verify_input_cuts([{
+                    "cut_index": 1, "output_path": path,
+                    "output_sha256": digest, "duration_seconds": 5,
+                    "cut_kind": "ken_burns", "ken_burns_move": "barrel_roll"}], 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

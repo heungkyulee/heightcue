@@ -58,6 +58,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import codex_image_bridge as cib
 import video_contracts as vc
+import video_storyboard as vs
 from video_contracts import (CUT_DURATION_SECONDS, IMAGE_HERMES_MODEL,
                              IMAGE_HERMES_PROVIDER, IMAGE_MODEL_ALIAS,
                              IMAGE_PROVIDER_MODEL, MARKETS, STATE_GENERATING,
@@ -656,6 +657,22 @@ def generate_first_frames(storyboard: Any, asset_manifest: Dict[str, Any], *,
     if not cuts:
         raise FirstFrameError("컷이 없다 — 만들 첫 프레임이 없다")
 
+    # task 28 — 정지(Ken-Burns) 컷은 첫 프레임을 **생성하지 않는다.** 그 컷의
+    # 소스는 실제 촬영된 제품 사진 그 자체이며, 이미지 모델을 한 번이라도
+    # 태우면 라벨이 재렌더링되어 원본성이 사라진다. 여기서 걸러내므로
+    # 정지 컷은 코덱스 브리지도 fal 도 타지 않는다.
+    all_cuts = list(cuts)
+    still_cuts = [c for c in all_cuts
+                  if str(getattr(c, "cut_kind", vs.CUT_KIND_MOTION))
+                  == vs.CUT_KIND_STILL]
+    cuts = [c for c in all_cuts
+            if str(getattr(c, "cut_kind", vs.CUT_KIND_MOTION))
+            == vs.CUT_KIND_MOTION]
+    if not cuts:
+        raise FirstFrameError(
+            "모션 컷이 하나도 없다 — 생성할 첫 프레임이 없다")
+
+
     # 1) 상한을 지출·자격증명 확인보다 먼저 강제한다.
     if len(cuts) > MAX_FIRST_FRAME_CANDIDATES:
         raise CandidateCapError(
@@ -758,7 +775,21 @@ def generate_first_frames(storyboard: Any, asset_manifest: Dict[str, Any], *,
         "frames_dir": out_dir,
         "candidate_cap": MAX_FIRST_FRAME_CANDIDATES,
         "preflight": preflight,
+        #: 생성을 **건너뛴** 정지 컷. 그 소스는 이 매니페스트가 가리키는
+        #: 원본 제품 사진 그 자체다 — 합성 단계가 여기서 읽는다.
+        "still_cuts": [{
+            "cut_index": int(getattr(c, "index")),
+            "cut_kind": vs.CUT_KIND_STILL,
+            "ken_burns_move": (getattr(c, "still_plan", None) or {}).get(
+                "ken_burns_move", vs.DEFAULT_KEN_BURNS_MOVE),
+            "source_path": source["path"],
+            "source_sha256": source["sha256"],
+            "source_rights_basis": source["rights_basis"],
+            "generated": False,
+            "paid": False,
+        } for c in still_cuts],
         "created_at": _now(),
+
         "frames": frames,
     }
     manifest_path = os.path.join(out_dir, "first_frames.json")
@@ -1131,11 +1162,18 @@ def build_cut_request(frame: Dict[str, Any], *, generation_prompt: str,
                       operation: str = VIDEO_OPERATION,
                       prompt_expansion_mode: str = PROMPT_EXPANSION_MODE,
                       seed: Optional[int] = None,
+                      cut_kind: str = vs.CUT_KIND_MOTION,
                       image_url: Optional[str] = None) -> Dict[str, Any]:
     """컷 1개의 fal 요청을 조립한다. 고정 계약을 벗어나면 전송 전에 거부.
 
     비-5초·비-768P·비-9:16·비-I2V 요청은 여기서 만들어질 수 없다 —
     이 함수가 유일한 요청 생성 지점이다.
+
+    **``ken_burns`` 컷은 여기서 요청이 될 수 없다** (task 28). 정지 컷은
+    실제 촬영된 제품 사진의 원본 픽셀을 후반에서 움직이는 컷이며, 생성
+    모델에 넘기는 순간 그 라벨은 다시 그려지고 — 세 번의 유료 실행이
+    증명했듯 — 위조된다. 요청 생성 지점이 하나뿐이므로, 여기서 막으면
+    정지 컷이 유료 경로를 타는 코드 경로는 **존재하지 않는다.**
 
     ``image_url`` 은 fal 이 **가져갈 수 있는** http(s) URL 이어야 한다.
     로컬 경로나 `file://` 은 fal 쪽에서 "이미지를 못 가져왔다"는 4xx 로
@@ -1143,7 +1181,17 @@ def build_cut_request(frame: Dict[str, Any], *, generation_prompt: str,
     잘못된 버킷으로 분류된다. 그래서 **지출 전에** 여기서 거부한다.
     업로드는 프로덕션 어댑터의 몫이다.
     """
+    if cut_kind not in vs.CUT_KINDS:
+        raise CutRequestError(
+            f"알 수 없는 cut_kind: {cut_kind!r} — 허용: {list(vs.CUT_KINDS)}")
+    if cut_kind != vs.CUT_KIND_MOTION:
+        raise CutRequestError(
+            f"cut_kind={cut_kind!r} 컷은 유료 생성 요청을 만들 수 없다 — "
+            "정지(Ken-Burns) 컷은 실제 제품 사진의 원본 픽셀을 후반에서 "
+            "움직인다. 생성기에 넘기면 라벨이 다시 그려지고, 다시 그리면 "
+            "위조된다 (run 25/26/27 실증). 지출 전에 거부한다")
     if operation != VIDEO_OPERATION:
+
         raise CutRequestError(
             f"operation 은 {VIDEO_OPERATION!r} 뿐이다: {operation!r} — "
             "text-to-video 경로는 존재하지 않는다")
@@ -1313,9 +1361,25 @@ def generate_cuts(storyboard: Any, frames_manifest: Dict[str, Any], *,
         raise CutGenerationError(f"market 는 {MARKETS} 중 하나여야 한다: {market!r}")
     if not frames:
         raise CutGenerationError("첫 프레임이 없다 — 만들 컷이 없다")
+
+    # task 28 — 유료 경로에는 **모션 컷만** 들어온다. 정지 컷은 첫 프레임
+    # 단계에서 이미 걸러졌으므로 프레임이 없고, 여기서 1:1 을 비교할 때도
+    # 모션 컷만 센다. 정지 컷이 여기까지 흘러오면 그건 버그다.
+    motion_cuts = [c for c in sb_cuts
+                   if str(getattr(c, "cut_kind", vs.CUT_KIND_MOTION))
+                   == vs.CUT_KIND_MOTION]
+    still_count = len(sb_cuts) - len(motion_cuts)
+    if len(motion_cuts) > vs.MAX_PAID_MOTION_CUTS:
+        raise CostGateError(
+            f"유료 모션 컷 {len(motion_cuts)} 개는 상한 "
+            f"{vs.MAX_PAID_MOTION_CUTS} 을 넘는다 — 요청을 한 건도 보내지 "
+            "않는다")
+    sb_cuts = motion_cuts
     if len(frames) != len(sb_cuts):
         raise CutGenerationError(
-            f"프레임 {len(frames)} 장 != 컷 {len(sb_cuts)} 개 — 1:1 이어야 한다")
+            f"프레임 {len(frames)} 장 != 모션 컷 {len(sb_cuts)} 개 — "
+            f"1:1 이어야 한다 (정지 컷 {still_count} 개는 생성 대상이 아니다)")
+
 
     out_dir = cuts_dir_for(run_id, projects_root)
     os.makedirs(out_dir, exist_ok=True)
@@ -1351,6 +1415,10 @@ def generate_cuts(storyboard: Any, frames_manifest: Dict[str, Any], *,
     prompts = {int(getattr(c, "index")):
                str(getattr(c, "generation_prompt", "") or "").strip()
                for c in sb_cuts}
+    kinds = {int(getattr(c, "index")):
+             str(getattr(c, "cut_kind", vs.CUT_KIND_MOTION))
+             for c in sb_cuts}
+
 
     lineage: List[Dict[str, Any]] = []
     attempts: Dict[int, int] = {}
@@ -1376,7 +1444,8 @@ def generate_cuts(storyboard: Any, frames_manifest: Dict[str, Any], *,
             frame, generation_prompt=prompts.get(index, ""),
             output_path=os.path.join(out_dir,
                                      f"{product_id}_cut{index:02d}.mp4"),
-            image_url=uploader(frame), seed=seed)
+            image_url=uploader(frame), seed=seed,
+            cut_kind=kinds.get(index, vs.CUT_KIND_MOTION))
 
     possibly_billed = 0.0
 

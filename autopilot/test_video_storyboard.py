@@ -63,8 +63,15 @@ def _kr_response(n=2):
     quotes = [KR_QUOTE_1, KR_QUOTE_2, KR_QUOTE_3]
     benefits = ["소음 걱정이 줄어듭니다", "따로 살 것이 줄어듭니다", "실내에서 쓸 수 있습니다"]
     actions = ["손으로 제품을 집어 바닥에 놓는다", "매트를 펼친다", "제품을 거실에 둔다"]
-    return {"cuts": [_kr_cut(i + 1, quotes[i], f"ev{i + 1}", actions[i], benefits[i])
-                     for i in range(n)]}
+    cuts = [_kr_cut(i + 1, quotes[i], f"ev{i + 1}", actions[i], benefits[i])
+            for i in range(n)]
+    # task 28 — 3컷 아크의 1번은 Ken-Burns 정지 컷이다. 정지 사진에는 네이티브
+    # 오디오가 없으므로 발화를 배정하지 않는다 (스토리보드가 강제한다).
+    for cut, kind in zip(cuts, vs.cut_kinds_for(n)):
+        if kind == vs.CUT_KIND_STILL:
+            cut["voice_line"] = ""
+    return {"cuts": cuts}
+
 
 
 def _us_response(n=2):
@@ -814,10 +821,18 @@ class TestStoryDrivenGenerationPrompt(unittest.TestCase):
         for axis in vs.CUT_ROLE_GRAMMAR_AXES:
             self.assertIn(axis, viral_ugc.GRAMMAR_FIELDS)
 
-    def test_three_cut_board_uses_hook_demo_proof_arc(self):
+    def test_three_cut_board_uses_hero_demo_proof_arc(self):
+        """task 28 — 훅 자리를 Ken-Burns 제품 히어로가 가져갔다.
+
+        제품 **식별**은 원본 사진(무료·위조 불가)이 하고, **시연**은 유료
+        모션 컷 두 개가 한다.
+        """
         sb = _generate(_kr_response(3), complexity="complex")
         roles = [c.story_role for c in sb.cuts]
-        self.assertEqual(roles, ["hook_0_2s", "demo_action", "proof_moment"])
+        self.assertEqual(roles, ["product_hero", "demo_action", "proof_moment"])
+        kinds = [c.cut_kind for c in sb.cuts]
+        self.assertEqual(kinds, [vs.CUT_KIND_STILL, vs.CUT_KIND_MOTION,
+                                 vs.CUT_KIND_MOTION])
 
     def test_single_cut_is_a_self_contained_demo(self):
         sb = _generate(_kr_response(1), complexity="simple")
@@ -921,27 +936,27 @@ class TestVoiceLineIsJudgedByEvidenceNotSubstring(unittest.TestCase):
 
 
 class TestTightFraming(unittest.TestCase):
-    """실패는 파라미터가 아니라 프레임 안 **글자 크기**를 따라간다.
+    """task 28 — 타이트 프레이밍은 **버려졌다.** 27번이 반증했다.
 
-    5개 암 전부에서 큰 글자(`Ddrops`, `600 IU`)는 충실했고 작은 글자
-    (`ORGANIC`, `Booster`, 아래첨자 `3`, 잔글씨)만 위조됐다. 그래서
-    스토리보드 자체가 타이트한 제품 컷을 지시해야 한다.
+    27번은 라벨을 크게 잡았고 1차 라벨은 좋아졌지만, 비어버린 라벨 면적을
+    모델이 **날조된 Supplement Facts 패널**로 채웠다. 그래서 이제 유료
+    컷에는 정반대를 지시한다: 라벨을 **읽을 수 없게** 하라. 브랜드 식별은
+    생성되지 않는 Ken-Burns 정지 컷의 원본 픽셀이 맡는다.
     """
 
-    def test_system_prompt_demands_tight_product_framing(self):
+    def test_system_prompt_demands_illegible_label_on_paid_cuts(self):
         low = vs.SYSTEM_PROMPT.lower()
-        self.assertIn("one third", low)
-        self.assertIn("fine print", low)
+        self.assertIn("never be legible", low)
+        self.assertIn("ken_burns", low)
         self.assertIn("supplement facts", low)
+        # 낡은 지시가 남아 있으면 모델이 다시 라벨을 크게 그린다.
+        self.assertNotIn("one third of the frame width", low)
 
     def test_proof_beat_no_longer_asks_for_printed_detail_to_be_read(self):
-        """`proof_moment` 비트가 \"printed on-pack detail\" 을 렌더하라고
-        지시하면 모델이 잔글씨를 지어낸다 — 큰 1차 라벨만 요구해야 한다."""
         beat = vs._ROLE_BEATS["proof_moment"].lower()
         self.assertNotIn("printed on-pack detail", beat)
-        self.assertIn("large", beat)
 
-    def test_generation_prompt_carries_the_framing_instruction(self):
+    def test_generation_prompt_carries_the_illegibility_instruction(self):
         out = vs.build_generation_prompt(
             market="US", story_role="proof_moment",
             action="A parent holds the bottle up",
@@ -949,10 +964,58 @@ class TestTightFraming(unittest.TestCase):
             first_frame_prompt="A parent holds the amber bottle close to camera",
             motion_prompt="She steadies the bottle in front of her")
         low = out.lower()
-        self.assertIn("one third", low)
-        self.assertIn("fine print", low)
+        self.assertIn("never be legible", low)
+        self.assertIn("out of focus", low)
         # 기존 반위조 조항은 그대로 살아 있어야 한다
         self.assertIn("no invented packaging wording", low)
+        # 물리적 개연성 조항(84a2952)도 유지된다
+        self.assertIn("cannot release a drop", low)
+        # 낡은 "크게 잡아라" 지시가 살아 있으면 안 된다
+        self.assertNotIn("one third of the frame width", low)
+
+
+class TestKenBurnsStillCuts(unittest.TestCase):
+    """정지 컷은 **생성되지 않는다** — 위조가 구조적으로 불가능하다."""
+
+    def test_three_cut_arc_has_exactly_one_still_and_two_paid(self):
+        kinds = vs.cut_kinds_for(3)
+        self.assertEqual(kinds[0], vs.CUT_KIND_STILL)
+        self.assertEqual(sum(1 for k in kinds if k == vs.CUT_KIND_MOTION), 2)
+        self.assertLessEqual(
+            sum(1 for k in kinds if k == vs.CUT_KIND_MOTION),
+            vs.MAX_PAID_MOTION_CUTS)
+
+    def test_still_role_cannot_produce_a_paid_prompt(self):
+        """정지 전용 역할로는 fal 프롬프트를 **만들 수조차 없다**."""
+        with self.assertRaises(vs.StoryboardError):
+            vs.build_generation_prompt(
+                market="US", story_role="product_hero",
+                action="hold", voice_line="hi",
+                first_frame_prompt="a bottle", motion_prompt="slow push in")
+
+    def test_still_cut_gets_no_generation_prompt(self):
+        sb = _generate(_kr_response(3), complexity="complex")
+        still = [c for c in sb.cuts if c.cut_kind == vs.CUT_KIND_STILL]
+        self.assertEqual(len(still), 1)
+        self.assertEqual(still[0].generation_prompt, "")
+        self.assertFalse(still[0].is_paid())
+        self.assertEqual(still[0].voice_line, "")
+        self.assertIsNotNone(still[0].still_plan)
+
+    def test_voice_line_on_a_still_cut_is_rejected_not_dropped(self):
+        """승인 대사를 조용히 버리지 않는다 — 배정 자체를 거부한다."""
+        payload = _kr_response(3)
+        payload["cuts"][0]["voice_line"] = "이건 절대 들리지 않는 대사입니다"
+        with self.assertRaises(vs.ModelOutputError):
+            _generate(payload, complexity="complex")
+
+    def test_every_motion_cut_still_speaks(self):
+        sb = _generate(_kr_response(3), complexity="complex")
+        for cut in sb.cuts:
+            if cut.is_paid():
+                self.assertTrue(cut.voice_line)
+                self.assertIn(cut.voice_line, cut.generation_prompt)
+
 
 
 

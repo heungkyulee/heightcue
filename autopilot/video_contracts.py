@@ -288,6 +288,31 @@ def _require_sequential(cuts: List[Any]) -> None:
         raise ContractError(f"컷 index 는 1부터 연속이어야 한다: {actual} != {expected}")
 
 
+def _require_increasing_subset(cuts: List[Any]) -> None:
+    """생성 매니페스트 전용 순서 규칙 — **부분집합**을 허용한다 (task 28).
+
+    스토리보드는 여전히 1부터 연속이어야 한다 (:func:`_require_sequential`).
+    하지만 생성 매니페스트는 이제 스토리보드 컷 **전부**를 담지 않는다:
+    Ken-Burns 정지 컷은 생성되지 않으므로 여기 들어올 수 없고, 그래서
+    3컷 스토리보드의 생성 매니페스트는 정당하게 ``[2, 3]`` 이다.
+
+    느슨해진 것이 아니다 — 순서(오름차순)와 범위(1..MAX_CUTS)와 유일성은
+    그대로 강제한다. 바뀐 것은 "1에서 시작해야 한다"는 가정 하나뿐이며,
+    그 가정은 모든 컷이 생성물이던 시절의 것이다.
+    """
+    actual = [c.index for c in cuts]
+    if any(not isinstance(i, int) or isinstance(i, bool) for i in actual):
+        raise ContractError(f"컷 index 는 정수여야 한다: {actual}")
+    if len(set(actual)) != len(actual):
+        raise ContractError(f"컷 index 가 중복이다: {actual}")
+    if actual != sorted(actual):
+        raise ContractError(f"컷 index 는 오름차순이어야 한다: {actual}")
+    out_of_range = [i for i in actual if not 1 <= i <= MAX_CUTS]
+    if out_of_range:
+        raise ContractError(
+            f"컷 index 가 1~{MAX_CUTS} 범위를 벗어난다: {out_of_range}")
+
+
 def assert_state(state: Any, name: str = "state") -> str:
     if state not in STATES:
         raise StateError(f"알 수 없는 {name}: {state!r} — 허용: {STATES}")
@@ -632,7 +657,9 @@ class GenerationManifest:
         _require_cut_count(self.cuts)
         for cut in self.cuts:
             cut.validate()
-        _require_sequential(self.cuts)
+        # 생성 매니페스트는 스토리보드 컷의 **부분집합**이다 — Ken-Burns
+        # 정지 컷은 생성되지 않아 여기 존재하지 않는다 (task 28).
+        _require_increasing_subset(self.cuts)
         if self.total_duration_seconds() not in ALLOWED_TOTAL_DURATIONS:
             raise DurationError(
                 f"총 길이는 {ALLOWED_TOTAL_DURATIONS} 중 하나여야 한다: "

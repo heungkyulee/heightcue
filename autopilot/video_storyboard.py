@@ -56,6 +56,41 @@ BENEFIT_MAX_CHARS = 80
 REQUIRED_CUT_TEXT_FIELDS = ("action", "benefit", "claim", "voice_line",
                             "first_frame_prompt", "motion_prompt")
 
+# ---------------------------------------------------------------------------
+# 컷 종류 — 라벨 위조를 **구조적으로** 불가능하게 만드는 분리 (task 28)
+#
+# 세 번의 유료 실행(25/26/27)이 같은 결론을 냈다: **I2V 모델은 자기가 볼 수
+# 있는 라벨을 다시 그리고, 다시 그린다는 건 위조한다는 뜻이다.** 프롬프트로는
+# 못 고친다 — 27번은 잔글씨를 화면 밖으로 잘라냈더니 모델이 존재하지도 않는
+# Supplement Facts 패널을 통째로 발명했다.
+#
+# 그래서 일을 둘로 쪼갠다.
+#
+#   ``motion``    — 유료 I2V. 손·물방울·숟가락·부모의 표정. 제품이 있어도
+#                   각도·거리·초점으로 **글자를 읽을 수 없게** 둔다.
+#   ``ken_burns`` — **생성하지 않는다.** 실제 촬영된 제품 사진 원본 픽셀을
+#                   후반에서 천천히 밀어 넣는다(켄번즈). 라벨이 원본이므로
+#                   위조는 "가능성이 낮은" 게 아니라 **불가능**하다.
+#
+# 이 분리는 프롬프트 규칙이 아니라 **코드 경로**다: ``build_cut_request`` 는
+# ``ken_burns`` 컷을 거부하고, ``generate_cuts`` 는 아예 넘겨받지 않는다.
+# 규칙을 잊어버릴 수는 있어도 없는 경로를 탈 수는 없다.
+CUT_KIND_MOTION = "motion"
+CUT_KIND_STILL = "ken_burns"
+CUT_KINDS = (CUT_KIND_MOTION, CUT_KIND_STILL)
+DEFAULT_CUT_KIND = CUT_KIND_MOTION
+
+#: ``ken_burns`` 컷에서 **비어 있어도 되는** 필드.
+#:
+#: 정지 사진에는 네이티브 오디오가 없다. H3 Max 만이 립싱크 발화를 만들고
+#: 우리에게 별도 TTS 경로는 없으므로, 정지 컷에 대사를 배정하면 그 대사는
+#: **어디서도 소리가 되지 않는다** — QA 의 ``spoken_content`` 는 승인 카피
+#: 전부가 전사본에 순서대로 나오길 요구하므로 그대로 실패한다. 그래서 정지
+#: 컷은 **처음부터 무발화로 기획**한다. 승인된 대사를 나중에 조용히 떨어뜨리는
+#: 게 아니라, 애초에 배정하지 않는다. 제품 식별은 원본 사진 픽셀과 우리가
+#: 100% 통제하는 오버레이 텍스트가 맡는다.
+STILL_CUT_OPTIONAL_FIELDS = ("voice_line",)
+
 #: 언어 게이트 대상 — 시장에 노출되거나 생성 모델에 전달되는 모든 텍스트.
 #: KR 스토리보드에 영어 benefit·프롬프트가 섞이는 구멍을 막는다.
 #: ``generation_prompt`` 은 파생 필드지만 **실제로 fal 에 나가는 문자열**이므로
@@ -104,8 +139,20 @@ CUT_ROLE_GRAMMAR_AXES = ("hook_0_2s", "demo_action", "proof_moment")
 _ROLE_ARCS = {
     1: ("demo_action",),
     2: ("hook_0_2s", "demo_action"),
-    3: ("hook_0_2s", "demo_action", "proof_moment"),
+    3: ("product_hero", "demo_action", "proof_moment"),
 }
+
+#: 3컷 아크의 컷 종류 배치 (task 28). 1번은 **제품 식별**을 원본 사진으로
+#: 하고(무료·무위조), 2·3번은 **시연**을 유료 I2V 로 한다. 제품이 화면에
+#: 있더라도 글자는 읽을 수 없어야 한다.
+_KIND_ARCS = {
+    1: (CUT_KIND_MOTION,),
+    2: (CUT_KIND_MOTION, CUT_KIND_MOTION),
+    3: (CUT_KIND_STILL, CUT_KIND_MOTION, CUT_KIND_MOTION),
+}
+
+#: 유료 I2V 로 나가는 컷 수 상한 (task 28 예산). 정지 컷은 세지 않는다.
+MAX_PAID_MOTION_CUTS = 2
 
 #: 역할별 장면 비트 (영문 — H3 스캐폴딩 언어. 시장 카피는 컷 필드가 담는다).
 _ROLE_BEATS = {
@@ -118,7 +165,21 @@ _ROLE_BEATS = {
     "proof_moment": ("S1 holds the product close to the lens so its large "
                      "primary label fills much of the frame, letting the "
                      "viewer check the headline figure for themselves."),
+    #: task 28 — 정지(Ken-Burns) 컷 전용. 사람도 발화도 없다. 이 비트는
+    #: 유료 프롬프트에 **절대 들어가지 않는다** (정지 컷은 fal 을 안 탄다).
+    "product_hero": ("The real staged product photograph is held on screen and "
+                     "moved only by a slow post-production push-in."),
 }
+
+#: ``product_hero`` 는 원본 사진 위 카메라 이동뿐이다. 사람 존재 검사와
+#: 발화 검사에서 면제되는 유일한 역할이며, 그 대가로 **유료 생성 경로를
+#: 절대 타지 못한다**.
+STILL_ONLY_ROLES = ("product_hero",)
+
+#: Ken-Burns 이동 종류. 여기 없는 값은 합성 단계에서 거부된다.
+KEN_BURNS_MOVES = ("push_in", "pull_back", "pan_left", "pan_right")
+DEFAULT_KEN_BURNS_MOVE = "push_in"
+
 
 #: 화면 위 글자 요청 신호 — 자막은 **후반 작업 패스**다. 베이스 영상 소재는
 #: 절대 글자를 태우지 않는다 (모델이 렌더한 글자는 지울 수 없다).
@@ -442,6 +503,71 @@ def spoken_segments(prompt: str) -> List[str]:
     return [m.strip() for m in _DIALOGUE_RE.findall(str(prompt or ""))]
 
 
+def cut_kinds_for(cut_count: int) -> tuple:
+    """컷 수 → 컷 종류 배열 (``motion`` / ``ken_burns``).
+
+    3컷 아크만이 정지 컷을 갖는다. 그 결과 유료 제출은 최대 2건이며,
+    이것은 프롬프트 관례가 아니라 **배열의 성질**이다.
+    """
+    try:
+        kinds = _KIND_ARCS[int(cut_count)]
+    except (KeyError, TypeError, ValueError):
+        raise StoryboardError(
+            f"컷 종류를 배정할 수 없는 컷 수: {cut_count!r} "
+            f"— 허용: {sorted(_KIND_ARCS)}")
+    paid = sum(1 for k in kinds if k == CUT_KIND_MOTION)
+    if paid > MAX_PAID_MOTION_CUTS:
+        raise StoryboardError(
+            f"유료 모션 컷 {paid} 개는 상한 {MAX_PAID_MOTION_CUTS} 을 넘는다 "
+            f"— 배열 {kinds!r}")
+    return kinds
+
+
+#: 유료 프롬프트에 항상 실리는 **비가독성 조항** (task 28).
+#:
+#: 27번 실행이 증명한 것: 라벨이 읽을 수 있는 크기로 프레임에 있으면 모델은
+#: 그걸 다시 그리고, 다시 그리면 위조한다. 그래서 이제 라벨을 크게 달라고
+#: 하지 않는다 — **읽을 수 없게** 해달라고 한다. 브랜드 식별은 켄번즈 정지
+#: 컷의 원본 픽셀과 우리 오버레이가 맡는다.
+ILLEGIBLE_LABEL_CLAUSE = (
+    "The product may appear, but its printed label must never be legible: "
+    "keep the pack turned away, held at an angle, partly behind the hand, "
+    "or softly out of focus so that no word, letter, number or logo on it "
+    "can be read at any moment of the clip. Do NOT render, redraw, sharpen "
+    "or invent any packaging text, brand wordmark, dose figure, Supplement "
+    "Facts panel, ingredient list, directions block or barcode. If in doubt, "
+    "let the packaging blur. The subject of this shot is the person and the "
+    "action, not the writing on the pack."
+)
+
+#: 물리적 개연성 조항 (`84a2952` 에서 유지). 불가능한 상태를 **명시**한다.
+PHYSICAL_PLAUSIBILITY_CLAUSE = (
+    "Physical plausibility is mandatory: an upright, capped bottle CANNOT "
+    "release a drop, and a bottle cannot be inverted while its cap is still "
+    "on. Show the cap actually removed and the bottle actually tilted before "
+    "any liquid appears. Never print label artwork rotated so that it reads "
+    "upright on an inverted bottle."
+)
+
+
+def build_still_cut_plan(*, ken_burns_move: str = DEFAULT_KEN_BURNS_MOVE
+                         ) -> Dict[str, Any]:
+    """정지 컷의 합성 지시 — 생성이 아니라 **후반 작업** 파라미터다."""
+    if ken_burns_move not in KEN_BURNS_MOVES:
+        raise StoryboardError(
+            f"알 수 없는 Ken-Burns 이동: {ken_burns_move!r} "
+            f"— 허용: {list(KEN_BURNS_MOVES)}")
+    return {
+        "cut_kind": CUT_KIND_STILL,
+        "ken_burns_move": ken_burns_move,
+        "source": "product_assets staged photograph (original pixels)",
+        "generated_by": None,
+        "paid": False,
+        "note": ("라벨이 원본 촬영 픽셀이므로 위조가 구조적으로 불가능하다 — "
+                 "이 컷은 어떤 생성 모델도 타지 않는다"),
+    }
+
+
 def story_roles_for(cut_count: int) -> tuple:
     """컷 수 → 서사 역할 배열 (``viral_ugc`` 문법 축 재사용)."""
     try:
@@ -470,6 +596,11 @@ def build_generation_prompt(*, market: str, story_role: str, action: str,
     others" 로 애드리브를 명시적으로 봉쇄한다.
     """
     language = DIALOGUE_LANGUAGE[market]
+    if story_role in STILL_ONLY_ROLES:
+        raise StoryboardError(
+            f"story_role={story_role!r} 는 정지(Ken-Burns) 컷 전용이다 — "
+            "유료 생성 프롬프트를 만들 수 없다. 이 컷은 원본 사진을 "
+            "후반에서 움직이며, fal 을 타지 않는다")
     beat = _ROLE_BEATS[story_role]
     # 문장 경계를 정리한다 — 모델 필드는 마침표 없이 오는 경우가 많고, 그대로
     # 이어붙이면 다음 문장과 한 덩어리로 읽혀 동작이 뭉개진다.
@@ -488,14 +619,8 @@ def build_generation_prompt(*, market: str, story_role: str, action: str,
         "lips synced precisely to the dialogue, delivering exactly these "
         "words and no others: "
         f"{DIALOGUE_OPEN}[{language}] {voice_line}{DIALOGUE_CLOSE} "
-        "S1 stops speaking, keeps holding the product steady, and the shot "
-        "ends. Keep the product framed CLOSE for the whole take: its primary "
-        "label — the brand wordmark and the dose figure — fills roughly one "
-        "third of the frame width or more, and every letter of it is "
-        "reproduced exactly as printed on the real pack. Any fine print "
-        "(Supplement Facts panel, ingredient list, directions, barcode) stays "
-        "OUT OF FRAME or behind the hand — never render it, never make it "
-        "legible. Do not rotate or re-present the pack to show more of it. "
+        "S1 stops speaking and the shot ends. "
+        f"{ILLEGIBLE_LABEL_CLAUSE} {PHYSICAL_PLAUSIBILITY_CLAUSE} "
         "No on-screen text of any kind: no subtitles, no captions, no "
         "lower thirds, no title cards, no graphic overlays, no added logos "
         "and no invented packaging wording — the frame stays clean so text "
@@ -721,8 +846,17 @@ class StoryboardCut:
     motion_prompt: str
     #: 서사 역할 (viral_ugc 문법 축). 기본값은 자기완결 시연.
     story_role: str = "demo_action"
+    #: 컷 종류. ``ken_burns`` 는 **생성 경로를 타지 않는다** — 원본 제품
+    #: 사진을 후반에서 움직인다. 라벨 위조가 구조적으로 불가능한 컷이다.
+    cut_kind: str = DEFAULT_CUT_KIND
+    #: 정지 컷의 후반 작업 파라미터 (모션 컷은 None).
+    still_plan: Optional[Dict[str, Any]] = None
     #: fal 로 실제 나가는 문자열. 빈 값으로 두면 후처리에서 채워진다.
     generation_prompt: str = ""
+
+    def is_paid(self) -> bool:
+        """이 컷이 유료 생성기를 타는가."""
+        return self.cut_kind == CUT_KIND_MOTION
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -738,8 +872,12 @@ class StoryboardCut:
             "first_frame_prompt": self.first_frame_prompt,
             "motion_prompt": self.motion_prompt,
             "story_role": self.story_role,
+            "cut_kind": self.cut_kind,
+            "paid": self.is_paid(),
+            "still_plan": dict(self.still_plan) if self.still_plan else None,
             "generation_prompt": self.generation_prompt,
         }
+
 
 
 @dataclass
@@ -833,15 +971,31 @@ HARD RULES — a violation makes the whole plan invalid:
    would really say out loud in five seconds.
 9. NEVER ask for subtitles, captions, on-screen text or graphic overlays.
    Subtitles are added later in post-production.
-10. TIGHT PRODUCT FRAMING — this is measured, not stylistic. The video model
-   re-draws small on-pack lettering from memory and gets it WRONG (`ORGANIC`
-   came back as `CACINI`, `Booster` as `Broster`). Large glyphs survive; small
-   ones forge. So every `first_frame_prompt` that shows the pack must compose
-   it CLOSE, with the primary label — brand wordmark and dose figure — filling
-   roughly one third of the frame width or more. NEVER write a wide shot with
-   a small pack, and NEVER ask for a Supplement Facts panel, ingredient list,
-   directions block, or any other fine print to be visible or legible: crop it
-   out of frame or let the hand cover it.
+10. TWO KINDS OF CUT — read `cut_kinds` in the payload. It is positional:
+   `cut_kinds[i]` is the kind of cut i+1, and it is NOT negotiable.
+
+   `ken_burns` — NOT GENERATED AT ALL. This cut animates the REAL staged
+     product photograph with a slow post-production push-in. Because the
+     label is original camera pixels, forgery is structurally impossible.
+     For this cut: `first_frame_prompt` describes the framing of that real
+     photograph; `motion_prompt` describes only the slow push-in; there is
+     NO person and NO speech, so `voice_line` MUST be an empty string "".
+     Do not assign a spoken line to a `ken_burns` cut — a still photograph
+     has no audio and that line would never be heard. Put every spoken line
+     on the `motion` cuts instead.
+
+   `motion` — paid image-to-video. THE PRINTED LABEL MUST NEVER BE LEGIBLE.
+     Three paid runs proved the video model re-draws any label it can read,
+     and re-drawing means forging (`ORGANIC` → `CACINI`, `Booster` →
+     `Bouder`, and once an entire invented Supplement Facts panel). So
+     compose these shots around the PERSON and the ACTION — hands, the
+     falling drop, the spoon, the parent's face. The pack may be present but
+     must be angled away, held partly behind the hand, kept far from the
+     lens, or softly out of focus. NEVER ask for the wordmark, the dose
+     figure, a Supplement Facts panel, an ingredient list, a directions
+     block or a barcode to be visible, sharp, legible or readable.
+     Brand identification is the `ken_burns` cut's job, not yours.
+
 
 LENGTH AND SINGULARITY LIMITS — these are enforced by a hard gate that rejects
 the whole plan, so respect them exactly:
@@ -919,10 +1073,17 @@ def _require_field(cut: Dict[str, Any], name: str, where: str,
 
 def _validate_cut(raw: Any, position: int, market: str,
                   index_by_id: Dict[str, Dict[str, Any]],
-                  story_role: str = "demo_action") -> StoryboardCut:
+                  story_role: str = "demo_action",
+                  cut_kind: str = DEFAULT_CUT_KIND) -> StoryboardCut:
     where = f"cuts[{position}]"
     if not isinstance(raw, dict):
         raise ModelOutputError(f"{where} 는 객체여야 한다: {raw!r}")
+    if cut_kind not in CUT_KINDS:
+        raise StoryboardError(
+            f"{where}.cut_kind 는 {list(CUT_KINDS)} 중 하나여야 한다: "
+            f"{cut_kind!r}")
+    is_still = cut_kind == CUT_KIND_STILL
+
 
     index = raw.get("index")
     if not isinstance(index, int) or isinstance(index, bool) or index < 1:
@@ -936,21 +1097,37 @@ def _validate_cut(raw: Any, position: int, market: str,
               "claim": VOICE_LINE_MAX_CHARS, "voice_line": VOICE_LINE_MAX_CHARS,
               "first_frame_prompt": PROMPT_MAX_CHARS,
               "motion_prompt": PROMPT_MAX_CHARS}
-    fields = {name: _require_field(raw, name, where, limits[name])
-              for name in REQUIRED_CUT_TEXT_FIELDS}
+    fields: Dict[str, str] = {}
+    for name in REQUIRED_CUT_TEXT_FIELDS:
+        if is_still and name in STILL_CUT_OPTIONAL_FIELDS:
+            # 정지 컷은 무발화로 **기획**된다 — 대사가 오면 그 대사는 어디서도
+            # 소리가 되지 않는다. 조용히 버리는 대신 여기서 거부한다.
+            supplied = str(raw.get(name) or "").strip()
+            if supplied:
+                raise ModelOutputError(
+                    f"{where}.{name} 이 정지(Ken-Burns) 컷에 배정됐다: "
+                    f"{supplied!r} — 정지 사진에는 네이티브 오디오가 없어 이 "
+                    "대사는 절대 소리가 되지 않는다. 승인 대사는 모션 컷으로 "
+                    "옮기고 정지 컷은 무발화로 기획하라")
+            fields[name] = ""
+            continue
+        fields[name] = _require_field(raw, name, where, limits[name])
+
 
     # 1) 시장·언어 게이트 (근거 검사보다 먼저 — 언어가 틀리면 언어로 죽는다)
     #    시장에 노출되거나 이미지/영상 모델에 도달하는 모든 텍스트를 덮는다.
     for name in MARKET_FACING_TEXT_FIELDS:
-        if name in fields:
+        if fields.get(name):
             _assert_language(fields[name], market, f"{where}.{name}")
+
 
     # 2) 금지 표현 — 말로 하든 그림으로 그리든 효능 암시는 막는다.
     #    first_frame_prompt/motion_prompt 가 빠지면 효능을 시각적으로
     #    렌더링하는 우회로가 열린다.
     for name in FORBIDDEN_SCAN_TEXT_FIELDS:
-        if name in fields:
+        if fields.get(name):
             _assert_no_forbidden_claim(fields[name], f"{where}.{name}")
+
 
     # 3) 컷 1개 = 동작 1개 = 효용 1개
     _assert_single_idea(fields["action"], f"{where}.action")
@@ -968,7 +1145,13 @@ def _validate_cut(raw: Any, position: int, market: str,
     _assert_no_on_screen_text(fields["motion_prompt"], f"{where}.motion_prompt")
 
     # 3-c) 사람이 실제로 무언가를 해야 한다 — 카메라 이동만인 컷은 거부.
-    _assert_human_presence(fields["motion_prompt"], f"{where}.motion_prompt")
+    #      정지(Ken-Burns) 컷만이 예외다: 그건 애초에 사람도 발화도 없는
+    #      원본 사진 위 후반 이동이며, 유료 생성기를 타지 않으므로 "무음
+    #      제품 클로즈업이 생성된다"는 실패 양상 자체가 성립하지 않는다.
+    if not is_still:
+        _assert_human_presence(fields["motion_prompt"],
+                               f"{where}.motion_prompt")
+
 
     # 4) 근거 결속
     evidence_id = raw.get("evidence_id")
@@ -996,23 +1179,33 @@ def _validate_cut(raw: Any, position: int, market: str,
         raise EvidenceError(
             f"{where}.claim 이 근거 원문으로 뒷받침되지 않는다 — "
             f"claim={fields['claim']!r} quote={quote!r}")
-    _assert_voice_line_supported(fields["voice_line"], quote,
-                                 f"{where}.voice_line")
+    if fields["voice_line"]:
+        _assert_voice_line_supported(fields["voice_line"], quote,
+                                     f"{where}.voice_line")
 
     # 5) 실제로 fal 에 나갈 문자열을 여기서 조립하고, 같은 게이트를 다시 건다.
     #    파생 필드라고 면제하면 검사받지 않은 문자열이 모델에 도달한다.
-    generation_prompt = build_generation_prompt(
-        market=market, story_role=story_role,
-        action=fields["action"], voice_line=fields["voice_line"],
-        first_frame_prompt=fields["first_frame_prompt"],
-        motion_prompt=fields["motion_prompt"])
-    _assert_language(generation_prompt, market, f"{where}.generation_prompt")
-    _assert_no_forbidden_claim(generation_prompt, f"{where}.generation_prompt")
-    spoken = spoken_segments(generation_prompt)
-    if spoken != [fields["voice_line"]]:
-        raise ModelOutputError(
-            f"{where}.generation_prompt 의 발화 지시가 승인 카피와 다르다 "
-            f"(MAX_UNAPPROVED_CHARS=1 에서 QA 가 떨어진다): {spoken!r}")
+    #    **정지 컷은 이 문자열을 갖지 않는다** — 갖지 않는다는 것이 곧
+    #    "유료 경로를 탈 수 없다"는 구조적 보장이다.
+    still_plan: Optional[Dict[str, Any]] = None
+    if is_still:
+        generation_prompt = ""
+        still_plan = build_still_cut_plan()
+    else:
+        generation_prompt = build_generation_prompt(
+            market=market, story_role=story_role,
+            action=fields["action"], voice_line=fields["voice_line"],
+            first_frame_prompt=fields["first_frame_prompt"],
+            motion_prompt=fields["motion_prompt"])
+        _assert_language(generation_prompt, market,
+                         f"{where}.generation_prompt")
+        _assert_no_forbidden_claim(generation_prompt,
+                                   f"{where}.generation_prompt")
+        spoken = spoken_segments(generation_prompt)
+        if spoken != [fields["voice_line"]]:
+            raise ModelOutputError(
+                f"{where}.generation_prompt 의 발화 지시가 승인 카피와 다르다 "
+                f"(MAX_UNAPPROVED_CHARS=1 에서 QA 가 떨어진다): {spoken!r}")
 
     return StoryboardCut(
         index=index,
@@ -1021,9 +1214,12 @@ def _validate_cut(raw: Any, position: int, market: str,
         evidence_quote=quote.strip(),
         evidence_source_url=source_url.strip(),
         story_role=story_role,
+        cut_kind=cut_kind,
+        still_plan=still_plan,
         generation_prompt=generation_prompt,
         **fields,
     )
+
 
 
 def disclosure_for(market: str) -> Dict[str, Any]:
@@ -1132,9 +1328,15 @@ def generate_storyboard(cfg: Dict[str, Any], evidence: Optional[ProductEvidence]
             "not a camera move over a static object",
             "voice_line is spoken aloud on camera by that person",
             "never request subtitles, captions or any on-screen text",
+            "a ken_burns cut is NOT generated: it animates the real product "
+            "photograph, so it has no speech and no person",
+            "a motion cut must keep the printed label ILLEGIBLE",
         ],
     }
     payload["story_roles"] = list(story_roles_for(cut_count))
+    payload["cut_kinds"] = list(cut_kinds_for(cut_count))
+    payload["max_paid_motion_cuts"] = MAX_PAID_MOTION_CUTS
+
     if baseline is not None:
         payload["baseline"] = baseline
 
@@ -1154,9 +1356,20 @@ def generate_storyboard(cfg: Dict[str, Any], evidence: Optional[ProductEvidence]
             f"{len(raw_cuts)} — 조용히 잘라내지 않는다")
 
     roles = story_roles_for(len(raw_cuts))
-    cuts = [_validate_cut(raw, i + 1, market, index_by_id, roles[i])
+    kinds = cut_kinds_for(len(raw_cuts))
+    cuts = [_validate_cut(raw, i + 1, market, index_by_id, roles[i], kinds[i])
             for i, raw in enumerate(raw_cuts)]
     vc._require_sequential(cuts)
+
+    paid = [c for c in cuts if c.is_paid()]
+    if len(paid) > MAX_PAID_MOTION_CUTS:
+        raise StoryboardError(
+            f"유료 모션 컷 {len(paid)} 개는 상한 {MAX_PAID_MOTION_CUTS} 초과")
+    if len(cuts) >= 3 and not any(c.cut_kind == CUT_KIND_STILL for c in cuts):
+        raise StoryboardError(
+            "3컷 스토리보드에 Ken-Burns 정지 컷이 없다 — 제품 식별은 원본 "
+            "사진으로만 한다 (생성된 라벨은 위조된 라벨이다)")
+
 
     total = sum(c.duration_seconds for c in cuts)
     if total not in ALLOWED_TOTAL_DURATIONS:
