@@ -297,6 +297,77 @@ def _claim_is_supported(claim: str, quote: str) -> bool:
     return c in q or q in c
 
 
+#: 발화에서 뽑아낼 "수량" 토큰. 숫자에 붙은 단위까지 한 덩어리로 본다 —
+#: ``600 iu`` 와 ``600 mg`` 는 서로 다른 사실이므로 숫자만 봐서는 안 된다.
+_QUANTITY_RE = re.compile(
+    r"(\d+(?:[.,]\d+)?)\s*"
+    r"(iu|mg|mcg|ug|µg|g|kg|ml|l|oz|drops?|servings?|%|d3|d2)?",
+    re.IGNORECASE)
+
+#: 발화가 근거 없이 얹으면 안 되는 **사실 주장 어휘**. 승인 카피를 자연스럽게
+#: 다듬는 표현(관사·연결어)은 자유롭게 허용하되, 인증·시험·순위처럼 검증
+#: 대상인 새 사실은 근거 원문에 없으면 막는다.
+_UNEVIDENCED_CLAIM_WORDS = (
+    "certified", "clinically", "clinical", "tested", "approved", "fda",
+    "usda", "organic", "award", "patented", "number one", "#1", "best",
+    "guaranteed", "proven", "doctor recommended", "pediatrician",
+    "gmo", "vegan", "kosher", "halal", "allergen", "recommended by",
+)
+
+
+def _quantities(text: str) -> set:
+    """텍스트의 (숫자, 단위) 집합. 단위 없는 숫자는 단위를 빈 문자열로 둔다."""
+    found = set()
+    for number, unit in _QUANTITY_RE.findall(str(text or "")):
+        found.add((number.replace(",", ""), (unit or "").lower()))
+    return found
+
+
+def _assert_voice_line_supported(voice_line: str, quote: str,
+                                 where: str) -> None:
+    """발화가 근거 원문을 **넘어서지 않는지** 판정한다.
+
+    옛 규칙은 ``claim`` 이 ``voice_line`` 의 리터럴 부분문자열일 것을 요구했다.
+    그런데 ``claim`` 은 스펙시트 조각(``manufacturer audience: age 1+``)이고,
+    콜론과 ``+`` 가 든 그 문자열을 통째로 품는 **자연스러운 영어 문장은
+    존재하지 않는다** — 통과 가능한 발화가 없는 게이트였다. 실제 운영에서
+    12연속 반려로 확인했다.
+
+    지켜야 할 성질은 글자 일치가 아니라 **"근거가 뒷받침하지 않는 것을 말하지
+    않는다"** 이다. 그래서 두 가지를 본다.
+
+    1. **수량 충실도** — 발화가 말하는 모든 (숫자, 단위) 쌍은 근거 원문에도
+       있어야 한다. 영양표시에서 ``600 IU`` 가 ``60 IU`` 로 바뀌는 것은 절대
+       통과시키면 안 되는 실패다. 단위까지 묶어 비교하므로 ``600 mg`` 도
+       다른 사실로 잡힌다.
+    2. **미근거 사실 어휘** — 인증·임상·수상처럼 검증 대상인 주장은 근거
+       원문에 그 단어가 없으면 거부한다.
+
+    이 검사는 ``_claim_is_supported`` 를 **대체하지 않는다**. claim ↔ quote
+    결속은 그대로 유지되고, 여기서는 그 위에 발화를 한 겹 더 검사한다.
+    """
+    line = str(voice_line or "").strip()
+    if not line:
+        raise EvidenceError(f"{where}: 발화가 비어 있다 — 말하지 않는 컷은 없다")
+
+    spoken = _quantities(line)
+    supported = _quantities(quote)
+    unsupported = spoken - supported
+    if unsupported:
+        raise EvidenceError(
+            f"{where}: 발화의 수량이 근거 원문에 없다 "
+            f"{sorted(unsupported)} — 근거={quote!r} 발화={line!r}. "
+            "영양표시 수치는 한 자리도 바꿀 수 없다")
+
+    lowered = _normalise(line)
+    quote_lowered = _normalise(quote)
+    for word in _UNEVIDENCED_CLAIM_WORDS:
+        if word in lowered and word not in quote_lowered:
+            raise EvidenceError(
+                f"{where}: 근거에 없는 사실 주장 {word!r} 을 발화가 덧붙였다 "
+                f"— 근거={quote!r} 발화={line!r}")
+
+
 # ---------------------------------------------------------------------------
 # 언어 게이트 · 금지 표현
 # ---------------------------------------------------------------------------
@@ -756,6 +827,24 @@ HARD RULES — a violation makes the whole plan invalid:
 9. NEVER ask for subtitles, captions, on-screen text or graphic overlays.
    Subtitles are added later in post-production.
 
+LENGTH AND SINGULARITY LIMITS — these are enforced by a hard gate that rejects
+the whole plan, so respect them exactly:
+- `action`: at most 80 characters. Write a short verb phrase, e.g.
+  "A parent lifts the bottle to the lens", not a full sentence with clauses.
+- `benefit`: at most 80 characters.
+- `voice_line`: at most 120 characters — five seconds of speech.
+- `first_frame_prompt` / `motion_prompt`: at most 400 characters.
+- `action` and `benefit` must each express exactly ONE idea. The literal words
+  " and ", " plus ", "그리고" are rejected inside them — if you need "and", the
+  cut is doing two things and must be split or trimmed.
+- `voice_line` must be natural spoken English/Korean that conveys its `claim`.
+  You do NOT need to quote the claim verbatim — say it the way a parent would.
+  BUT: every number and unit you speak (600, IU, D3, 2.8 mL, 100 drops, age 1 …)
+  must appear in the evidence quote. Changing "600 IU" to "60 IU" or "600 mg",
+  or inventing a quantity, is REJECTED — this is a nutrition label. Do not add
+  facts the quote does not contain (certified, clinically tested, award-winning,
+  organic, doctor recommended …).
+
 Return JSON: {"cuts": [{"index", "duration_seconds", "action", "benefit",
 "claim", "evidence_id", "voice_line", "first_frame_prompt", "motion_prompt"}]}
 """
@@ -891,10 +980,8 @@ def _validate_cut(raw: Any, position: int, market: str,
         raise EvidenceError(
             f"{where}.claim 이 근거 원문으로 뒷받침되지 않는다 — "
             f"claim={fields['claim']!r} quote={quote!r}")
-    if _normalise(fields["claim"]) not in _normalise(fields["voice_line"]):
-        raise EvidenceError(
-            f"{where}.voice_line 이 근거 주장을 담고 있지 않다: "
-            f"{fields['voice_line']!r}")
+    _assert_voice_line_supported(fields["voice_line"], quote,
+                                 f"{where}.voice_line")
 
     # 5) 실제로 fal 에 나갈 문자열을 여기서 조립하고, 같은 게이트를 다시 건다.
     #    파생 필드라고 면제하면 검사받지 않은 문자열이 모델에 도달한다.

@@ -824,5 +824,95 @@ class TestStoryDrivenGenerationPrompt(unittest.TestCase):
         self.assertEqual(sb.cuts[0].story_role, "demo_action")
 
 
+class TestVoiceLineIsJudgedByEvidenceNotSubstring(unittest.TestCase):
+    """발화는 **근거에 어긋나지 않는가**로 판정한다 — 글자 포함이 아니라.
+
+    옛 규칙은 ``claim`` 이 ``voice_line`` 의 리터럴 부분문자열일 것을 요구했다.
+    그런데 ``claim`` 은 스펙시트 조각(``manufacturer audience: age 1+``)이라
+    콜론과 ``+`` 때문에 **어떤 자연스러운 영어 문장도 통과할 수 없었다** —
+    통과 가능한 발화가 존재하지 않는 게이트였다. 지켜야 할 성질은 글자
+    일치가 아니라 "근거가 뒷받침하지 않는 것을 말하지 않는다"다.
+    """
+
+    Q_AGE = "manufacturer audience: age 1+"
+    Q_IU = "600 IU vitamin D3 per labeled drop"
+
+    def test_unsayable_spec_fragment_can_now_be_spoken_naturally(self):
+        """(a) 실제로 막혔던 케이스 — 자연스러운 문장이 통과해야 한다."""
+        vs._assert_voice_line_supported(
+            "The manufacturer lists this for age 1 and up.",
+            self.Q_AGE, "cuts[1].voice_line")
+
+    def test_altered_dose_is_still_rejected(self):
+        """(b) 600 IU 를 60 IU 로 바꾸면 반드시 죽는다 — 영양표시다."""
+        with self.assertRaises(vs.EvidenceError):
+            vs._assert_voice_line_supported(
+                "This gives 60 IU vitamin D3 per labeled drop.",
+                self.Q_IU, "cuts[1].voice_line")
+
+    def test_invented_number_is_rejected(self):
+        with self.assertRaises(vs.EvidenceError):
+            vs._assert_voice_line_supported(
+                "It is 600 IU vitamin D3 in each of the 250 drops.",
+                self.Q_IU, "cuts[1].voice_line")
+
+    def test_unevidenced_claim_is_rejected(self):
+        """(c) 근거에 없는 새 사실을 얹으면 죽는다."""
+        with self.assertRaises(vs.EvidenceError):
+            vs._assert_voice_line_supported(
+                "It is 600 IU vitamin D3 per labeled drop, certified organic "
+                "by the USDA and clinically tested in Sweden.",
+                self.Q_IU, "cuts[1].voice_line")
+
+    def test_faithful_numbers_pass(self):
+        vs._assert_voice_line_supported(
+            "This provides 600 IU vitamin D3 per labeled drop, right here.",
+            self.Q_IU, "cuts[1].voice_line")
+
+    def test_unit_change_is_rejected(self):
+        """단위를 바꾸는 것도 숫자를 바꾸는 것과 같다."""
+        with self.assertRaises(vs.EvidenceError):
+            vs._assert_voice_line_supported(
+                "This is 600 mg vitamin D3 per labeled drop.",
+                self.Q_IU, "cuts[1].voice_line")
+
+    def test_empty_voice_line_is_rejected(self):
+        with self.assertRaises(vs.EvidenceError):
+            vs._assert_voice_line_supported("   ", self.Q_IU, "where")
+
+    def test_generate_storyboard_accepts_natural_age_phrasing(self):
+        """게이트 수정이 실제 생성 경로에서도 성립한다."""
+        ev = vc.ProductEvidence(
+            product_id="p-us", market="US",
+            source_urls=["https://example.com/p"],
+            source_sha256=["a" * 64],
+            rights={"basis": "official page", "holder": "brand",
+                    "source_url": "https://example.com/p",
+                    "captured_at": "2026-08-28T00:00:00+09:00"},
+            provenance=[{"quote": self.Q_AGE,
+                         "source_url": "https://example.com/p",
+                         "original_location": "spec table row 1"}],
+            captured_at="2026-08-28T00:00:00+09:00").validate()
+
+        def model(system_prompt, payload):
+            eid = sorted(payload["evidence"])[0]
+            return {"cuts": [{
+                "index": 1, "duration_seconds": 5,
+                "action": "A parent turns the carton to the lens",
+                "benefit": "Clear age guidance on the pack",
+                "claim": self.Q_AGE, "evidence_id": eid,
+                "voice_line": "The manufacturer lists this for age 1 and up.",
+                "first_frame_prompt": ("Vertical 9:16 still of a parent in a "
+                                       "kitchen holding a small carton"),
+                "motion_prompt": ("The parent turns the carton toward the lens "
+                                  "and speaks to camera"),
+            }]}
+
+        sb = vs.generate_storyboard(
+            {}, ev, "US", "run-1", "draft-1", ["vp-1"],
+            complexity="simple", model=model)
+        self.assertIn("age 1 and up", sb.cuts[0].voice_line)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
