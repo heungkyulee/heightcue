@@ -248,6 +248,41 @@ class TestHappyPath(Base):
         sent = bridge.calls[0]["prompt"]
         self.assertIn(vg.PRODUCT_FIDELITY_CLAUSE, sent)
 
+    # -- 2026-08-29 실사고: 생성된 병에 목(neck)이 두 개였다. 위에 흰 캡이
+    # 달린 채 아래쪽에 나사산 달린 두 번째 구멍이 생겨 거기서 방울이 떨어졌다.
+    # 업라이트 병이 아래로 방울을 흘리라고 시키면 모델은 없는 구멍을 만든다.
+    def test_physical_plausibility_clause_present(self):
+        clause = vg.PRODUCT_FIDELITY_CLAUSE
+        self.assertIn(vg.PHYSICAL_PLAUSIBILITY_CLAUSE, clause)
+        low = vg.PHYSICAL_PLAUSIBILITY_CLAUSE.lower()
+        # 구멍은 정확히 하나
+        self.assertIn("exactly one opening", low)
+        # 캡은 그 구멍 위에만
+        self.assertIn("cap", low)
+        # 방울이 떨어지면 병은 뒤집히거나 기울어져 있어야 한다
+        self.assertIn("inverted", low)
+        self.assertIn("tilted", low)
+        # 부품을 지어내지 말 것
+        for banned in ("second", "invent"):
+            self.assertIn(banned, low)
+
+    # -- 같은 런에서 컷1의 녹색 배지가 `ORGANIC` 대신 `ORCAIN` 으로 렌더됐다.
+    # 패키지 글자는 정확히 복제하거나 아예 읽을 수 없어야 한다.
+    def test_label_text_clause_forbids_invented_lettering(self):
+        clause = vg.PRODUCT_FIDELITY_CLAUSE
+        self.assertIn(vg.LABEL_TEXT_CLAUSE, clause)
+        low = vg.LABEL_TEXT_CLAUSE.lower()
+        self.assertIn("never invent", low)
+        self.assertIn("too small", low)
+        self.assertIn("exactly", low)
+
+    def test_fidelity_clauses_reach_the_bridge(self):
+        bridge = FakeBridge()
+        self.run_generate(bridge=bridge)
+        for call in bridge.calls:
+            self.assertIn(vg.PHYSICAL_PLAUSIBILITY_CLAUSE, call["prompt"])
+            self.assertIn(vg.LABEL_TEXT_CLAUSE, call["prompt"])
+
 
 # ---------------------------------------------------------------------------
 # 프리플라이트 — 대체 금지, 크게 실패

@@ -112,6 +112,38 @@ DEFAULT_PROJECTS_ROOT = os.path.expanduser("~/OpenMontage/projects")
 
 PREFLIGHT_TIMEOUT = 60
 
+#: 물리적 타당성 조항 — 2026-08-29 실사고 대응.
+#: 첫 프레임의 병에 목이 **두 개** 있었다. 위에는 흰 스크류 캡이 달린 채,
+#: 아래쪽에 나사산 달린 두 번째 주둥이가 생겨 거기서 방울이 떨어졌다.
+#: 원인: 프롬프트가 "똑바로 선 병이 아래로 방울을 떨어뜨린다"를 요구했고,
+#: 그 장면은 없는 구멍을 만들어야만 성립한다. 실물 Ddrops 병은 목이 하나뿐이며
+#: 방울을 내려면 **병을 뒤집거나 기울여야** 한다.
+PHYSICAL_PLAUSIBILITY_CLAUSE = (
+    "PHYSICAL PLAUSIBILITY (absolute): the object must be buildable in the "
+    "real world and must keep the exact construction of the reference "
+    "photo. The bottle has EXACTLY ONE OPENING, at the top of its single "
+    "neck. NEVER add a second neck, a second orifice, an extra spout, an "
+    "extra seam, or any part that is not in the reference photo — do not "
+    "invent components. The cap belongs on that one opening and nowhere "
+    "else. If liquid is being dispensed, the bottle MUST be shown INVERTED "
+    "(neck pointing down) or steeply TILTED with the cap removed and held "
+    "or set aside, and the drop must leave that same single uncapped neck. "
+    "An upright, capped bottle CANNOT release a drop — never draw that."
+)
+
+#: 라벨 글자 조항 — 같은 런에서 컷1의 녹색 배지가 `ORCAIN` 으로 렌더됐다.
+#: 실제 영양성분 라벨이므로 위조된 글자는 미용 문제가 아니다.
+LABEL_TEXT_CLAUSE = (
+    "LABEL TEXT (absolute): reproduce on-pack wording EXACTLY as it appears "
+    "in the reference photo, letter for letter, or render it too small, too "
+    "soft, or too oblique to read. NEVER invent, approximate, re-letter, or "
+    "hallucinate packaging lettering — a misspelt badge on a real nutrition "
+    "label is a factual error, not a cosmetic one. Prefer framings that do "
+    "not require legible small print: let the falling drop, the hand and the "
+    "gesture carry the story rather than a macro of the label. Do not add "
+    "any text, caption, watermark, or graphic that is not on the real pack."
+)
+
 #: 모든 프레임 프롬프트에 붙는 불변 조항 — 상품은 진실, 나머지는 연출.
 PRODUCT_FIDELITY_CLAUSE = (
     "PRODUCT FIDELITY (absolute): reproduce the product in the supplied "
@@ -120,6 +152,8 @@ PRODUCT_FIDELITY_CLAUSE = (
     "restyle, recolour, reshape, embellish, re-letter, or redesign the "
     "product or its packaging. You MAY invent only the surrounding scene: "
     "hands, background, lighting, and camera framing. "
+    f"{PHYSICAL_PLAUSIBILITY_CLAUSE} "
+    f"{LABEL_TEXT_CLAUSE} "
     "Exactly ONE moment, ONE action, ONE benefit — not a collage, "
     "not a storyboard, not a multi-panel image. "
     "Vertical 9:16 portrait still frame."
