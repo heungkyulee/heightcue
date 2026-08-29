@@ -749,6 +749,26 @@ def _caption_layers(captions: List[str]) -> List[Dict[str, Any]]:
     } for i, text in enumerate(captions)]
 
 
+#: CTA 가 캡션 띠와 같은 ``lower_third`` 를 쓰면서도 겹치지 않으려면,
+#: 바닥 여백이 캡션보다 이만큼은 더 커야 한다.
+#:
+#: 2026-08-29 실사고: CTA 가 ``position: center`` 라서 세 번째 컷에서
+#: 카톤의 ``Liquid vitamin D3`` 줄을 정면으로 덮었다. 하필 제품을 보여주는
+#: 바로 그 순간이었다. 오버레이가 제품을 가리면 어필리에이트 소재로서
+#: 가치가 없으므로, 화면 중앙(피사체의 자리)은 비워두고 CTA 를 캡션 위에
+#: 쌓는다.
+#:
+#: 값의 근거 — 768x1360 기준, 실측으로 정한다. 캡션은 바닥에서
+#: ``max(96, 1360*0.13)`` = 176.8px 에 놓인다. 승인 카피가 가장 길 때
+#: 캡션은 **3줄**이 되고(44px, 줄간 1.34, 상하 패딩 각 18px) 높이는
+#: 212.9px 이므로 캡션 상단은 바닥에서 389.7px 이다.
+#:
+#: 처음에는 2줄을 가정해 260px 로 잡았다가, 실제 렌더에서 3줄 캡션의
+#: 첫 줄과 CTA 마지막 줄이 맞닿는 것을 보고 고쳤다. 여백은 짐작이 아니라
+#: 가장 긴 실제 캡션에서 재야 한다.
+CTA_STACK_CLEARANCE_PX = 320
+
+
 def _cta_layer(cta: str, total_seconds: int) -> Dict[str, Any]:
     return {
         "role": "cta",
@@ -756,8 +776,11 @@ def _cta_layer(cta: str, total_seconds: int) -> Dict[str, Any]:
         "verbatim_from": CTA_SOURCE,
         "start_seconds": max(0, total_seconds - CUT_DURATION_SECONDS),
         "end_seconds": total_seconds,
-        "style": {"font_size_px": 40, "safe_area_margin_px": 96,
-                  "background_scrim": True, "position": "center",
+        "style": {"font_size_px": 40,
+                  # 캡션 띠보다 이만큼 위에 쌓인다 — 화면 중앙(제품의 자리)을
+                  # 비우고, 동시에 마지막 컷 캡션과도 겹치지 않는다.
+                  "safe_area_margin_px": 96 + CTA_STACK_CLEARANCE_PX,
+                  "background_scrim": True, "position": "lower_third",
                   **KOREAN_WRAP_STYLE},
     }
 

@@ -571,15 +571,82 @@ _NORM_STRIP = re.compile(r"[^0-9a-z\uac00-\ud7a3]+")
 _DROPPED_UNICODE_CATEGORIES = ("Z", "C", "P", "S")
 
 
+#: 말로 읽힌 숫자 → 숫자 표기. 승인 카피는 ``600 IU`` / ``age 1+`` 처럼
+#: **쓰는** 형태인데 성우는 ``six hundred`` / ``one plus`` 로 **읽는다**.
+#: 양쪽을 같은 표준형으로 옮겨 **정확히** 비교하기 위한 표다.
+#:
+#: 이것은 근사 매칭이 아니다. 편집거리로 봐주는 것이 아니라 표기 형태만
+#: 통일하므로, 값이 다르면 (``600``→``60``, ``one``→``two``) 여전히 걸린다.
+#: 영양 라벨에서 숫자 하나가 틀리는 것은 잡음이 아니라 사실 오류다.
+_SPOKEN_NUMBER_WORDS = {
+    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+    "ten": "10", "eleven": "11", "twelve": "12",
+}
+#: ``+`` 는 지우지 않는다 — ``1+`` 와 ``1`` 은 다른 말이다. 기호를
+#: 낱말로 펴서 발화형(``one plus``)과 만나게 할 뿐이다.
+_SPOKEN_SYMBOL_WORDS = {"+": " plus "}
+
+_MULTIPLIER_WORDS = {"hundred": 100, "thousand": 1000}
+
+_WORD_RE = re.compile(r"[a-z]+|\d+|\S")
+
+
+def canonicalise_spoken_numbers(text: Any) -> str:
+    """숫자와 ``+`` 의 **표기 형태만** 통일한다. 값은 절대 바꾸지 않는다.
+
+    2026-08-29 두 번째 유료 실행에서 승인 카피 ``age 1+`` 을 성우가 정확히
+    읽었는데, 전사는 ``age one plus`` 라서 멀쩡한 영상이 반려됐다. 모델은
+    옳게 말했고 비교기가 표기를 몰랐을 뿐이다.
+
+    **드리프트 탐지를 약화하지 않는다**는 것이 이 함수의 유일한 설계
+    제약이다. 그래서 하는 일은 딱 둘뿐이다.
+
+    * 숫자 낱말을 숫자로 옮긴다 (``six hundred`` → ``600``). 값이 다르면
+      다른 문자열로 남으므로 ``600 IU`` → ``60 IU`` 는 여전히 실패한다.
+    * ``+`` 를 ``plus`` 로 편다. 지우는 것이 아니라 펴는 것이므로
+      ``1+`` 와 ``1`` 은 여전히 다르다.
+
+    한국어 문자열은 손대지 않는다 — 1음절 치환이 의미를 뒤집는 언어에
+    어떤 관용도 넣지 않는다는 기존 결정은 그대로다.
+    """
+    s = str(text or "").lower()
+    for sym, word in _SPOKEN_SYMBOL_WORDS.items():
+        s = s.replace(sym, word)
+
+    tokens = _WORD_RE.findall(s)
+    out: List[str] = []
+    pending: Optional[int] = None
+    for tok in tokens:
+        if tok in _SPOKEN_NUMBER_WORDS:
+            value = int(_SPOKEN_NUMBER_WORDS[tok])
+            pending = value if pending is None else pending + value
+            continue
+        if tok in _MULTIPLIER_WORDS and pending is not None:
+            pending *= _MULTIPLIER_WORDS[tok]
+            continue
+        if pending is not None:
+            out.append(str(pending))
+            pending = None
+        out.append(tok)
+    if pending is not None:
+        out.append(str(pending))
+    return " ".join(out)
+
+
 def normalize_speech(text: Any) -> str:
     """대조용 정규화: 공백·문장부호·대소문자만 없앤다. 내용은 바꾸지 않는다.
 
     **스크립트 중립이다.** 한글·라틴 밖의 글자(한자, 가나, 키릴, 악센트 라틴)도
     그대로 남긴다 — 지워버리면 주입된 외국어 문장이 잔여 0자가 되어 조용히
     통과한다. 버리는 것은 유니코드 카테고리 Z/C/P/S 뿐이다.
+
+    문장부호를 버리기 **전에** 숫자 표기를 표준형으로 옮긴다
+    (:func:`canonicalise_spoken_numbers`). ``+`` 는 카테고리 S 라서 그냥
+    버려지면 ``1+`` 이 ``1`` 이 되어 버리기 때문이다 — 순서가 중요하다.
     """
     out = []
-    for ch in str(text or "").lower():
+    for ch in canonicalise_spoken_numbers(text):
         if unicodedata.category(ch)[0] in _DROPPED_UNICODE_CATEGORIES:
             continue
         out.append(ch)
@@ -741,6 +808,34 @@ def sample_timestamps(duration: float, cut_count: int,
     # 내림으로 자른다 — 반올림하면 다시 프레임 경계 뒤로 넘어갈 수 있다.
     stamps.add(int(last * 1000) / 1000.0)
     return sorted(stamps)
+
+
+def frame_sampling_duration(measured: Dict[str, Any]) -> float:
+    """프레임을 뽑을 때 기준으로 삼을 길이 — **비디오 트랙**의 길이다.
+
+    2026-08-29 두 번째 유료 실행: 7장을 요청했는데 6장만 왔다. 오프셋도
+    샘플러도 정상이었고, 틀린 것은 **어느 길이를 넘겼느냐**였다.
+
+    컨테이너 길이(mvhd)는 트랙 중 **가장 긴 것**을 따른다. 그 산출물은
+    오디오 15.062초 / 비디오 15.000초였고, 컨테이너 길이로 계산한 꼬리
+    ``15.062 - 2/30 = 14.995`` 는 마지막 실재 비디오 프레임(14.967)보다
+    뒤였다. :func:`sample_timestamps` 가 확보한 2프레임 여유가 0.062초짜리
+    오디오 꼬리에 통째로 먹힌 것이다. 오디오가 길수록 더 어긋나므로 상수를
+    키우는 것은 해법이 아니다 — 애초에 다른 트랙의 길이를 본 것이 문제다.
+
+    ``coded_duration_seconds`` 는 비디오 트랙의 mdhd/stts 에서 실측된
+    값이다(``video_compose.probe_mp4``). 그것이 있으면 그것을 쓰고, 없거나
+    말이 안 되는 값이면 컨테이너 길이로 물러난다 — 검사를 건너뛰지는 않는다.
+    """
+    container = float(measured.get("duration_seconds") or 0.0)
+    coded = measured.get("coded_duration_seconds")
+    try:
+        coded = float(coded)
+    except (TypeError, ValueError):
+        return container
+    if coded <= 0:
+        return container
+    return coded
 
 
 def check_frames(frames: List[Dict[str, Any]], expected_count: int,
@@ -1347,7 +1442,9 @@ def run_qa(*, job_id: str, run_id: str, video_path: str,
 
     # 3. 프레임 샘플링 — 클린 마스터 (자막 픽셀이 정지 검출을 무력화하지 않게)
     measured = (checks[CHECK_TECHNICAL_CONTAINER].get("measured") or {})
-    duration = float(measured.get("duration_seconds") or expected_seconds)
+    # 컨테이너 길이가 아니라 **비디오 트랙** 길이로 샘플 시각을 잡는다.
+    # 오디오가 더 길면 컨테이너 길이는 마지막 비디오 프레임보다 뒤를 가리킨다.
+    duration = frame_sampling_duration(measured) or expected_seconds
     stamps = sample_timestamps(duration, cut_count, fps)
 
     tmp_holder = None

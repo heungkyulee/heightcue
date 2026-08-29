@@ -546,6 +546,63 @@ class TestSampleTimestampTail(QABase):
         # (10 - 2/24 = 9.9167) 보다 뒤였다 — 그래서 프레임이 안 왔다.
         self.assertGreater(round(10.0 - 0.05, 3), 10.0 - 2.0 / 24.0)
 
+    def test_tail_uses_the_video_track_not_the_longer_audio_tail(self):
+        """꼬리는 **비디오 트랙** 길이에서 잡아야 한다.
+
+        2026-08-29 두 번째 유료 실행: 7장을 요청했는데 6장만 왔다. 원인은
+        ``sample_timestamps`` 도 오프셋도 아니라 **호출부가 어느 길이를
+        넘겼는가**였다.
+
+        컨테이너 길이(mvhd)는 가장 긴 트랙을 따른다. 이 영상은 오디오가
+        15.062초, 비디오가 15.000초였다. 컨테이너 길이로 계산한
+        ``15.062 - 2/30 = 14.995`` 는 **마지막 비디오 프레임(14.967)보다
+        뒤**다 — 2프레임 여유가 0.062초의 오디오 꼬리에 통째로 먹혔다.
+
+        그래서 ``run_qa`` 는 ``coded_duration_seconds``(비디오 트랙 실측)가
+        있으면 그것으로 샘플 시각을 잡는다.
+        """
+        seen = {}
+
+        class DurationCapturingSampler(SamplerSpy):
+            def __call__(self, video_path, timestamps, out_dir):
+                seen["stamps"] = list(timestamps)
+                return super().__call__(video_path, timestamps, out_dir)
+
+        # 오디오가 비디오보다 0.062초 긴 실제 산출물의 측정값을 그대로 쓴다.
+        measured = {"duration_seconds": 15.062, "coded_duration_seconds": 15.0}
+        stamps = vq.sample_timestamps(
+            vq.frame_sampling_duration(measured), 3, fps=30.0)
+        seen["stamps"] = stamps
+
+        last_real_frame_start = 15.0 - 1.0 / 30.0
+        self.assertLessEqual(
+            max(seen["stamps"]), last_real_frame_start,
+            "꼬리 샘플이 마지막 실재 비디오 프레임보다 뒤에 있다")
+
+    def test_container_duration_alone_would_have_overrun(self):
+        """회귀 잠금: 컨테이너 길이를 그대로 쓰면 다시 프레임을 놓친다."""
+        overrun = max(vq.sample_timestamps(15.062, 3, fps=30.0))
+        self.assertGreater(overrun, 15.0 - 1.0 / 30.0,
+                           "이 값이 7장 중 6장만 오던 원인이다")
+
+    def test_frame_sampling_duration_prefers_the_video_track(self):
+        self.assertEqual(
+            vq.frame_sampling_duration({"duration_seconds": 15.062,
+                                        "coded_duration_seconds": 15.0}),
+            15.0)
+
+    def test_frame_sampling_duration_falls_back_to_the_container(self):
+        """비디오 트랙 길이를 못 재면 컨테이너 길이로 물러난다 — 건너뛰지 않는다."""
+        self.assertEqual(
+            vq.frame_sampling_duration({"duration_seconds": 15.062}), 15.062)
+
+    def test_frame_sampling_duration_ignores_a_nonsense_track_length(self):
+        """코딩 길이가 0/음수면 신뢰하지 않는다 — 샘플 시각이 전부 뭉개진다."""
+        self.assertEqual(
+            vq.frame_sampling_duration({"duration_seconds": 15.062,
+                                        "coded_duration_seconds": 0.0}),
+            15.062)
+
     def test_sampler_refusing_the_tail_timestamp_still_fails_closed(self):
         class TailDroppingSampler(SamplerSpy):
             """헤더보다 한 프레임 짧은 실제 미디어를 흉내낸다."""
@@ -858,6 +915,50 @@ class TestTranscriptionNoiseDiagnosis(QABase):
             f"이건 완전히 다른 말입니다 {VOICE_2}"))
         check = report.checks["spoken_content"]
         self.assertFalse(check.get("likely_transcription_noise"), check)
+
+
+class TestSpokenNumberCanonicalisation(QABase):
+    """쓰인 숫자와 **말해진** 숫자를 같은 것으로 본다 — 값은 그대로 지킨 채.
+
+    2026-08-29 두 번째 유료 실행: 승인 카피 ``age 1+`` 을 성우가
+    정확히 읽었는데 전사는 ``age one plus`` 였다. 모델은 옳게 말했고
+    비교기가 표기 형태를 몰랐을 뿐인데 멀쩡한 영상이 반려됐다.
+
+    이건 근사 매칭이 **아니다.** 편집거리로 봐주는 게 아니라 양쪽을 같은
+    표준형으로 옮긴 뒤 **정확히** 비교한다. 그래서 값이 다르면 여전히
+    걸린다 — 영양 라벨에서 숫자 하나가 틀리는 것은 잡음이 아니라 오류다.
+    """
+
+    def test_written_one_plus_matches_spoken_one_plus(self):
+        report = self.run_qa(
+            storyboard=storyboard_dict(voice_lines=["대상 연령 1+ 입니다."]),
+            transcriber=TranscriberSpy("대상 연령 one plus 입니다."))
+        self.assertTrue(report.checks["spoken_content"]["passed"],
+                        report.checks["spoken_content"])
+
+    def test_a_wrong_number_still_fails(self):
+        """600 IU 를 60 IU 로 말하면 반드시 걸린다 — 게이트의 존재 이유다."""
+        report = self.run_qa(
+            storyboard=storyboard_dict(voice_lines=["표시된 600 IU 입니다."]),
+            transcriber=TranscriberSpy("표시된 60 IU 입니다."))
+        self.assertFalse(report.checks["spoken_content"]["passed"],
+                         report.checks["spoken_content"])
+
+    def test_a_spoken_wrong_number_word_still_fails(self):
+        """말로 틀리게 읽어도 걸린다 — 숫자 단어도 표준형으로 옮겨 비교한다."""
+        report = self.run_qa(
+            storyboard=storyboard_dict(voice_lines=["대상 연령 1+ 입니다."]),
+            transcriber=TranscriberSpy("대상 연령 two plus 입니다."))
+        self.assertFalse(report.checks["spoken_content"]["passed"],
+                         report.checks["spoken_content"])
+
+    def test_canonicalisation_does_not_erase_the_plus(self):
+        """``1+`` 과 그냥 ``1`` 은 다른 말이다 — plus 를 지워 통과시키지 않는다."""
+        report = self.run_qa(
+            storyboard=storyboard_dict(voice_lines=["대상 연령 1+ 입니다."]),
+            transcriber=TranscriberSpy("대상 연령 one 입니다."))
+        self.assertFalse(report.checks["spoken_content"]["passed"],
+                         report.checks["spoken_content"])
 
 
 class TestClaimScanSurfaceHonesty(QABase):

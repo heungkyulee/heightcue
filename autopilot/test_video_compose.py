@@ -1257,6 +1257,48 @@ class TestKoreanWrapIsVisualOnly(unittest.TestCase):
         cta = [l for l in self._plan()["text_layers"] if l["role"] == "cta"][0]
         self.assertEqual(cta["text"].encode("utf-8"), self.CTA.encode("utf-8"))
 
+    def test_cta_never_sits_over_the_middle_of_the_product(self):
+        """CTA 는 화면 중앙에 놓이면 안 된다 — 제품을 정면으로 가린다.
+
+        2026-08-29 실사고: 세 번째 컷에서 CTA 가 카톤의
+        ``Liquid vitamin D3`` 줄 **위에** 그대로 얹혔다. 하필 제품을
+        보여주는 바로 그 순간이었다. 캡션은 이미 lower_third 로 내려가
+        있었는데 CTA 만 ``position: center`` 였다.
+
+        오버레이가 제품을 가리면 어필리에이트 소재로서 가치가 없다.
+        중앙은 피사체의 자리이므로 CTA 는 절대 center 를 쓰지 않는다.
+        """
+        cta = [l for l in self._plan()["text_layers"] if l["role"] == "cta"][0]
+        self.assertNotEqual(
+            cta["style"]["position"], "center",
+            "CTA 가 화면 중앙에 놓이면 제품을 정면으로 가린다")
+
+    def test_cta_does_not_overlap_the_caption_band(self):
+        """CTA 와 캡션이 같은 띠에 동시에 뜨면 서로 겹쳐 읽을 수 없다.
+
+        CTA 를 lower_third 로 내리는 것만으로는 부족하다 — 마지막 컷의
+        캡션이 같은 구간에 살아 있기 때문이다. 시간이 겹친다면 CTA 는
+        캡션 띠보다 **위로** 올라가 있어야 한다.
+
+        위치 문자열이 아니라 실제 여백(px)으로 검사한다. 두 레이어가
+        같은 ``lower_third`` 를 쓰더라도 바닥 여백이 충분히 다르면
+        물리적으로 겹치지 않는다 — 그것이 실제로 중요한 성질이다.
+        """
+        layers = self._plan()["text_layers"]
+        cta = [l for l in layers if l["role"] == "cta"][0]
+        for cap in [l for l in layers if l["role"] == "caption"]:
+            overlaps_in_time = (cta["start_seconds"] < cap["end_seconds"]
+                                and cap["start_seconds"] < cta["end_seconds"])
+            if not overlaps_in_time:
+                continue
+            if cta["style"]["position"] != cap["style"]["position"]:
+                continue
+            gap = (cta["style"]["safe_area_margin_px"]
+                   - cap["style"]["safe_area_margin_px"])
+            self.assertGreaterEqual(
+                gap, vcm.CTA_STACK_CLEARANCE_PX,
+                "같은 시간·같은 띠의 CTA 는 캡션 위로 충분히 올라가야 한다")
+
     def test_no_layer_text_contains_an_inserted_line_break(self):
         for layer in self._plan()["text_layers"]:
             self.assertNotIn("\n", layer["text"])
