@@ -121,6 +121,7 @@ class FakeBridge:
 
 
 def make_cut(index, action="컵을 집어 든다", benefit="아침에 챙기기 쉬움"):
+    voice_line = "아침마다 한 포씩."
     return vs.StoryboardCut(
         index=index,
         duration_seconds=5,
@@ -130,9 +131,17 @@ def make_cut(index, action="컵을 집어 든다", benefit="아침에 챙기기 
         evidence_id=f"ev{index}",
         evidence_quote="하루 1포 섭취",
         evidence_source_url="https://example.com/p",
-        voice_line="아침마다 한 포씩.",
+        voice_line=voice_line,
         first_frame_prompt=f"세로 9:16 정지 프레임 {index}: 손이 스틱을 든다",
         motion_prompt="손이 천천히 올라간다",
+        # 실제 파이프라인이 fal 로 보내는 값. 픽스처가 이걸 비워두면 테스트가
+        # 무음 영상을 만드는 배선을 초록으로 통과시킨다.
+        generation_prompt=(
+            f"integrated_multimodal_description: [Shot {index}] one parent "
+            f"(S1) {action}, then speaks exactly these words and no others: "
+            f"<d>[Korean] {voice_line}</d> No on-screen text of any kind."
+            "\n\noverall_soundscape: quiet indoor room tone, close-mic voice."
+            "\n\nnon_diegetic_music: N/A"),
     )
 
 
@@ -754,19 +763,19 @@ class TestPinnedRequestShape(CutBase):
     def test_non_five_second_request_is_impossible(self):
         frame = self.frames["frames"][0]
         with self.assertRaises(vg.CutRequestError):
-            vg.build_cut_request(frame, motion_prompt="x", output_path="/t/a.mp4",
+            vg.build_cut_request(frame, generation_prompt="x", output_path="/t/a.mp4",
                                  duration_seconds=7)
 
     def test_non_768p_request_is_impossible(self):
         frame = self.frames["frames"][0]
         with self.assertRaises(vg.CutRequestError):
-            vg.build_cut_request(frame, motion_prompt="x", output_path="/t/a.mp4",
+            vg.build_cut_request(frame, generation_prompt="x", output_path="/t/a.mp4",
                                  resolution="480P")
 
     def test_text_to_video_operation_is_impossible(self):
         frame = self.frames["frames"][0]
         with self.assertRaises(vg.CutRequestError):
-            vg.build_cut_request(frame, motion_prompt="x", output_path="/t/a.mp4",
+            vg.build_cut_request(frame, generation_prompt="x", output_path="/t/a.mp4",
                                  operation="text_to_video")
 
 
@@ -1026,7 +1035,7 @@ class TestImageUrlGate(CutBase):
     def test_file_scheme_image_url_is_rejected_before_spending(self):
         frame = self.frames["frames"][0]
         with self.assertRaises(vg.CutRequestError) as ctx:
-            vg.build_cut_request(frame, motion_prompt="x",
+            vg.build_cut_request(frame, generation_prompt="x",
                                  output_path="/t/a.mp4",
                                  image_url="file:///tmp/a.png")
         self.assertIn("http", str(ctx.exception).lower())
@@ -1034,13 +1043,13 @@ class TestImageUrlGate(CutBase):
     def test_local_path_default_is_rejected(self):
         frame = self.frames["frames"][0]
         with self.assertRaises(vg.CutRequestError):
-            vg.build_cut_request(frame, motion_prompt="x",
+            vg.build_cut_request(frame, generation_prompt="x",
                                  output_path="/t/a.mp4")
 
     def test_https_image_url_is_accepted(self):
         frame = self.frames["frames"][0]
         req = vg.build_cut_request(
-            frame, motion_prompt="x", output_path="/t/a.mp4",
+            frame, generation_prompt="x", output_path="/t/a.mp4",
             image_url="https://cdn.example.test/a.png")
         self.assertEqual(req["payload"]["image_url"],
                          "https://cdn.example.test/a.png")
@@ -1223,6 +1232,86 @@ class TestFalUploadAdapterFitsTheSeam(unittest.TestCase):
         self.assertIsNotNone(getattr(vg, "default_image_url_for", None))
         import fal_upload
         self.assertIs(vg.default_image_url_for, fal_upload.make_image_url_for)
+
+
+class TestGenerationPromptReachesFal(CutBase):
+    """스토리보드의 ``generation_prompt`` 가 실제로 fal payload 에 실려야 한다.
+
+    이전 배선은 ``motion_prompt`` 를 보냈다. 그 값에는 화자도, 대사도,
+    사운드 지시도 없어서 **모델이 말을 할 근거가 없었다** — 첫 유료 영상이
+    -91.0 dB 무음으로 나온 원인이다. 여기서 막지 못하면 돈을 쓰고 또
+    무음 영상을 받는다.
+    """
+
+    @staticmethod
+    def _speaking_storyboard():
+        sb = make_storyboard()
+        for cut in sb.cuts:
+            cut.generation_prompt = (
+                "integrated_multimodal_description: [Shot %d] one parent (S1) "
+                "speaks: <d>[Korean] 아침마다 한 포씩.</d> No on-screen text.\n\n"
+                "overall_soundscape: quiet room tone.\n\n"
+                "non_diegetic_music: N/A" % cut.index)
+        return sb
+
+    def test_generation_prompt_is_the_prompt_sent_to_fal(self):
+        client = FakeFalClient()
+        sb = self._speaking_storyboard()
+        self.run_cuts(client=client, storyboard=sb)
+        sent = [req["payload"]["prompt"] for req in client.requests]
+        self.assertEqual(sent, [c.generation_prompt for c in sb.cuts])
+
+    def test_payload_carries_speaker_dialogue_and_soundscape(self):
+        client = FakeFalClient()
+        self.run_cuts(client=client, storyboard=self._speaking_storyboard())
+        for req in client.requests:
+            prompt = req["payload"]["prompt"]
+            self.assertIn("(S1)", prompt)
+            self.assertIn("<d>", prompt)
+            self.assertIn("아침마다 한 포씩.", prompt)
+            self.assertIn("overall_soundscape:", prompt)
+
+    def test_motion_prompt_alone_is_never_what_gets_sent(self):
+        client = FakeFalClient()
+        self.run_cuts(client=client, storyboard=self._speaking_storyboard())
+        for req in client.requests:
+            self.assertNotEqual(req["payload"]["prompt"], "손이 천천히 올라간다")
+
+    def test_missing_generation_prompt_refuses_before_spending(self):
+        """대사 없는 컷으로는 한 푼도 쓰지 않는다."""
+        client = FakeFalClient()
+        sb = make_storyboard()
+        for cut in sb.cuts:
+            cut.generation_prompt = ""
+        with self.assertRaises(vg.CutRequestError):
+            self.run_cuts(client=client, storyboard=sb)
+        self.assertEqual(client.requests, [])
+
+    def test_build_cut_request_takes_generation_prompt(self):
+        frame = self.frames["frames"][0]
+        req = vg.build_cut_request(
+            frame, generation_prompt="S1 speaks: <d>[Korean] 안녕.</d>",
+            output_path="/t/a.mp4",
+            image_url="https://cdn.example.test/a.png")
+        self.assertEqual(req["payload"]["prompt"],
+                         "S1 speaks: <d>[Korean] 안녕.</d>")
+
+    def test_empty_generation_prompt_is_rejected(self):
+        frame = self.frames["frames"][0]
+        with self.assertRaises(vg.CutRequestError):
+            vg.build_cut_request(frame, generation_prompt="   ",
+                                 output_path="/t/a.mp4",
+                                 image_url="https://cdn.example.test/a.png")
+
+    def test_pinned_gates_still_hold_with_generation_prompt(self):
+        frame = self.frames["frames"][0]
+        url = "https://cdn.example.test/a.png"
+        for kw in ({"duration_seconds": 7}, {"resolution": "480P"},
+                   {"aspect_ratio": "16:9"}, {"operation": "text_to_video"}):
+            with self.assertRaises(vg.CutRequestError):
+                vg.build_cut_request(frame, generation_prompt="S1 speaks.",
+                                     output_path="/t/a.mp4", image_url=url,
+                                     **kw)
 
 
 if __name__ == "__main__":

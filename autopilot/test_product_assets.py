@@ -557,22 +557,32 @@ class TestEvidenceIsMarketAware(BaseCase):
             self.assertIn(fact, quotes)
 
     def test_us_storyboard_is_actually_producible(self):
-        """진짜 최종 판정: 이 증거로 US 스토리보드가 실제로 생성된다."""
+        """진짜 최종 판정: 이 증거로 US 스토리보드가 실제로 생성된다.
+
+        스토리보드가 재설계되면서 컷은 이제 **사람이 제품을 쓰며 말하는 장면**을
+        요구한다(제품 클로즈업 전용 컷은 `SilentCutError`). 픽스처를 그 계약에
+        맞춰 올렸을 뿐 검증은 오히려 강화했다 — 실증거에서 나온 스토리보드가
+        fal 로 나갈 `generation_prompt` 까지 실제로 만들어내는지 본다.
+        """
         ev = pa.to_product_evidence(self._us_manifest())
         quote = ev.provenance[0]["quote"]
+        voice_line = f"The label says {quote}."
 
         def model(system_prompt, payload):
             return {"cuts": [{
                 "index": 1,
                 "duration_seconds": 5,
-                "action": "Hold the amber bottle up to the camera",
+                "action": "A parent holds the amber bottle up to the camera",
                 "benefit": "One drop is the whole serving",
                 "claim": quote,
                 "evidence_id": "ev1",
-                "voice_line": f"The label says {quote}.",
-                "first_frame_prompt": ("Vertical 9:16 still photo of one amber "
-                                       "dropper bottle on a plain kitchen counter"),
-                "motion_prompt": "Slow push in toward the bottle label",
+                "voice_line": voice_line,
+                "first_frame_prompt": (
+                    "Vertical 9:16 still photo of a parent standing in a "
+                    "kitchen holding one amber dropper bottle"),
+                "motion_prompt": (
+                    "The parent turns the bottle toward the lens and speaks "
+                    "to the camera"),
             }]}
 
         board = vs.generate_storyboard(
@@ -580,6 +590,12 @@ class TestEvidenceIsMarketAware(BaseCase):
             viral_pattern_ids=["vp-1"], complexity="simple", model=model)
         self.assertEqual(board.market, "US")
         self.assertEqual(board.cuts[0].evidence_quote, quote)
+        # 증거 → 스토리보드 → **실제로 발송될 프롬프트**까지 이어지는지 확인.
+        prompt = board.cuts[0].generation_prompt
+        self.assertTrue(prompt)
+        self.assertIn("(S1)", prompt)
+        self.assertIn(voice_line, prompt)
+        self.assertEqual(vs.spoken_segments(prompt), [voice_line])
 
     def test_unknown_market_fails_loudly_instead_of_defaulting(self):
         """모르는 시장에 어느 한쪽 언어를 기본값으로 주지 않는다 — 그게 이 버그의 원인."""

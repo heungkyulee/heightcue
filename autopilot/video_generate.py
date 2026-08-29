@@ -1050,7 +1050,7 @@ def cuts_dir_for(run_id: str, projects_root: Optional[str] = None) -> str:
     return os.path.join(root, f"heightcue_{run_id}", "assets", "cuts")
 
 
-def build_cut_request(frame: Dict[str, Any], *, motion_prompt: str,
+def build_cut_request(frame: Dict[str, Any], *, generation_prompt: str,
                       output_path: str,
                       duration_seconds: int = CUT_DURATION_SECONDS,
                       resolution: str = VIDEO_RESOLUTION,
@@ -1084,9 +1084,13 @@ def build_cut_request(frame: Dict[str, Any], *, motion_prompt: str,
 
     if not isinstance(frame, dict):
         raise CutRequestError(f"frame 은 dict 여야 한다: {type(frame)}")
-    prompt = str(motion_prompt or "").strip()
+    prompt = str(generation_prompt or "").strip()
     if not prompt:
-        raise CutRequestError("motion_prompt 가 비어 있다 — 빈 프롬프트로 지출 금지")
+        raise CutRequestError(
+            "generation_prompt 가 비어 있다 — 빈 프롬프트로 지출 금지. "
+            "이 문자열이 화자(S1)·동작·승인 대사·사운드 지시를 실어 나르는 "
+            "유일한 경로다. motion_prompt 만 보내면 모델은 말할 근거가 없어 "
+            "무음 영상이 돌아온다 (첫 유료 런 실측 -91.0 dB)")
     first_frame_path = str(frame.get("output_path") or "")
     first_frame_sha256 = str(frame.get("output_sha256") or "")
     if not first_frame_path or not first_frame_sha256:
@@ -1253,8 +1257,12 @@ def generate_cuts(storyboard: Any, frames_manifest: Dict[str, Any], *,
             f"{job_estimate:.4f} > 일당 상한 {daily_cap_usd:.4f} USD — "
             "요청을 한 건도 보내지 않는다")
 
-    motions = {int(getattr(c, "index")): str(getattr(c, "motion_prompt", "")
-                                             or "").strip()
+    # 컷마다 fal 로 나가는 **최종 문자열**. ``generation_prompt`` 는 화자(S1),
+    # 동작, 승인된 대사(`<d>…</d>`), 사운드 지시를 모두 담은 MiniMax 3필드
+    # 프롬프트다. 예전처럼 ``motion_prompt`` 를 보내면 모델에게 말할 근거가
+    # 없어 무음 영상이 돌아온다 — 그건 지출을 태우는 실패다.
+    prompts = {int(getattr(c, "index")):
+               str(getattr(c, "generation_prompt", "") or "").strip()
                for c in sb_cuts}
 
     lineage: List[Dict[str, Any]] = []
@@ -1278,7 +1286,7 @@ def generate_cuts(storyboard: Any, frames_manifest: Dict[str, Any], *,
     for frame in ordered:
         index = int(frame.get("cut_index") or 0)
         requests_by_index[index] = build_cut_request(
-            frame, motion_prompt=motions.get(index, ""),
+            frame, generation_prompt=prompts.get(index, ""),
             output_path=os.path.join(out_dir,
                                      f"{product_id}_cut{index:02d}.mp4"),
             image_url=uploader(frame))
