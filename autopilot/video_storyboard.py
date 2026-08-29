@@ -58,18 +58,107 @@ REQUIRED_CUT_TEXT_FIELDS = ("action", "benefit", "claim", "voice_line",
 
 #: 언어 게이트 대상 — 시장에 노출되거나 생성 모델에 전달되는 모든 텍스트.
 #: KR 스토리보드에 영어 benefit·프롬프트가 섞이는 구멍을 막는다.
+#: ``generation_prompt`` 은 파생 필드지만 **실제로 fal 에 나가는 문자열**이므로
+#: 게이트를 면제하지 않는다.
 MARKET_FACING_TEXT_FIELDS = ("action", "benefit", "claim", "voice_line",
-                             "first_frame_prompt", "motion_prompt")
+                             "first_frame_prompt", "motion_prompt",
+                             "generation_prompt")
 
 #: 금지 표현 스캔 대상 — 이미지/영상 모델에 도달하는 프롬프트까지 포함한다.
 #: 효능 암시를 문장이 아니라 그림으로 렌더링하는 우회로를 막는다.
 FORBIDDEN_SCAN_TEXT_FIELDS = ("action", "benefit", "claim", "voice_line",
-                              "first_frame_prompt", "motion_prompt")
+                              "first_frame_prompt", "motion_prompt",
+                              "generation_prompt")
+
+# ---------------------------------------------------------------------------
+# 스토리 · 발화 주도 컷 (2026-08-29 유료 1건 반려에서 나온 재설계)
+#
+# 왜 필요한가: 이전 설계는 ``motion_prompt`` 를 그대로 fal 에 넘겼고, 그 값은
+# "Slow subtle handheld push-in on the carton" 같은 **순수 카메라 지시**였다.
+# MiniMax H3 Max 는 시키는 대로 무음 클로즈업을 만들었고, 산출물은 -91.0 dB
+# (완전 무음) 로 측정돼 ``video_qa.check_spoken_content`` 가 빈 전사로 실패했다.
+#
+# 핵심 사실: **H3 Max 는 네이티브 오디오(립싱크 대사 포함)를 생성한다.**
+# 별도 TTS 단계는 없고 필요도 없다 — 말은 프롬프트에서 나온다. 결함은
+# "TTS 가 없다" 가 아니라 "말하라고 시키지 않았다" 였다.
+#
+# 그래서 이제 컷마다 ``generation_prompt`` 를 파생시킨다. MiniMax 가 문서화한
+# 3필드 구조(``integrated_multimodal_description`` / ``overall_soundscape`` /
+# ``non_diegetic_music``)를 그대로 따르고, 승인된 ``voice_line`` 을 대사
+# 델리미터 ``<d>[언어] …</d>`` 안에 **한 글자도 바꾸지 않고** 싣는다.
+# ---------------------------------------------------------------------------
+
+#: 대사 델리미터 — MiniMax 문서 표기. 언어 태그 + 발화문 그대로.
+DIALOGUE_OPEN = "<d>"
+DIALOGUE_CLOSE = "</d>"
+DIALOGUE_LANGUAGE = {"KR": "Korean", "US": "English"}
+
+_DIALOGUE_RE = re.compile(r"<d>\[[A-Za-z]+\]\s*(.*?)</d>", re.S)
+
+#: 컷 서사 역할 — **``viral_ugc.GRAMMAR_FIELDS`` 의 축에서 그대로 가져온다.**
+#: 관측된 패턴 원장의 문법을 재사용하는 것이지 새 서사 이론을 지어내지 않는다.
+#: 3컷은 훅(0~2초) → 실사용 시연 → 확인 가능한 근거 순으로 전개하고,
+#: 1컷은 훅을 따로 세울 자리가 없으므로 그 자체가 완결된 시연이다.
+CUT_ROLE_GRAMMAR_AXES = ("hook_0_2s", "demo_action", "proof_moment")
+
+_ROLE_ARCS = {
+    1: ("demo_action",),
+    2: ("hook_0_2s", "demo_action"),
+    3: ("hook_0_2s", "demo_action", "proof_moment"),
+}
+
+#: 역할별 장면 비트 (영문 — H3 스캐폴딩 언어. 시장 카피는 컷 필드가 담는다).
+_ROLE_BEATS = {
+    "hook_0_2s": ("Within the first half second S1 is already mid-gesture, "
+                  "lifting the product into the lens so the viewer is caught "
+                  "before the first word lands."),
+    "demo_action": ("S1 demonstrates the product the way it is actually used "
+                    "at home, keeping both hands and the product inside the "
+                    "frame the whole time."),
+    "proof_moment": ("S1 turns the product so the printed on-pack detail they "
+                     "are about to read faces the lens, letting the viewer "
+                     "check it for themselves."),
+}
+
+#: 화면 위 글자 요청 신호 — 자막은 **후반 작업 패스**다. 베이스 영상 소재는
+#: 절대 글자를 태우지 않는다 (모델이 렌더한 글자는 지울 수 없다).
+_ON_SCREEN_TEXT_MARKERS = (
+    "자막", "캡션", "텍스트 오버레이", "글자가 뜨", "문구가 뜨", "타이포",
+    "화면에 글", "제목 카드",
+    "subtitle", "caption", "on-screen text", "onscreen text", "text overlay",
+    "overlay text", "lower third", "title card", "kinetic type", "supertitle",
+)
+
+#: '사람이 등장해 무언가 한다'는 신호. 하나도 없으면 그 컷은 정물 클로즈업이라
+#: 판단하고 거부한다 — 무음 제품 클로즈업이 바로 반려된 그 영상이다.
+#: 라틴 표기는 단어 경계로 잡는다: "handheld push-in" 은 손이 아니라 카메라다.
+_HUMAN_PRESENCE_PATTERNS = (
+    r"손", r"손가락", r"엄마", r"아빠", r"부모", r"아이", r"사람", r"인물",
+    r"얼굴", r"입", r"말한", r"말하", r"이야기하", r"보여주", r"건네",
+    r"\bhand\b", r"\bhands\b", r"\bfinger\b", r"\bfingers\b", r"\bface\b",
+    r"\bwoman\b", r"\bman\b", r"\bparent\b", r"\bmother\b", r"\bfather\b",
+    r"\bperson\b", r"\bchild\b", r"\bkid\b", r"\bspeaks?\b", r"\bsays?\b",
+    r"\btalks?\b", r"\bshows?\b", r"\bholds?\b", r"\bpours?\b", r"\blifts?\b",
+)
+
+_HUMAN_PRESENCE_RE = tuple(re.compile(p, re.I) for p in _HUMAN_PRESENCE_PATTERNS)
 
 #: 제휴 고지 — SSOT 부록 A 불변 문구. 시장별로 반드시 하나가 붙는다.
 DISCLOSURE_TEXT = {
     "KR": "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.",
     "US": "As an Amazon Associate I earn from qualifying purchases.",
+}
+
+#: 시장별 승인 CTA 카피. **스토리보드가 항상 들고 나간다.**
+#:
+#: 합성 단계는 CTA 를 스토리보드에서만 축자 회수하는데(`CTA_SOURCE`),
+#: 스토리보드가 `cta` 를 내지 않아 첫 유료 실행에서 운영자가 손으로 채워야
+#: 했다. 자유 입력을 허용하면 CTA 가 스스로를 승인 집합에 넣는 셈이라
+#: CaptionDriftError 가 영원히 발동하지 않는다 — 그래서 여기에 고정한다.
+#: 문구는 구매·효능을 말하지 않고 정보 확인만 유도한다 (부록 A 가드레일).
+CTA_TEXT = {
+    "KR": "프로필 링크에서 성분표 확인하세요",
+    "US": "Full ingredient list at the link in bio",
 }
 
 _HANGUL = re.compile(r"[\uac00-\ud7a3]")
@@ -162,6 +251,21 @@ class BaselineError(StoryboardError):
     """기준선이 실측 지표에서 유도되지 않았다."""
 
 
+class SilentCutError(StoryboardError):
+    """컷이 사람도 발화도 없는 정물/카메라 이동만으로 기술됐다.
+
+    2026-08-29 반려 영상의 정확한 형태다 — 이 예외가 그 형태를 다시 만들지
+    못하게 막는다.
+    """
+
+
+class OnScreenTextError(StoryboardError):
+    """생성 프롬프트가 화면 위 글자(자막·캡션)를 요청했다.
+
+    자막은 후반 작업에서 붙인다. 모델이 태워버린 글자는 되돌릴 수 없다.
+    """
+
+
 # ---------------------------------------------------------------------------
 # 근거 인덱스
 # ---------------------------------------------------------------------------
@@ -235,6 +339,95 @@ def _assert_no_markers(text: str, markers, where: str, hint: str) -> None:
     for marker in markers:
         if marker in lowered:
             raise OneIdeaError(f"{where}: {hint} (금지 표현 {marker!r}): {text!r}")
+
+
+def _assert_no_on_screen_text(text: str, where: str) -> None:
+    lowered = text.lower()
+    for marker in _ON_SCREEN_TEXT_MARKERS:
+        if marker in lowered:
+            raise OnScreenTextError(
+                f"{where}: 베이스 영상 소재에 화면 위 글자를 요청할 수 없다 "
+                f"(금지 표현 {marker!r}) — 자막은 후반 작업 패스다: {text!r}")
+
+
+def _assert_human_presence(text: str, where: str) -> None:
+    for pattern in _HUMAN_PRESENCE_RE:
+        if pattern.search(text):
+            return
+    raise SilentCutError(
+        f"{where}: 사람도 동작도 없는 카메라 지시뿐이다 — 제품 클로즈업만 "
+        f"만들어지고 발화가 나오지 않는다 (2026-08-29 무음 -91.0 dB 반려): "
+        f"{text!r}")
+
+
+def spoken_segments(prompt: str) -> List[str]:
+    """생성 프롬프트에서 **실제로 발화되도록 지시된 문장**만 뽑아낸다.
+
+    ``video_qa.check_spoken_content`` 는 전사본을 승인 카피와 대조하며
+    ``MAX_UNAPPROVED_CHARS = 1`` 로 초과 발화를 잡는다. 그래서 프롬프트가
+    대사 델리미터 밖의 연출 지시를 실수로 발화 대상에 넣지 않았는지
+    여기서 기계적으로 확인할 수 있다.
+    """
+    return [m.strip() for m in _DIALOGUE_RE.findall(str(prompt or ""))]
+
+
+def story_roles_for(cut_count: int) -> tuple:
+    """컷 수 → 서사 역할 배열 (``viral_ugc`` 문법 축 재사용)."""
+    try:
+        return _ROLE_ARCS[int(cut_count)]
+    except (KeyError, TypeError, ValueError):
+        raise StoryboardError(
+            f"서사 역할을 배정할 수 없는 컷 수: {cut_count!r} "
+            f"— 허용: {sorted(_ROLE_ARCS)}")
+
+
+def build_generation_prompt(*, market: str, story_role: str, action: str,
+                            voice_line: str, first_frame_prompt: str,
+                            motion_prompt: str) -> str:
+    """컷 하나를 **말하는 사람이 제품을 쓰는 장면**으로 서술한 H3 Max 프롬프트.
+
+    MiniMax 가 문서화한 3필드 구조를 그대로 쓴다. 필드 이름은 규격이므로
+    시장과 무관하게 영문이고, 시장 카피(동작·대사)는 컷이 들고 온 언어
+    그대로 들어간다.
+
+    **승인 카피 충실도 vs 자연스러운 딜리버리** — 이 함수의 유일한 어려운
+    판단이다. 연기 지시를 대사 안에 섞으면 모델이 그 지시까지 읽어버리고,
+    감정어를 대사 옆에 붙이면 추임새("음…", "자!")를 덧붙인다. 둘 다
+    ``MAX_UNAPPROVED_CHARS = 1`` 에서 즉사한다. 그래서 딜리버리 언어는
+    **전부 델리미터 바깥**에 두고, 델리미터 안에는 승인된 ``voice_line`` 만
+    한 글자도 바꾸지 않고 넣으며, 그 직전에 "exactly these words and no
+    others" 로 애드리브를 명시적으로 봉쇄한다.
+    """
+    language = DIALOGUE_LANGUAGE[market]
+    beat = _ROLE_BEATS[story_role]
+    # 문장 경계를 정리한다 — 모델 필드는 마침표 없이 오는 경우가 많고, 그대로
+    # 이어붙이면 다음 문장과 한 덩어리로 읽혀 동작이 뭉개진다.
+    motion = motion_prompt.rstrip(" .。") + "."
+    action_text = action.rstrip(" .。")
+    frame_text = first_frame_prompt.rstrip(" .。")
+    return (
+        "integrated_multimodal_description: [Shot 1] Live-action, cinematic "
+        "hand-held UGC, vertical 9:16, one continuous take, natural daylight. "
+        "The supplied image is the exact opening frame and is fully "
+        f"referenced: {frame_text}. One ordinary parent (S1), "
+        "casually dressed, is the only person in the shot and stays in the "
+        f"same room for the whole clip. {beat} S1 performs one action and one "
+        f"action only: {action_text}. {motion} S1 then looks into the lens "
+        "and speaks in a warm, unhurried, mid-pitch conversational voice, "
+        "lips synced precisely to the dialogue, delivering exactly these "
+        "words and no others: "
+        f"{DIALOGUE_OPEN}[{language}] {voice_line}{DIALOGUE_CLOSE} "
+        "S1 stops speaking, keeps holding the product steady, and the shot "
+        "ends. No on-screen text of any kind: no subtitles, no captions, no "
+        "lower thirds, no title cards, no graphic overlays, no added logos "
+        "and no invented packaging wording — the frame stays clean so text "
+        "can be added later in post.\n\n"
+        "overall_soundscape: A quiet indoor room tone with the close-mic "
+        "clarity of S1's voice, the soft intake of breath just before they "
+        "speak, and the light handling sound of the product against their "
+        "fingers. No other voices and no crowd noise.\n\n"
+        "non_diegetic_music: N/A"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -448,6 +641,10 @@ class StoryboardCut:
     voice_line: str
     first_frame_prompt: str
     motion_prompt: str
+    #: 서사 역할 (viral_ugc 문법 축). 기본값은 자기완결 시연.
+    story_role: str = "demo_action"
+    #: fal 로 실제 나가는 문자열. 빈 값으로 두면 후처리에서 채워진다.
+    generation_prompt: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -462,6 +659,8 @@ class StoryboardCut:
             "voice_line": self.voice_line,
             "first_frame_prompt": self.first_frame_prompt,
             "motion_prompt": self.motion_prompt,
+            "story_role": self.story_role,
+            "generation_prompt": self.generation_prompt,
         }
 
 
@@ -521,6 +720,9 @@ class GroundedStoryboard:
             "total_duration_seconds": self.total_duration_seconds(),
             "cuts": [c.to_dict() for c in self.cuts],
             "disclosure": dict(self.disclosure),
+            # CTA 는 자막/후보정 단계가 소비한다. 스토리보드가 내주지 않으면
+            # 운영자가 손으로 채우게 되고, 그러면 승인 집합 대조가 무의미해진다.
+            "cta": cta_for(self.market),
             "evidence_ids": list(self.evidence_ids),
             "baseline": dict(self.baseline) if self.baseline else None,
         }
@@ -543,7 +745,16 @@ HARD RULES — a violation makes the whole plan invalid:
    experience — the operator has not used the product.
 5. Korean market copy in Korean only. US market copy in English only.
 6. `first_frame_prompt` describes ONE still vertical 9:16 frame with a single
-   subject. `motion_prompt` describes camera/subject motion only.
+   subject. It must NOT ask for any rendered text.
+7. `motion_prompt` describes what the PERSON does — a hand, a parent, a body
+   performing the demonstration. A pure camera instruction ("slow push-in on
+   the carton") is rejected: it produces a silent product close-up, which is
+   worthless. Camera language may support the action, never replace it.
+8. `voice_line` is the line the person will actually SPEAK on camera. The video
+   model generates native lip-synced audio from it, so write something a parent
+   would really say out loud in five seconds.
+9. NEVER ask for subtitles, captions, on-screen text or graphic overlays.
+   Subtitles are added later in post-production.
 
 Return JSON: {"cuts": [{"index", "duration_seconds", "action", "benefit",
 "claim", "evidence_id", "voice_line", "first_frame_prompt", "motion_prompt"}]}
@@ -602,7 +813,8 @@ def _require_field(cut: Dict[str, Any], name: str, where: str,
 
 
 def _validate_cut(raw: Any, position: int, market: str,
-                  index_by_id: Dict[str, Dict[str, Any]]) -> StoryboardCut:
+                  index_by_id: Dict[str, Dict[str, Any]],
+                  story_role: str = "demo_action") -> StoryboardCut:
     where = f"cuts[{position}]"
     if not isinstance(raw, dict):
         raise ModelOutputError(f"{where} 는 객체여야 한다: {raw!r}")
@@ -625,13 +837,15 @@ def _validate_cut(raw: Any, position: int, market: str,
     # 1) 시장·언어 게이트 (근거 검사보다 먼저 — 언어가 틀리면 언어로 죽는다)
     #    시장에 노출되거나 이미지/영상 모델에 도달하는 모든 텍스트를 덮는다.
     for name in MARKET_FACING_TEXT_FIELDS:
-        _assert_language(fields[name], market, f"{where}.{name}")
+        if name in fields:
+            _assert_language(fields[name], market, f"{where}.{name}")
 
     # 2) 금지 표현 — 말로 하든 그림으로 그리든 효능 암시는 막는다.
     #    first_frame_prompt/motion_prompt 가 빠지면 효능을 시각적으로
     #    렌더링하는 우회로가 열린다.
     for name in FORBIDDEN_SCAN_TEXT_FIELDS:
-        _assert_no_forbidden_claim(fields[name], f"{where}.{name}")
+        if name in fields:
+            _assert_no_forbidden_claim(fields[name], f"{where}.{name}")
 
     # 3) 컷 1개 = 동작 1개 = 효용 1개
     _assert_single_idea(fields["action"], f"{where}.action")
@@ -642,6 +856,14 @@ def _validate_cut(raw: Any, position: int, market: str,
     _assert_no_markers(fields["motion_prompt"], _SCENE_CHANGE_MARKERS,
                        f"{where}.motion_prompt",
                        "I2V 프롬프트는 모션만 기술해야 한다")
+
+    # 3-b) 화면 위 글자 금지 — 자막은 후반 작업 패스다.
+    _assert_no_on_screen_text(fields["first_frame_prompt"],
+                              f"{where}.first_frame_prompt")
+    _assert_no_on_screen_text(fields["motion_prompt"], f"{where}.motion_prompt")
+
+    # 3-c) 사람이 실제로 무언가를 해야 한다 — 카메라 이동만인 컷은 거부.
+    _assert_human_presence(fields["motion_prompt"], f"{where}.motion_prompt")
 
     # 4) 근거 결속
     evidence_id = raw.get("evidence_id")
@@ -674,12 +896,29 @@ def _validate_cut(raw: Any, position: int, market: str,
             f"{where}.voice_line 이 근거 주장을 담고 있지 않다: "
             f"{fields['voice_line']!r}")
 
+    # 5) 실제로 fal 에 나갈 문자열을 여기서 조립하고, 같은 게이트를 다시 건다.
+    #    파생 필드라고 면제하면 검사받지 않은 문자열이 모델에 도달한다.
+    generation_prompt = build_generation_prompt(
+        market=market, story_role=story_role,
+        action=fields["action"], voice_line=fields["voice_line"],
+        first_frame_prompt=fields["first_frame_prompt"],
+        motion_prompt=fields["motion_prompt"])
+    _assert_language(generation_prompt, market, f"{where}.generation_prompt")
+    _assert_no_forbidden_claim(generation_prompt, f"{where}.generation_prompt")
+    spoken = spoken_segments(generation_prompt)
+    if spoken != [fields["voice_line"]]:
+        raise ModelOutputError(
+            f"{where}.generation_prompt 의 발화 지시가 승인 카피와 다르다 "
+            f"(MAX_UNAPPROVED_CHARS=1 에서 QA 가 떨어진다): {spoken!r}")
+
     return StoryboardCut(
         index=index,
         duration_seconds=CUT_DURATION_SECONDS,
         evidence_id=evidence_id,
         evidence_quote=quote.strip(),
         evidence_source_url=source_url.strip(),
+        story_role=story_role,
+        generation_prompt=generation_prompt,
         **fields,
     )
 
@@ -689,6 +928,20 @@ def disclosure_for(market: str) -> Dict[str, Any]:
     vc._require_market(market)
     return {"market": market, "required": True, "text": DISCLOSURE_TEXT[market],
             "placement": "on_screen_and_caption"}
+
+
+def cta_for(market: str) -> Dict[str, Any]:
+    """시장별 승인 CTA 블록.
+
+    합성 단계(`video_compose.extract_cta`)는 CTA 를 **스토리보드에서만**
+    읽는데 스토리보드가 `cta` 를 내놓지 않아, 첫 유료 실행에서 운영자가
+    손으로 넣어야 했다. 자유 입력 CTA 는 승인 집합에 스스로를 넣는 것과
+    같아 CaptionDriftError 를 영원히 무력화한다 — 그래서 카피를 여기에
+    고정하고 스토리보드가 항상 들고 나가게 한다.
+    """
+    vc._require_market(market)
+    return {"market": market, "text": CTA_TEXT[market],
+            "source": "video_storyboard.CTA_TEXT"}
 
 
 def resolve_complexity(cfg: Dict[str, Any],
@@ -772,8 +1025,13 @@ def generate_storyboard(cfg: Dict[str, Any], evidence: Optional[ProductEvidence]
             "no fact outside the supplied evidence",
             "no efficacy, growth, or medical implication",
             "no first-person product experience",
+            "motion_prompt must describe a person demonstrating the product, "
+            "not a camera move over a static object",
+            "voice_line is spoken aloud on camera by that person",
+            "never request subtitles, captions or any on-screen text",
         ],
     }
+    payload["story_roles"] = list(story_roles_for(cut_count))
     if baseline is not None:
         payload["baseline"] = baseline
 
@@ -792,7 +1050,8 @@ def generate_storyboard(cfg: Dict[str, Any], evidence: Optional[ProductEvidence]
             f"요청한 컷 수와 모델 출력이 다르다: 요청 {cut_count} != 출력 "
             f"{len(raw_cuts)} — 조용히 잘라내지 않는다")
 
-    cuts = [_validate_cut(raw, i + 1, market, index_by_id)
+    roles = story_roles_for(len(raw_cuts))
+    cuts = [_validate_cut(raw, i + 1, market, index_by_id, roles[i])
             for i, raw in enumerate(raw_cuts)]
     vc._require_sequential(cuts)
 

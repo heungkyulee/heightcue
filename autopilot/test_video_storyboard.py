@@ -673,5 +673,156 @@ class TestPayloadGrounding(unittest.TestCase):
                          "cfg 가 함수 속성(모듈 전역 가변 상태)으로 저장됐다")
 
 
+# ---------------------------------------------------------------------------
+# 스토리 · 발화 주도 생성 프롬프트 (H3 Max 네이티브 오디오)
+#
+# 2026-08-29 유료 1건 반려의 재발 방지선. 그때 motion_prompt 가 순수 카메라
+# 지시("천천히 밀고 들어간다")뿐이어서 모델이 무음 클로즈업을 만들었고
+# 측정 -91.0 dB, spoken_content 가 빈 전사로 실패했다. H3 Max 는 네이티브
+# 오디오·립싱크를 생성하므로 **말하라고 시키지 않은 것**이 결함이었다.
+# ---------------------------------------------------------------------------
+
+
+class TestStoryDrivenGenerationPrompt(unittest.TestCase):
+
+    def _cut(self, market="KR", n=1):
+        resp = _kr_response(n) if market == "KR" else _us_response(n)
+        return _generate(resp, market=market, complexity="simple"
+                         if n == 1 else "standard").cuts[0]
+
+    # -- 존재와 전달 --------------------------------------------------------
+
+    def test_cut_exposes_generation_prompt(self):
+        cut = self._cut()
+        self.assertTrue(cut.generation_prompt.strip())
+
+    def test_generation_prompt_is_in_handoff_dict(self):
+        cut = self._cut()
+        self.assertEqual(cut.to_dict()["generation_prompt"],
+                         cut.generation_prompt)
+
+    # -- H3 Max 문서화 구조 -------------------------------------------------
+
+    def test_prompt_uses_documented_h3_field_order(self):
+        p = self._cut().generation_prompt
+        i = p.index("integrated_multimodal_description:")
+        s = p.index("overall_soundscape:")
+        m = p.index("non_diegetic_music:")
+        self.assertLess(i, s)
+        self.assertLess(s, m)
+
+    def test_prompt_opens_shot_one_and_never_cuts(self):
+        p = self._cut().generation_prompt
+        self.assertIn("[Shot 1]", p)
+        self.assertNotIn("[Shot 2]", p)
+
+    def test_no_background_music_is_requested(self):
+        self.assertIn("non_diegetic_music: N/A", self._cut().generation_prompt)
+
+    # -- 발화가 실제로 실려 나가는가 ---------------------------------------
+
+    def test_approved_voice_line_is_carried_verbatim(self):
+        cut = self._cut()
+        self.assertIn(cut.voice_line, cut.generation_prompt)
+
+    def test_spoken_line_is_bounded_by_dialogue_delimiters(self):
+        cut = self._cut()
+        spoken = vs.spoken_segments(cut.generation_prompt)
+        self.assertEqual(spoken, [cut.voice_line])
+
+    def test_dialogue_language_tag_matches_market(self):
+        self.assertIn("<d>[Korean]", self._cut("KR").generation_prompt)
+        self.assertIn("<d>[English]", self._cut("US", 2).generation_prompt)
+
+    def test_prompt_forbids_ad_libbing_beyond_the_approved_line(self):
+        # MAX_UNAPPROVED_CHARS = 1 이므로 한 단어만 더 붙어도 QA 가 떨어진다.
+        p = self._cut().generation_prompt
+        self.assertIn("exactly these words and no others", p)
+
+    def test_delivery_direction_sits_outside_the_dialogue_tag(self):
+        cut = self._cut()
+        head = cut.generation_prompt.split("<d>")[0]
+        self.assertIn("voice", head)
+
+    # -- 스토리·시연이지 정물 클로즈업이 아니다 -----------------------------
+
+    def test_prompt_carries_the_demonstration_action(self):
+        cut = self._cut()
+        self.assertIn(cut.action, cut.generation_prompt)
+
+    def test_prompt_names_a_speaking_person(self):
+        self.assertIn("(S1)", self._cut().generation_prompt)
+
+    def test_camera_only_motion_prompt_is_rejected(self):
+        resp = _kr_response(2)
+        resp["cuts"][0]["motion_prompt"] = "카메라가 제품을 향해 천천히 밀고 들어간다"
+        with self.assertRaises(vs.SilentCutError):
+            _generate(resp)
+
+    def test_us_camera_only_motion_prompt_is_rejected(self):
+        resp = _us_response(2)
+        resp["cuts"][0]["motion_prompt"] = ("slow subtle handheld push-in on the "
+                                            "carton, holding steady")
+        with self.assertRaises(vs.SilentCutError):
+            _generate(resp, market="US")
+
+    # -- 자막 금지 (자막은 후반 작업 패스다) --------------------------------
+
+    def test_generated_prompt_requests_no_on_screen_text(self):
+        p = self._cut().generation_prompt
+        self.assertIn("No on-screen text", p)
+        for banned in ("subtitle", "caption", "lower third"):
+            self.assertNotIn(f"add {banned}", p.lower())
+
+    def test_model_requested_subtitles_are_rejected(self):
+        resp = _kr_response(2)
+        resp["cuts"][0]["motion_prompt"] = "손이 제품을 들고 화면에 자막이 떠오른다"
+        with self.assertRaises(vs.OnScreenTextError):
+            _generate(resp)
+
+    def test_model_requested_caption_in_first_frame_is_rejected(self):
+        resp = _us_response(2)
+        resp["cuts"][0]["first_frame_prompt"] = (
+            "vertical 9:16 frame, one bottle with a bold caption overlay")
+        with self.assertRaises(vs.OnScreenTextError):
+            _generate(resp, market="US")
+
+    # -- 게이트는 파생 프롬프트에도 그대로 걸린다 ---------------------------
+
+    def test_derived_prompt_is_covered_by_the_forbidden_scan(self):
+        self.assertIn("generation_prompt", vs.FORBIDDEN_SCAN_TEXT_FIELDS)
+        self.assertIn("generation_prompt", vs.MARKET_FACING_TEXT_FIELDS)
+
+    def test_original_six_scanned_fields_are_still_scanned(self):
+        for name in ("action", "benefit", "claim", "voice_line",
+                     "first_frame_prompt", "motion_prompt"):
+            self.assertIn(name, vs.FORBIDDEN_SCAN_TEXT_FIELDS)
+
+    def test_kr_prompt_has_no_latin_only_body(self):
+        # 필드명은 H3 규격이라 영문이지만, 대사와 동작은 한국어여야 한다.
+        cut = self._cut("KR")
+        self.assertRegex(cut.generation_prompt, r"[\uac00-\ud7a3]")
+
+    def test_us_prompt_has_no_hangul(self):
+        cut = self._cut("US", 2)
+        self.assertNotRegex(cut.generation_prompt, r"[\uac00-\ud7a3]")
+
+    # -- viral_ugc 패턴 원장에 근거한 컷 역할 -------------------------------
+
+    def test_cut_roles_come_from_the_pattern_ledger_grammar(self):
+        import viral_ugc
+        for axis in vs.CUT_ROLE_GRAMMAR_AXES:
+            self.assertIn(axis, viral_ugc.GRAMMAR_FIELDS)
+
+    def test_three_cut_board_uses_hook_demo_proof_arc(self):
+        sb = _generate(_kr_response(3), complexity="complex")
+        roles = [c.story_role for c in sb.cuts]
+        self.assertEqual(roles, ["hook_0_2s", "demo_action", "proof_moment"])
+
+    def test_single_cut_is_a_self_contained_demo(self):
+        sb = _generate(_kr_response(1), complexity="simple")
+        self.assertEqual(sb.cuts[0].story_role, "demo_action")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
