@@ -73,7 +73,7 @@ def test_publication_gate_validates_candidate_and_propagates_metadata(tmp_path, 
     seen = {}
     monkeypatch.setattr(run.post_check, "check_post", lambda _: {"format_score": 100, "risk_notes": [], "format_tips": [], "verdict": "PASS"})
     monkeypatch.setattr(run.publish, "publish_text", lambda *a, **kw: seen.update(kw) or "PREVIEW-1")
-    candidate = {"text": "장난감 통을 매번 뒤집는 데 5분", "friction_id": "fr-1", "stage": "discovery", "market": "KR", "source_pointers": ["https://source.test/1"]}
+    candidate = {"text": "바닥에 작은 장난감.\n통 밑에도 남았습니다.\n정리가 분류가 됩니다.\n이런 적 있나요?", "friction_id": "fr-1", "stage": "discovery", "market": "KR", "source_pointers": ["https://source.test/1"]}
     media, reason = run._gate_and_publish(cfg, candidate["text"], "KR", "friction", dry_run=False, candidate=candidate)
     assert (media, reason) == ("PREVIEW-1", "published")
     assert seen["meta"]["friction_id"] == "fr-1"
@@ -86,7 +86,7 @@ def test_thread_gate_validates_each_part_with_shared_friction_metadata(tmp_path,
     cfg = _cfg(tmp_path)
     monkeypatch.setattr(run.post_check, "check_post", lambda _: {"risk_notes": [], "verdict": "PASS"})
     monkeypatch.setattr(run.publish, "publish_text", lambda *a, **kw: "PREVIEW-1")
-    candidate = {"friction_id": "fr-1", "stage": "discovery", "market": "KR", "source_pointers": ["https://source.test/1"]}
+    candidate = {"friction_id": "fr-1", "stage": "bridge", "market": "KR", "source_pointers": ["https://source.test/1"]}
     assert run._publish_thread(cfg, ["장난감 정리에 5분", "통을 비우는 동작이 반복됩니다"], "KR", candidate=candidate)[1] == "published"
     assert run._publish_thread(cfg, ["장난감 정리에 5분", "제품 https://shop.test"], "KR", candidate=candidate)[1] == "candidate_fail"
 

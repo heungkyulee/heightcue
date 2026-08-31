@@ -2,7 +2,7 @@ import generate
 
 
 def test_stage_contract_rejects_commercial_coupling_and_biography():
-    discovery = {"text": "매일 책상 밑 연필 줍는 데 5분", "friction_id": "fr-1", "stage": "discovery", "market": "KR", "source_pointers": ["signal:s1"]}
+    discovery = {"text": "책상 밑 연필.\n또 하나.\n줍고 또 줍습니다.\n이런 적 있나요?", "friction_id": "fr-1", "stage": "discovery", "market": "KR", "source_pointers": ["signal:s1"]}
     assert generate.validate_friction_candidate(discovery) == discovery
     for bad in (
         {**discovery, "text": "브랜드 제품 https://shop.test"},
@@ -15,6 +15,24 @@ def test_stage_contract_rejects_commercial_coupling_and_biography():
             pass
         else:
             raise AssertionError(f"invalid candidate accepted: {bad}")
+
+
+def test_discovery_requires_four_to_six_nonblank_lines_and_final_experience_question():
+    base = {"friction_id": "fr-1", "stage": "discovery", "market": "US",
+            "source_pointers": ["signal:s1"]}
+    valid = {**base, "text": "Tiny pieces everywhere.\nOne more under the bed.\nCleanup becomes sorting.\nHas this happened at your place?"}
+    assert generate.validate_friction_candidate(valid) == valid
+    for text in (
+        "Tiny pieces everywhere.\nCleanup becomes sorting.\nHas this happened at your place?",
+        "One.\nTwo.\nThree.\nFour.\nFive.\nSix.\nHas this happened at your place?",
+        "Tiny pieces everywhere.\nOne more under the bed.\nCleanup becomes sorting.\nThis happens at home.",
+    ):
+        try:
+            generate.validate_friction_candidate({**base, "text": text})
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"invalid discovery shape accepted: {text!r}")
 
 
 def test_bridge_and_verdict_have_stage_specific_requirements():

@@ -9,3 +9,4 @@
 - One or two short sentences per paragraph. English only.
 - Numbers, prices, reviews, ingredients, and comparisons must be copied from supplied evidence.
 - Discovery has no product, brand, or link. Bridge has no specific product or link. Only verdict may use the approved disclosure and attributable route.
+- Discovery is a raw, punchy micro-hook of exactly 4–6 short nonblank lines, never essay paragraphs. Its final line asks whether the reader has experienced that scene.

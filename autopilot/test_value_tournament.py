@@ -284,7 +284,7 @@ def test_value_attribution_reaches_publication():
         captured.update(meta or {})
         return "MID1"
 
-    winner = {"text": "승자 본문입니다. 충분히 길게 써서 검사기를 통과하게 합니다.",
+    winner = {"text": "바닥에 작은 조각.\n가구 밑에도 하나.\n정리가 분류가 됩니다.\n이런 적 있나요?",
               "kind": "story", "angle_used": "myth_bust", "writer_variant": "v2",
               "viral_score": 91.0, "critic_model": "google/gemini-3.7-flash",
               "_provenance": {"contract_id": "heightcue-content-v1", "model": "m"}}
@@ -324,7 +324,7 @@ def test_value_thread_contract_reaches_every_publication_part():
 
     captured = {}
     cfg = {"mode": {"auto_publish_clean": True}, "paths": {"state_dir": "/tmp"}}
-    candidate = {"friction_id": "fr-1", "stage": "discovery", "market": "KR",
+    candidate = {"friction_id": "fr-1", "stage": "bridge", "market": "KR",
                  "source_pointers": ["source:1"]}
     def fake_publish(*args, **kwargs):
         captured.setdefault("rows", []).append(kwargs["meta"])

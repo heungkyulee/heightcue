@@ -33,6 +33,12 @@ def validate_friction_candidate(candidate):
     if row["stage"] not in {"discovery", "bridge", "verdict"}:
         raise ValueError("invalid stage")
     text = str(row["text"])
+    if row["stage"] == "discovery":
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not 4 <= len(lines) <= 6:
+            raise ValueError("discovery must contain 4-6 nonblank lines")
+        if not lines[-1].endswith("?"):
+            raise ValueError("discovery final line must be an experience question")
     if any(re.search(pattern, text, re.I) for pattern in RETIRED_NARRATOR_PATTERNS):
         raise ValueError("narrator biography or testimony forbidden")
     if row["stage"] in {"discovery", "bridge"}:
@@ -366,11 +372,11 @@ def make_value_post(cfg, kind, episode=None, topic=None, recent=None, dry_run=Fa
     if dry_run or (cfg.get("mode") or {}).get("_rehearsal"):
         selected_angle = angle_override if angle_override else random.choice(angles)
         if country == "US":
-            text = ("Bedtime cleanup takes twelve minutes because every bin opens from the top."
+            text = ("Toys across the floor.\nThe last few hide under furniture.\nCleanup turns into sorting.\nDoes this happen at your place?"
                     if stage == "discovery" else
                     "A front-opening bin removes the empty-and-restack step while the bins stay stacked.")
         else:
-            text = ("장난감 정리만 12분. 위로 여는 수납함이 매번 일을 두 번 만듭니다."
+            text = ("바닥에 흩어진 장난감.\n가구 밑에도 남았습니다.\n정리가 분류 작업이 됩니다.\n이런 적 있나요?"
                     if stage == "discovery" else
                     "앞으로 여는 구조면 통을 쌓아둔 채 꺼냅니다. 비우고 다시 쌓는 동작이 사라집니다.")
         return {"text": text, "kind": "info", "angle_used": selected_angle,

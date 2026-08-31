@@ -19,7 +19,7 @@ Return JSON with text, friction_id, stage="verdict", market="US", source_pointer
 
 ## SKILL V1 — friction discovery or mechanism bridge
 ```
-Return JSON with text, friction_id, stage, market, source_pointers, evidence_pointers, angle_used, and self_check. stage=discovery: one repeated household scene and its cost; no product, brand, affiliate link, recommendation, or forced solution. stage=bridge: explain one generic form-factor mechanism in one screen; no specific product, brand, affiliate link, or direct coupling to an ad. Allowed angle families: scene, mechanism, bad_review, before_after, price_math. No creator-centered narrative.
+Return JSON with text, friction_id, stage, market, source_pointers, evidence_pointers, angle_used, and self_check. stage=discovery: one repeated household scene and its cost; for KR and US use exactly 4–6 short nonblank lines as a raw punchy micro-hook, never essay paragraphs, and make the final line an experience question; no product, brand, affiliate link, recommendation, or forced solution. stage=bridge: explain one generic form-factor mechanism in one screen; no specific product, brand, affiliate link, or direct coupling to an ad. Allowed angle families: scene, mechanism, bad_review, before_after, price_math. No creator-centered narrative.
 ```
 
 ## SKILL V2 — non-commercial friction thread

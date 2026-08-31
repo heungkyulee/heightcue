@@ -134,7 +134,7 @@ def bind_friction_contract(task, country, resolved, result, stage=None):
     return row
 
 
-def validate_candidates(raw):
+def validate_candidates(raw, stage=None):
     candidates = raw.get("candidates") if isinstance(raw, dict) else None
     if not isinstance(candidates, list) or len(candidates) < 2: raise RuntimeError("writer must return at least two candidates")
     ids = []
@@ -142,6 +142,12 @@ def validate_candidates(raw):
         if not isinstance(item, dict) or set(item) != {"id", "text"}: raise RuntimeError("invalid candidate schema")
         if not isinstance(item["id"], str) or not item["id"].strip() or not isinstance(item["text"], str) or not item["text"].strip():
             raise RuntimeError("invalid candidate values")
+        if stage == "discovery":
+            lines = [line.strip() for line in item["text"].splitlines() if line.strip()]
+            if not 4 <= len(lines) <= 6:
+                raise RuntimeError("discovery candidate must contain 4-6 nonblank lines")
+            if not lines[-1].endswith("?"):
+                raise RuntimeError("discovery candidate final line must be an experience question")
         ids.append(item["id"])
     if len(set(ids)) != len(ids): raise RuntimeError("candidate ids must be unique")
     return candidates
@@ -153,14 +159,16 @@ def invoke_writer_candidates(fixture, cfg, task, model, prompt, payload):
         "\n\nSCHEMA REPAIR (FINAL): Your previous response was invalid. Return only "
         '{"candidates":[{"id":"a","text":"..."},{"id":"b","text":"..."}]}. '
         "The candidates array must contain at least two objects with unique, non-empty IDs "
-        "and non-empty finished text. Do not return a direct text object or explanatory prose."
+        "and non-empty finished text. For discovery, each candidate must have exactly 4-6 "
+        "nonblank short lines and its final line must be an experience question. Do not return "
+        "a direct text object or explanatory prose."
     )
     last_error = None
     for attempt in range(2):
         raw = invoke(fixture, cfg, "writer", task, model,
                      prompt if attempt == 0 else prompt + repair, payload)
         try:
-            validate_candidates(raw)
+            validate_candidates(raw, stage=payload.get("stage"))
             return raw
         except RuntimeError as exc:
             last_error = exc
@@ -214,6 +222,8 @@ def run(capability):
                 root, task, request["input_ids"], allow_rehearsal=allow_rehearsal
             )
             stage = request.get("stage")
+            if task in {"value_post", "value_thread"} and stage is None:
+                stage = "discovery"
             user_payload = {"task":task, "country":request["country"], "stage": stage,
                             "resolved_payload":resolved}
             writer_model = cfg["openrouter"]["model"]
@@ -225,7 +235,7 @@ def run(capability):
                 raw = invoke(fixture, cfg, "writer", task, writer_model, writer_prompt, user_payload)
             critic_status, critic_model = "not_run", None
             if task in TOURNAMENT_TASKS:
-                candidates = validate_candidates(raw)
+                candidates = validate_candidates(raw, stage=stage)
                 critic_model = str(cfg["openrouter"].get("critic_model") or writer_model).strip()
                 critic_payload = {"task":task, "country":request["country"],
                                   "source_of_truth": resolved,

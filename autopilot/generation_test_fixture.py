@@ -21,5 +21,5 @@ for line in sys.stdin:
         if mode == "us-sales":
             out={"candidates":[{"id":"c1","text":"#ad\n600 IU vitamin D3 per labeled drop.\n\nSkip if: the exact label or fractionated coconut oil does not fit.\n\nFull breakdown and current listing: https://heightcue.lifoli.co.kr/us/vitamin-d-drops.html (paid link)"}, {"id":"c2","text":"#ad\nA label-sized fact: 600 IU vitamin D3 per labeled drop.\n\nSkip if: the exact label or fractionated coconut oil does not fit.\n\nFull breakdown and current listing: https://heightcue.lifoli.co.kr/us/vitamin-d-drops.html (paid link)"}]}
         else:
-            out={"candidates":[{"id":"c1","text":"후보 하나"},{"id":"c2","text":"후보 둘"}]}
+            out={"candidates":[{"id":"c1","text":"바닥에 작은 조각.\n침대 밑에도 하나.\n정리가 분류가 됩니다.\n이런 적 있나요?"},{"id":"c2","text":"작은 조각이 가득.\n하나씩 다시 줍습니다.\n정리 시간이 길어집니다.\n겪어본 적 있나요?"}]}
     print(json.dumps(out,ensure_ascii=False),flush=True)

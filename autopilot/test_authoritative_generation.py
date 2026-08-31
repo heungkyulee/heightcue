@@ -33,12 +33,12 @@ class AuthoritativeBoundaryTest(unittest.TestCase):
         return ec.request_authoritative_generation("value_post","KR",list(ids),project_root=str(self.root),key_dir=str(self.keys),test_fixture_executable=fixture)
 
     def test_high_level_service_returns_restart_verifiable_ed25519_attestation(self):
-        result=self.call(); self.assertEqual(result["text"],"후보 둘")
+        result=self.call(); self.assertEqual(result["text"],"작은 조각이 가득.\n하나씩 다시 줍습니다.\n정리 시간이 길어집니다.\n겪어본 적 있나요?")
         att=result["_attestation"]
         self.assertTrue(ec.verify_attestation(att,result,project_root=str(self.root),key_dir=str(self.keys)))
         ec.stop_generation_service(); self.assertTrue(ec.verify_attestation(att,result,project_root=str(self.root),key_dir=str(self.keys)))
         self.assertEqual(att["payload"]["critic_status"],"verified")
-        self.assertEqual(att["payload"]["output_digests"], [ec.sha256_text("후보 둘")])
+        self.assertEqual(att["payload"]["output_digests"], [ec.sha256_text(result["text"])])
         self.assertIn("input_payload_digest",att["payload"]); self.assertIn("prompt_digest",att["payload"])
 
     def test_relabel_partial_reordered_and_arbitrary_importer_are_rejected(self):
@@ -158,6 +158,26 @@ class AuthoritativeBoundaryTest(unittest.TestCase):
         for boundary in ("numbers", "prevalence", "first-person", "family history"):
             with self.subTest(boundary=boundary):
                 self.assertIn(boundary, directive)
+
+    def test_discovery_directive_requires_kr_and_us_four_to_six_line_experience_question_shape(self):
+        import generation_ssot
+        directive = generation_ssot.TASK_DIRECTIVES["value_post"]
+        self.assertIn("4-6 nonblank lines", directive)
+        self.assertIn("final line must be an experience question", directive)
+        self.assertIn("KR", directive)
+        self.assertIn("US", directive)
+
+    def test_writer_candidate_gate_rejects_discovery_paragraphs_and_non_question_endings(self):
+        paragraph = {"candidates": [
+            {"id": "a", "text": "A bedroom floor covered in tiny pieces after friends visit.\n\nThe friction is the manual time spent gathering and sorting them."},
+            {"id": "b", "text": "Tiny parts cover the floor.\nSorting takes time.\nCleanup stalls.\nThis is the friction."},
+        ]}
+        with self.assertRaisesRegex(RuntimeError, "discovery"):
+            gw.validate_candidates(paragraph, stage="discovery")
+
+        bridge = {"candidates": [{"id": "a", "text": "A generic mechanism."},
+                                  {"id": "b", "text": "Another mechanism."}]}
+        self.assertEqual(gw.validate_candidates(bridge, stage="bridge"), bridge["candidates"])
 
     def test_writer_retries_semantically_invalid_candidate_bundle_with_repair_prompt(self):
         from unittest.mock import patch
