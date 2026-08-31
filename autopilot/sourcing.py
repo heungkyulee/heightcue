@@ -19,6 +19,7 @@ import requests
 
 from common import log, read_json, state_path, write_json
 import friction
+import journey_policy
 
 COUPANG_HOST = "https://api-gateway.coupang.com"
 
@@ -36,6 +37,7 @@ def score_candidate(candidate):
     row = dict(candidate or {})
     components = row.get("scores") or {}
     reasons = []
+    reasons.extend(journey_policy.product_eligibility(row)["reasons"])
     if not row.get("friction_id"):
         reasons.append("friction_id_missing")
     pointers = row.get("source_pointers")
@@ -256,7 +258,7 @@ def make_deeplink(cfg, url, sub_id):
 
 
 def _blacklisted(name):
-    return any(b in name for b in NAME_BLACKLIST)
+    return any(b in name for b in NAME_BLACKLIST) or bool(journey_policy.retired_product_reasons(name))
 
 
 # 근거·컴플라이언스 승인 권한을 가진 봇 핸들.

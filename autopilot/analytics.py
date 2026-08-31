@@ -35,6 +35,27 @@ def _revenue_rank(row):
             int(row.get("qualified_engagement") or 0), int(row.get("views") or 0))
 
 
+def commission_per_1000_verified_impressions(rows, minimum_impressions=3000):
+    """Compute efficiency only from fully observed, provenance-bearing rows."""
+    observed = list(rows or [])
+    complete = bool(observed) and all(
+        row.get("impressions") is not None
+        and row.get("impressions_provenance")
+        and row.get("commission") is not None
+        and row.get("commission_status") == "verified"
+        for row in observed
+    )
+    impressions = sum(int(row["impressions"]) for row in observed) if complete else 0
+    commission = sum(float(row["commission"]) for row in observed) if complete else 0.0
+    eligible = complete and impressions >= int(minimum_impressions)
+    return {
+        "value": round(commission * 1000 / impressions, 4) if eligible and impressions else None,
+        "verified_impressions": impressions,
+        "verified_commission": commission,
+        "eligible": eligible,
+    }
+
+
 def friction_summary(rows):
     """Observed friction-funnel dimensions; hypotheses are explicitly separate."""
     observed = list(rows or [])
@@ -49,6 +70,38 @@ def friction_summary(rows):
     return {"dimensions": list(FRICTION_DIMENSIONS), "by_dimension": by_dimension,
             "observed": {"rows": len(observed)}, "revenue_winner": winner,
             "hypotheses": []}
+
+
+def outreach_summary(rows, profile_observations=None):
+    """Summarize verified replies without inventing reply-level profile causality."""
+    bases = {}
+    latest = {}
+    for row in rows or []:
+        key = row.get("idempotency_key")
+        if not key:
+            continue
+        if row.get("status") == "reserved" and key not in bases:
+            bases[key] = row
+        latest[key] = row
+    verified = []
+    for key, terminal in latest.items():
+        if terminal.get("status") == "verified":
+            verified.append({**bases.get(key, {}), **terminal})
+    by_market = defaultdict(int)
+    by_category = defaultdict(int)
+    for row in verified:
+        if row.get("market"):
+            by_market[str(row["market"])] += 1
+        if row.get("friction_category"):
+            by_category[str(row["friction_category"])] += 1
+    account = [row for row in (profile_observations or []) if row.get("provenance")]
+    return {
+        "verified_replies": len(verified),
+        "by_market": dict(by_market),
+        "by_category": dict(by_category),
+        "account_level_observations": account,
+        "causal_reply_to_profile_attribution": "not_observed",
+    }
 
 
 # --- 영상(UGC) 행 인식 — 추가만 하고 텍스트 경로는 건드리지 않는다 -------------
@@ -243,6 +296,11 @@ def weekly_summary(cfg):
             {**r, "views": (r.get("insights") or {}).get("views", 0),
              "clicks": r.get("link_clicks") or 0} for r in latest.values()
         ]),
+        "normalized_efficiency": commission_per_1000_verified_impressions(latest.values()),
+        "outreach": outreach_summary(
+            read_jsonl(state_path(cfg, "outreach.jsonl")),
+            profile_observations=read_jsonl(state_path(cfg, "profile_metrics.jsonl")),
+        ),
         "todo_human": ["쿠팡 파트너스 리포트에서 서브ID별 전환·수익 대조"],
     }
     return summary

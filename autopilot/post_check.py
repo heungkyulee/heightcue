@@ -24,13 +24,15 @@ import json
 import re
 import sys
 
+import journey_policy
+
 # ═══════════════════════════════ 1. 바이럴 포맷 검사 ═══════════════════════════════
 
 MAX_LEN = 500          # Threads 하드 리밋 — 초과 시 게시 불가 (유일한 FAIL)
 SWEET_MIN, SWEET_MAX = 120, 480   # 권장 분량
 HOOK_MAX = 70          # 훅(1행)이 이보다 길면 피드·알림에서 잘림
 KR_DISCLOSURE = "쿠팡 파트너스 활동의 일환으로"
-KR_DISCLOSURE_EXACT = "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."
+KR_DISCLOSURE_EXACT = journey_policy.AFFILIATE_DISCLOSURES["KR"]
 
 RE_EMOJI = re.compile(
     "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F900-\U0001F9FF\U00002190-\U000021FF]"
@@ -60,6 +62,45 @@ def first_nonempty_lines(text, n=1):
             if len(out) >= n:
                 break
     return out
+
+
+def punctuation_notes(text, country="KR"):
+    """쓰레드 사람 글에 없는 구두점을 잡아낸다 (2026-08-29 운영자 지적).
+
+    콜론·대시·괄호는 보도자료/블로그/AI 글의 표식이다. 일반 쓰레더는 쓰지 않는다.
+    프롬프트로만 막으면 조용히 재발하므로 기계로 검사한다.
+    URL·시각 표기(09:30)·고지 문구는 오탐이라 제외한다.
+    """
+    notes = []
+    # 고지 문구와 URL은 검사 대상이 아니다 (불변 문구라 손댈 수 없음)
+    scrubbed = re.sub(r"https?://\S+", " ", text)
+    scrubbed = scrubbed.replace(
+        "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.", " ")
+
+    # 콜론 — 시각(09:30)은 제외
+    colons = [m for m in re.finditer(r":", scrubbed)
+              if not re.match(r"\d", scrubbed[m.end():m.end() + 1] or "")
+              or not re.search(r"\d$", scrubbed[:m.start()])]
+    if colons:
+        notes.append(f"콜론(:) {len(colons)}개 — 쓰레드 사람 글에 없는 구두점. 줄바꿈으로 대체")
+
+    # 대시 — 하이픈 연결어(3~4), 마이너스는 제외하고 구분자로 쓰인 것만
+    if re.search(r"(\s[—–]\s|\s-\s)", scrubbed):
+        notes.append("대시(-, —) 사용 — 문장을 끊어 쓸 것")
+
+    # 괄호 — 이모티콘 오탐 방지를 위해 내용이 2자 이상일 때만
+    parens = re.findall(r"\([^)]{2,}\)", scrubbed)
+    if parens:
+        notes.append(f"괄호 {len(parens)}개 {parens[:2]} — 부연이 필요하면 타래로 분리")
+
+    if re.search(r";", scrubbed):
+        notes.append("세미콜론(;) 사용 — 한국어 쓰레드에 쓰지 않음")
+
+    # 천단위 쉼표 — 사람은 1000mg으로 쓴다
+    if re.search(r"\d,\d{3}", scrubbed):
+        notes.append("천단위 쉼표(1,000) — 쓰레드에서는 1000으로 쓸 것")
+
+    return notes
 
 
 def format_check(text, post_type, country):
@@ -170,7 +211,7 @@ SOURCE_DEFICIENT_US = [
     (r"\bmost\s+kids?'?\s+vitamin\s+d?\s*gumm(?:y|ies)\b", "source-deficient market comparison — competing gummy labels are not saved"),
     (r"\bkids?\s+don'?t\s+even\s+notice\b", "source-deficient child-experience claim — no attributable review quote is saved"),
     (r"\bbuilds?\s+bone\s+foundation\b", "unsupported supplement implication — no approved claim supports this wording"),
-    (r"\bpure\b", "unqualified purity claim — exact purity substantiation is not saved"),
+    (r"\bpure\s+(?:d3|vitamin|ingredients?|extract|oil|form|formula)\b|\b(?:is\s+)?pure\b(?!\s+garbage)", "unqualified purity claim — exact purity substantiation is not saved"),
     (r"\bled\s+the\s+league\s+in\s+steals\b", "story-source gap — story bank supports captain/city-title facts, not a league steals record"),
 ]
 DDROPS_UNSUPPORTED = [
@@ -275,8 +316,12 @@ def causal_notes(text, country):
 
 
 def risk_notes(text, country, post_type, product):
-    """참고용 리스크 메모. 어떤 경우에도 차단하지 않는다."""
+    """참고용 리스크 메모. 운영 설정의 hold_flagged가 발행을 fail-closed로 막는다."""
     notes = evidence_boundary_notes(text, country, product)
+    notes += [f"{reason} — 구매자인 보호자를 공격하는 표현" for reason in
+              journey_policy.caregiver_shaming_reasons(text, country)]
+    notes += [f"{reason} — 폐기된 화자 페르소나가 활성 카피에 노출됨" for reason in
+              journey_policy.retired_persona_reasons(text)]
     # 인과 단정은 상업/비상업을 가리지 않는다 — 가치글에서도 검사한다.
     notes += causal_notes(text, country)
 
@@ -287,18 +332,29 @@ def risk_notes(text, country, post_type, product):
             notes.append("Ddrops evidence boundary — a natural 'skip if:' non-fit line is required")
         elif not re.search(r"exact\s+label|fractionated\s+coconut\s+oil", skip_match.group(0), re.I):
             notes.append("Ddrops evidence boundary — skip if must be based on the exact label or fractionated coconut oil")
+    # A null result from a tiny trial cannot support an absolute claim about one child.
+    # Keep this deterministic boundary narrow; nuanced claims remain the grounded critic's job.
+    if country == "US":
+        small = re.search(r"\b(?:small (?:trial|study|sample)|in \d{1,2}(?:\s+\w+){0,2} (?:kids|children|participants))\b", text, re.I)
+        absolute = re.search(r"\b(?:changes? nothing|does(?:n['’]t| not) matter|proves?|always|never|zero effect)\b", text, re.I)
+    else:
+        small = re.search(r"(?:소규모 (?:시험|연구|표본)|\d{1,2}명(?:의|을|에게)?)", text)
+        absolute = re.search(r"(?:아무 상관없|전혀 영향 없|절대|항상|효과가? 없다)", text)
+    if small and absolute:
+        notes.append(f"small-study absolute claim — 소규모·null 결과를 개인의 보편 결론으로 확대함 → «{absolute.group(0)}»")
+
     has_link = bool(RE_ANY_LINK.search(text))
     commercial = (post_type == "sales") or has_link
     if not commercial:
-        return notes  # 링크 없는 가치글은 광고가 아니므로 메모 대상 아님
+        return notes  # 링크 없는 가치글은 광고 고지는 생략하되 인과·소규모 단정은 위에서 검사함
 
     # 고지 상태. US 판매글은 자사 사이트 경유여도 추천 자체가 제휴 퍼널이므로 첫 줄 #ad를 요구한다.
     if country == "KR":
-        if RE_COUPANG_LINK.search(text):
+        if post_type == "sales" or RE_COUPANG_LINK.search(text):
             head = first_nonempty_lines(text, 2)
             if len(head) < 2 or head[1] != KR_DISCLOSURE_EXACT:
                 notes.append("쿠팡 직링크 고지가 둘째 줄의 불변 문구와 정확히 일치하지 않음 — 위치·문구 수정 금지")
-    else:
+    elif commercial:
         first = (first_nonempty_lines(text, 1) or [""])[0]
         if post_type == "sales" and not re.search(r"#ad\s*$", first, re.I):
             notes.append("US 판매 추천인데 훅 행 끝 #ad가 없음 — 자사 가이드 경유도 제휴 퍼널이므로 고지 위치 고정")

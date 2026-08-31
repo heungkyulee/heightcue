@@ -4,6 +4,7 @@ import sourcing
 def candidate(**overrides):
     base = {
         "friction_id": "fr-1", "source_pointers": ["review:r1"],
+        "product_name": "앞으로 여는 장난감 수납함", "category": "storage",
         "scores": {
             "friction_frequency": 4, "friction_intensity": 4, "mechanism_clarity": 5,
             "mobile_demo_clarity": 4, "consideration_cost": 1, "price_resistance": 2,
@@ -31,6 +32,18 @@ def test_low_consideration_exclusions_fail_closed():
         assert sourcing.score_candidate(candidate(**{field: True}))["eligible"] is False
     assert sourcing.score_candidate(candidate(wrong_purchase_reversible=False))["eligible"] is False
     assert sourcing.score_candidate(candidate(source_pointers=[]))["eligible"] is False
+
+
+def test_measurement_and_height_claim_products_fail_before_scoring_can_rescue_them():
+    for name in ("휴비딕 초음파 무선 신장계", "seca 213 portable stadiometer", "키 성장 영양제"):
+        result = sourcing.score_candidate(candidate(product_name=name))
+        assert result["eligible"] is False
+        assert any(reason in result["reasons"] for reason in ("measurement_commerce_retired", "height_growth_claim"))
+
+
+def test_search_result_blacklist_uses_the_same_canonical_product_policy():
+    assert sourcing._blacklisted("seca 213 portable stadiometer") is True
+    assert sourcing._blacklisted("앞으로 여는 장난감 수납함") is False
 
 
 def test_revenue_hierarchy_beats_views():

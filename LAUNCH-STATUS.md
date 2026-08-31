@@ -1,58 +1,58 @@
 # heightcue LAUNCH STATUS — 단일 현황판
 
-> 헷갈릴 때는 이 문서만 본다. 갱신: 2026-08-26 (Claude) — 스킬 v2.0(합법 어그로) 반영
+> 헷갈릴 때는 이 문서만 본다. 갱신: 2026-08-31 (Hermes Agent) — persona-free friction commerce 전환 반영
 > 전략·가드레일 = `heightcue-SSOT-v2.md` · 실행 방법 = `README-autopilot.md` · 운영 폴더 = `~/heightcue-autopilot`
 
 ## 🔒 확정 스코프 (운영자 확정)
 
 **하는 것 — 이 둘만:**
 
-| 트랙 | 채널 | 수익 | 일일 콘텐츠 |
+| 트랙 | 채널 | 수익 | 기본 운영량 |
 |---|---|---|---|
-| KR | Threads @heightcue | 쿠팡 파트너스 | 판매 1 + 가치·스토리 2 |
-| US | Threads @heightcue_us | 아마존 어필리에이트 (사이트 가이드 경유) | 가치·스토리 1 + 판매(레지스트리 로테이션, 현재 주 1회꼴) |
+| KR | Threads @heightcue | 쿠팡 파트너스 | 원문 2/일 + 실제 외부 대화 답글 10~15/일 |
+| US | Threads @heightcue_us | Amazon Associates (검증 가이드 경유) | 원문 2/일 + 실제 외부 대화 답글 10~15/일 |
 
-**안 하는 것 (동결):** 유튜브 쇼츠(기존 5편 보존만) · 인스타그램 · 핀터레스트 · CN 확장. 사이트는 채널이 아니라 아마존 앵커 인프라.
+**사업 정의:** 부모가 반복해서 겪는 잠·아침, 식사·도시락, 놀이·움직임, 공부·루틴, 정리·공간 마찰을 찾고, 구조 차이를 근거로 비교해 구매 판단까지 연결한다. 고정 인물·가족 경험·의료 권위를 연기하지 않는다.
+
+**안 하는 것 (동결):** 신장계 상업 추천 · 키 성장 효능 암시 · 유튜브 쇼츠 신규 제작 · 인스타그램 · 핀터레스트 · CN 확장.
 
 ## 현재 상태
 
 | 구성 요소 | 상태 | 비고 |
 |---|---|---|
-| KR/US Threads 계정·장기 토큰 | ✅ | KR·US 이름·바이오 2026-08-27 확정안 적용(SSOT §2 프로필 항목 참조) |
-| OpenRouter (Gemini 계열) | ✅ | 모델 `google/gemini-3.1-pro-preview` 고정(운영자 지정). 리허설 전 `validate.py`가 슬러그 실존을 실호출로 재확인 |
-| 아마존 어소시에이트 | ✅ active | 사이트가 등록 앵커, 가이드 페이지 1개 라이브. ⚠️ 정산 수단 미설정 |
-| 쿠팡 파트너스 | ✅ active | `hklee@lifoli.co.kr` 기존 계정 로그인·대시보드·링크 생성 권한 확인(2026-08-26). 등록 채널에 Threads `@heightcue` 포함 |
-| 오토파일럿 코드 | ✅ 최신 | 무인 강건화 완료: 단계별 오류 격리(errors.jsonl), 포맷 실패 1회 재생성, Threads 토큰 주간 자동 갱신, rehearsal·status·golive 명령. 현장 테스트 통과(포맷 29/29 + 큐 E2E + dryrun 4포스트 100점). 콘텐츠 스킬 v2.0 — 모든 메인 콘텐츠(판매+가치) 합법 어그로 훅 의무, 답글만 진심 모드 |
-| 브라우저 큐 (KR 소싱) | 🟡 코드 완료 | **Aside 루틴 미등록** — `aside-sourcing-routine.md`로 등록 필요 |
-| US 판매 레지스트리 | ✅ 1건 | `autopilot/state/us_products.json` (Ddrops 가이드). 새 가이드 페이지 추가 시 항목 추가 |
-| 스토리 뱅크 | ✅ 하이브리드 | 코어 3요소(167·26살·당사자 시점) 고정, 세부 서사 각색 허용, E1~E6 전부 사용 가능(2026-08-27 운영자 결정) |
-| 발행 게이트 | 🟢 **가동** | 2026-08-27 golive. dry_run=false, publish=true. 첫 실발행 4건 완료(KR 판매1+가치1, US 판매1+가치1) |
-| crontab | ✅ 등록 확인 | 이 맥의 OS crontab에 09:30·12:30·14:00·16:00·19:30·일 21:00, 총 6개 작업 등록. Hermes 중복 작업 5개는 제거 |
-| 발행 물량 | ✅ 일 10건 체제 | 09:30 daily(4건) + 12:30(2) + 16:00(2) + 19:30(2). KR 판매2+가치3, US 가치4+판매로테 |
+| KR/US Threads 계정·장기 토큰 | ✅ | KR `HeightCue \| 생활 마찰 해결`, US `HeightCue \| Parenting Fixes`; 핸들은 `@heightcue`, `@heightcue_us` 유지 |
+| OpenRouter | ✅ | 콘텐츠·검토·외부 답글 생성 모델 `google/gemini-3.7-flash`; `validate.py`가 실제 공급자 응답을 검증 |
+| 아마존 어소시에이트 | ✅ active | 사이트 등록 앵커와 승인 가이드 1개. 정적 가격·재고·리뷰 수는 표시하지 않음. ⚠️ 정산 수단 미설정 |
+| 쿠팡 파트너스 | ✅ active | 등록 채널 `@heightcue`; 기존 KR 제품 페이지 2개는 상업 CTA 없는 퇴역 안내로 전환 |
+| 오토파일럿 코드 | ✅ | persona-free stage 계약, 부모 비난·퇴역 페르소나 출력 게이트, 수익 우선순위, metric-specific 실험 판정 |
+| 상품 실행 원장 | ✅ | US는 LiFoli Company OS/Supabase 승인·오퍼·랜딩 패킷이 SSOT. `state/us_products.json`은 런타임 원천이 아님 |
+| 공개 사이트 | ✅ 로컬 검증 | friction category 허브·빈 상태·측정 교육 아카이브·승인 상품 상세·고지·개인정보·sitemap 생성. 내부 링크 검사 0건 |
+| 스토리 뱅크 | 📦 archive | 과거 167cm/5'6"/26세·가족 경험은 활성 생성 입력에서 제외. 역사 원장은 수정하지 않음 |
+| 발행 게이트 | 🟢 가동 | `dry_run=false`, `publish=true`; discovery/bridge는 링크·상품·상업 연결 금지 |
+| crontab 원본 | ✅ 갱신 | 09:30 daily 1회 + 10:30/15:00/20:30 외부 답글 슬롯 + 3분 comments + weekly/harvest/health. OS 등록은 첫 외부 답글 검증 뒤 수행 |
+| 기본 발행 물량 | ✅ 시장별 원문 2건/일 | `daily` 한 번으로 KR 2건·US 2건. 추가 원문 슬롯은 제거 |
+| 외부 답글 | 🟡 첫 실검증 전 | Aside `u0` 전용 발견→Gemini 근거 결속→사전 예약→발행→별도 read-back 구현. 첫 검증 후 health가 KR/US 최근 성공을 감시 |
 
 ## 남은 일 — 소유자별
 
-**형(계정 주인만 가능) — 순서대로:**
-1. 아마존 정산 수단 선택 (해외 수취 계좌/수표/기프트카드)
-2. 답글 파고들기 일일 실행 (reply-outreach.md 템플릿, 하루 10~15개 — 수동 또는 별도 루틴화)
-4. Aside에 소싱 루틴 등록 (`aside-sourcing-routine.md` 붙여넣기, 30분~1시간 주기)
-5. 쿠팡 대시보드 [API 키 관리]에서 **API 키 발급 가능 여부 확인** — 발급되면 `config.json`의 coupang에 입력 → 브라우저 큐 없이 완전 자동 소싱으로 전환
+**계정 주인만 가능한 일:**
+1. 아마존 정산 수단 선택(해외 수취 계좌/수표/기프트카드)
+2. 쿠팡 대시보드에서 API 키 발급 가능 여부 확인 — 발급 전까지 브라우저 큐를 유지
 
-**리허설 → 가동 (형 5분 + Claude 점검):**
-6. `cd ~/heightcue-autopilot/autopilot && python3 run.py rehearsal` — 원커맨드: 자격 재검증 → 실제 생성(발행 없음) → 미리보기 출력
-7. 출력된 미리보기를 Claude에게 공유 → 첫 실생성물 톤·품질 점검
-8. 통과 시 `python3 run.py golive` — dry_run 해제 + publish 켜짐 + OS crontab 6개 작업 안내 출력 → 등록하면 **가동**
-
-**Claude(자동/요청 시):** 코드·스킬·플레이북 유지보수, 주간 리포트 분석, 새 US 가이드 페이지 제작(판매 소재 확장), 보류함 검토 지원.
+**자동화가 수행하는 일:**
+1. `outreach_worker.py`가 실제 Threads 대화를 Aside로 찾고, 상업 연결 없는 구체 답글을 발행·read-back
+2. `build_journey.py`가 Company OS 승인 패킷으로 사이트를 재생성하고, 죽은 내부 링크와 정책 위반 가격 표시를 차단
+3. `health.py`가 발행·댓글·외부 답글·상품 워크플로·활성 계약 드리프트를 함께 감시
 
 ## 안전장치 요약
 
 * 실발행은 `publish: true`를 명시해야만 가능(`golive` 명령이 켬). 끄면(또는 crontab 제거) 전체 정지.
-* 무인 강건성: 한 단계가 실패해도 나머지는 계속 실행되고 `state/errors.jsonl`에 기록. 포맷 실패는 1회 자동 재생성. Threads 토큰(60일 만료)은 weekly가 자동 갱신해 config에 저장.
-* 하이브리드 모드: 코어 3요소 고정 + 세부 각색 허용. 가짜 가족·제품 체험담·효능 암시는 여전히 금지. `python3 run.py status`로 언제든 상태 확인.
-* 판매글: 훅 1행 + 고지 2행(KR 표준 문구 / US #ad) 자동 강제, 리스크 메모는 발행 보류 후 주간 리포트 표시.
-* US 판매글은 아마존 태그 직링크 금지 — 사이트 가이드 페이지로만 연결.
-* 자가개선은 플레이북 경로만 — 철칙·가드레일·스토리 사실·고지는 불가침.
+* 무인 강건성: 한 단계가 실패해도 나머지는 계속 실행되고 `state/errors.jsonl`에 기록한다. Threads 토큰은 weekly가 자동 갱신한다.
+* persona-free: 과거 개인·가족·신체 서사는 활성 입력에서 제외하고, 부모가 아닌 구체적인 허위 주장·불편한 구조·낭비되는 구매를 비판한다.
+* 판매글: KR 정확 승인 문구, US `#ad`와 Associates 문구를 강제한다. 검증되지 않은 가격·재고·리뷰 수는 사이트에 표시하지 않는다.
+* discovery/bridge: 브랜드·상품·제휴 링크·프로필 유도 금지. verdict만 승인 패킷과 랜딩 경로를 사용할 수 있다.
+* 외부 답글: 실제 원문 URL 사전 예약, 링크·브랜드·상품·의료 답변 금지, 별도 provider read-back이 일치해야 `verified`다.
+* 수익 판단: 수수료→주문→클릭→진행→유효 반응→조회. `commission_per_1000_verified_impressions`는 관측·최소 표본 충족 때만 보조 지표로 계산한다.
 
 ## 영상(I2V UGC) 파이프라인 — 상태와 **검증되지 않는 것들**
 
@@ -85,8 +85,12 @@ cd /Users/leeheungkyu/OpenMontage && .venv/bin/python -m pip install faster-whis
 가중치 내려받기와 실제 전사 품질은 검증하지 않는다. `[충족]` 은 "전사가 돌 수 있다"는
 뜻이지 "QA 가 통과한다"는 뜻이 아니다.
 
-**`process` 는 아직 끝까지 돌지 않는다.** 게이트를 다 통과해도 exit 5 로 멈춘다 —
-종단 오케스트레이터가 미배선이다. 현재는 모듈을 순서대로 사람이 호출한다.
+**`process` 종단 오케스트레이터 배선 완료.** 대기 잡을 lease로 claim한 뒤 스토리보드 →
+실물 Ken-Burns 사진/생성 첫 프레임 → MiniMax H3 Max 모션 컷 → 클린 마스터 + 자막본 +
+SRT → 두 산출물 QA → `video_handoff.promote_to_ready`까지 실행한다. 한 번에
+`video.max_jobs_per_run`까지만 처리하고, QA 실패는 `qa_failed`, 재시도 가능 실패는 원장
+정책에 따라 `queued`/`dead_letter`로 남긴다. **이 프로세스는 발행하지 않으며** 성공
+종착점은 `ready_to_publish`다.
 
 ### 이 시스템이 **검증하지 않는** 것 (운영자는 이걸 알고 켜야 한다)
 
@@ -109,7 +113,9 @@ cd /Users/leeheungkyu/OpenMontage && .venv/bin/python -m pip install faster-whis
 
 
 
-## 2026-08-27 — v2.1 바이럴 포맷 이식 + 링크 모드 A/B + KR 제품 랜딩 페이지
+## 역사 기록 — 아래는 현행 운영 지침이 아님
+
+### 2026-08-27 — v2.1 바이럴 포맷 이식 + 링크 모드 A/B + KR 제품 랜딩 페이지
 - **스킬 v2.1** (`heightcue-gemini-skills.md`): K-뷰티 벤치마크(@skin.pick.seoul 175개 전수 분해) 공식 이식.
   4대 포맷(F1 가격역전/F2 언더독/F3 신문물/F4 가치글 쇼핑가이드), fair point + 비추천(skip if) 의무 슬롯,
   슬롯-근거 게이트(권위·배경 주장은 소싱 데이터에 있을 때만, 없으면 리뷰 수·평점 등 수치로 대체).

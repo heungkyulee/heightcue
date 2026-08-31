@@ -19,7 +19,7 @@ import hashlib
 import re
 import time
 
-from common import append_jsonl, log, read_json, read_jsonl, state_path, write_json
+from common import append_jsonl, is_real_publication, log, read_json, read_jsonl, state_path, write_json
 
 # ── 주제 거리 체계 (D0=판매 직결 … D3=확산) ────────────────────────────────
 # 가치글에는 제품이 없으므로 소싱 카테고리 하드락(영양/숙면/자세/운동)이
@@ -302,6 +302,50 @@ def mark_used(cfg, atom_id, channel, country, media_id):
             save_atoms(cfg, store)
             return atom
     return None
+
+
+def rebuild_used_in_from_publications(cfg):
+    """Append-only 게시 원장에서 실제 root 게시물의 원자 소진 상태를 재구축한다."""
+    store = atom_store(cfg)
+    atom_by_id = {atom.get("atom_id"): atom for atom in store["atoms"] if atom.get("atom_id")}
+    for atom in store["atoms"]:
+        atom["used_in"] = {}
+
+    real_roots = 0
+    unknown = set()
+    seen = set()
+    for row in read_jsonl(state_path(cfg, "published.jsonl")):
+        media_id = str(row.get("media_id") or "")
+        if not is_real_publication(row) or re.match(r"^(?:dry|dryrun|preview|test)[-_]", media_id, re.I):
+            continue
+        meta = row.get("meta") or {}
+        part = meta.get("thread_part")
+        if part not in (None, 1, "1") and not (isinstance(part, str) and part.startswith("1/")):
+            continue
+        atom_id = meta.get("atom_id")
+        if not atom_id:
+            continue
+        atom = atom_by_id.get(atom_id)
+        if atom is None:
+            unknown.add(atom_id)
+            continue
+        channel = str(meta.get("channel") or "threads").lower()
+        country = str(row.get("country") or meta.get("country") or "").upper()
+        if not country:
+            continue
+        dedupe_key = (atom_id, channel, country, media_id)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        atom.setdefault("used_in", {}).setdefault(channel_key(channel, country), []).append(media_id)
+        real_roots += 1
+
+    save_atoms(cfg, store)
+    return {
+        "atoms": len(store["atoms"]),
+        "real_root_publications": real_roots,
+        "unknown_atom_ids": sorted(unknown),
+    }
 
 
 def to_generation_topic(atom):

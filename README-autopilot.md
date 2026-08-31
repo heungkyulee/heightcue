@@ -20,7 +20,7 @@ autopilot/
 ├── validate.py     # 자격 정보 일괄 검증 (네이티브 실행)
 ├── test_queue.py   # 브라우저 큐 E2E 테스트 · test_posts.json 회귀 테스트셋
 ├── config.example.json
-└── state/          # 발행 로그, 지표, 보류함, 플레이북, 주간 리포트, browser-queue/, us_products.json
+└── state/          # 발행 로그, 지표, 보류함, 플레이북, 주간 리포트, browser-queue/, outreach.jsonl
 ```
 
 검증: `../.venv/bin/python run.py dryrun` — API 키 없이 전체 사이클을 모의 실행합니다.
@@ -73,16 +73,14 @@ cd autopilot && ../.venv/bin/python validate.py
 # 6) 실전: 미리보기가 만족스러우면 config.json 의 mode 에 "publish": true 추가
 ```
 
-**crontab 등록 (`crontab ~/heightcue-autopilot/crontab.txt`):**
+**crontab 등록:**
 
+```bash
+crontab ~/heightcue-autopilot/crontab.txt
+crontab -l
 ```
-30 9  * * * cd $HOME/heightcue-autopilot/autopilot && ../.venv/bin/python run.py daily >> state/cron.log 2>&1
-30 12 * * * cd $HOME/heightcue-autopilot/autopilot && ../.venv/bin/python run.py post KR value >> state/cron.log 2>&1 && ../.venv/bin/python run.py post US value >> state/cron.log 2>&1
-0  14 * * * cd $HOME/heightcue-autopilot/autopilot && ../.venv/bin/python run.py comments >> state/cron.log 2>&1
-0  16 * * * cd $HOME/heightcue-autopilot/autopilot && ../.venv/bin/python run.py post KR sales >> state/cron.log 2>&1 && ../.venv/bin/python run.py post US value >> state/cron.log 2>&1
-30 19 * * * cd $HOME/heightcue-autopilot/autopilot && ../.venv/bin/python run.py post KR value >> state/cron.log 2>&1 && ../.venv/bin/python run.py post US value >> state/cron.log 2>&1 && ../.venv/bin/python run.py comments >> state/cron.log 2>&1
-0  21 * * 0 cd $HOME/heightcue-autopilot/autopilot && ../.venv/bin/python run.py weekly >> state/cron.log 2>&1
-```
+
+스케줄 원본은 `crontab.txt` 한 곳만 수정한다. 기본은 08:30 근거 수집, 09:30 시장별 원문 2건, 10:30·15:00·20:30 Aside 외부 답글, 3분마다 보유 글 댓글, 일요일 21:00 주간 분석이다.
 
 주의: 맥이 잠자기/꺼짐 상태면 해당 회차는 건너뜁니다(다음 회차에 이어짐). 완전 무인을 원하면 월 몇천 원짜리 VPS에 같은 crontab을 걸면 됩니다.
 
@@ -97,10 +95,11 @@ cd autopilot && ../.venv/bin/python validate.py
 
 ## 4. US 트랙 — 구현 상태
 
-* **구현 완료 (둘 다 코드에 존재, 기본 ON):**
-  * 가치·스토리 글: 매일 @heightcue_us에 링크 없는 영어 글 1건 (SKILL V1 country=US).
-  * 판매글 — **사이트 가이드 경유**: `state/us_products.json` 레지스트리를 로테이션(재사용 간격 7일)해 사이트 가이드 페이지 링크로 판매글 발행. 아마존 태그 직링크는 쓰지 않는다(사이트가 Associates 등록 앵커). 소재가 없으면 자동 건너뜀 — 새 가이드 페이지를 사이트에 추가하고 레지스트리에 항목을 넣으면 소재가 늘어난다(Claude가 제작 가능).
-* **남은 인간 단계:** 아마존 정산 수단 선택 (LAUNCH-STATUS 참조).
+* 원문은 KR과 동일하게 2건/일이지만 번역하지 않고 미국 부모의 장면·표현·상품 맥락으로 별도 생성한다.
+* 상품은 LiFoli Company OS/Supabase의 승인 리비전·활성 오퍼·검증 랜딩·tracking key가 모두 일치할 때만 `site_packets.py`가 사이트 패킷으로 만든다.
+* `state/us_products.json`은 레거시 호환 파일일 뿐 런타임 원천이 아니다.
+* 사이트는 정적 Amazon 가격·재고·리뷰 수를 쓰지 않으며, 상세페이지의 `Check current listing`에서 현재 리스팅을 확인한다.
+* 남은 인간 단계는 아마존 정산 수단 선택뿐이다(`LAUNCH-STATUS.md`).
 
 ## 5. 영상(I2V UGC) 워크플로 — `run.py video`
 

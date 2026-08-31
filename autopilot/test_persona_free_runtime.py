@@ -4,6 +4,7 @@ from pathlib import Path
 import analytics
 import generate
 import generation_ssot
+import post_check
 import run
 import sourcing
 import viral_intelligence
@@ -123,3 +124,23 @@ def test_authoritative_generation_rejects_episode_and_atom_as_friction():
 def test_hook_critic_is_blind_to_angle_metadata():
     hooks = [{"id": f"h{i}", "text": f"hook {i}", "hook_family": "scene", "angle_id": "secret"} for i in range(1, 7)]
     assert viral_intelligence.build_hook_critic_payload(hooks) == {"hooks": [{"id": f"h{i}", "text": f"hook {i}"} for i in range(1, 7)]}
+
+
+def test_reader_facing_output_gate_flags_caregiver_shaming_and_retired_persona_but_not_claim_criticism():
+    bad = (
+        ("KR", "이걸 또 사는 부모는 호구입니다."),
+        ("US", "Lazy parents keep buying these gummies."),
+        ("KR", "167cm 팩트폭격기가 골랐습니다."),
+        ("US", "The 5'6\" Uncle verdict."),
+    )
+    for country, text in bad:
+        result = post_check.check_post({"country": country, "post_type": "value", "text": text})
+        assert result["risk_notes"], (country, text)
+
+    good = (
+        ("KR", "성장기 맞춤은 효능이 아닙니다. 1회 섭취량부터 보세요."),
+        ("US", "The front label makes a promise the nutrition panel does not support."),
+    )
+    for country, text in good:
+        result = post_check.check_post({"country": country, "post_type": "value", "text": text})
+        assert not any("caregiver_shaming" in note or "retired_persona" in note for note in result["risk_notes"])

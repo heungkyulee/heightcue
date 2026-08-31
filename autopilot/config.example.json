@@ -11,13 +11,21 @@
   },
   "cadence": {
     "sales_per_day": 1,
-    "value_per_day": 2,
+    "value_per_day": 1,
     "max_replies_per_run": 20
+  },
+  "outreach": {
+    "enabled": false,
+    "publish": false,
+    "markets": ["KR", "US"],
+    "queries_per_market_per_run": 2,
+    "max_sources_per_query": 2,
+    "runs_per_day": 3
   },
   "openrouter": {
     "api_key": "여기에_OPENROUTER_API_KEY",
-    "model": "google/gemini-3.1-pro-preview",
-    "_안내": "SSOT 원칙: 모델은 Gemini 계열만 (OpenRouter 경유). 운영자 지정: 3.1 Pro 고정 — OpenRouter 슬러그는 google/gemini-3.1-pro-preview (2026-08-26 모델 목록에서 실존 확인). validate.py가 슬러그 실존을 실호출로 재확인."
+    "model": "google/gemini-3.7-flash",
+    "_안내": "콘텐츠 생성·검토·아웃리치 답글은 OpenRouter google/gemini-3.7-flash를 사용합니다. validate.py가 실제 설정과 공급자 응답을 검증합니다."
   },
   "threads": {
     "kr_user_id": "",
@@ -49,8 +57,13 @@
     "daily_budget_usd": 2.0,
     "max_jobs_per_run": 1,
     "max_attempts": 3,
+    "lease_seconds": 3600,
     "ledger_root": null,
-    "_안내": "I2V UGC 영상 워크플로(Task 16) — `run.py video enqueue|process|status|rehearsal`. production_generation_enabled 는 실제 유료 호출(fal.ai MiniMax H3 Max, 5초 컷당 약 $0.20)을 여는 유일한 스위치이며 기본값은 false 다. 라이브 종단 게이트를 통과하기 전에는 켜지 마라 — 이 파이프라인은 아직 단 한 번도 유료 호출을 한 적이 없다. enabled 는 파이프라인 전체 on/off, kill_switch=true 면 enqueue 와 process 를 즉시 막는다(기존 잡은 건드리지 않는다). 무료 확인은 `run.py video rehearsal` — 유료 호출 0건·발행 0건으로 게이트와 배포 전제조건을 점검한다. ledger_root=null 이면 state/video 를 쓴다. **배포 전제조건: faster-whisper 설치.** QA 게이트는 fail-closed 라 전사기가 없으면 모든 실영상이 QA 실패한다(비용만 나간다)."
+    "projects_root": null,
+    "asset_sha256": {},
+    "affiliate_links": {},
+    "identity_signoff_path": null,
+    "_안내": "I2V UGC 영상 워크플로(Task 16) — `run.py video enqueue|process|status|rehearsal`. production_generation_enabled 는 실제 유료 호출(fal.ai MiniMax H3 Max 768P, prompt expansion disabled)을 여는 유일한 스위치이며 기본값은 false 다. process 는 storyboard→실물 Ken-Burns/생성 첫 프레임→모션 컷→클린 마스터+자막본+SRT→양쪽 QA→ready_to_publish 까지만 실행하고 발행하지 않는다. asset_sha256/affiliate_links 는 product_id 키 dict, identity_signoff_path 는 단일 경로나 product_id 키 dict다(미지정 시 <projects_root>/heightcue_<run_id>/qa/<job_id>_identity_signoff.json). enabled 는 전체 on/off, kill_switch=true 면 enqueue/process 를 즉시 막는다. lease_seconds 는 장시간 생성 중 원장 lease 길이, ledger_root=null 은 state/video, projects_root=null 은 ~/OpenMontage/projects. 무료 확인은 rehearsal이며 유료 호출·발행 모두 0건이다. **배포 전제조건: faster-whisper 설치.** QA는 fail-closed다."
   },
   "paths": {
     "skills": "../heightcue-gemini-skills.md",

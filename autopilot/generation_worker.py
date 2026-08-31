@@ -13,6 +13,7 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+import journey_policy
 from generation_ssot import TASK_DIRECTIVES, canonical, digest, resolve_inputs, source_context
 
 TASKS = set(TASK_DIRECTIVES)
@@ -116,7 +117,7 @@ def bind_friction_contract(task, country, resolved, result, stage=None):
         if active_stage == "bridge":
             row["mechanism"] = source.get("mechanism") or (source.get("mechanisms") or [None])[0]
     elif task == "sales_post":
-        disclosure = "#ad" if country == "US" else "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."
+        disclosure = journey_policy.AFFILIATE_DISCLOSURES["US_LINK" if country == "US" else "KR"]
         row.update({"friction_id": source.get("friction_id"), "stage": "verdict",
                     "market": country, "source_pointers": source.get("source_pointers") or [],
                     "mechanism": source.get("mechanism"), "failure_mode": source.get("failure_mode"),

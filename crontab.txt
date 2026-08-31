@@ -1,7 +1,21 @@
-30 8  * * * cd $HOME/heightcue-autopilot/autopilot && ../.venv/bin/python harvest.py --count 3 >> state/cron.log 2>&1
-30 9  * * * cd $HOME/heightcue-autopilot/autopilot && ../.venv/bin/python run.py daily >> state/cron.log 2>&1
-30 12 * * * cd $HOME/heightcue-autopilot/autopilot && ../.venv/bin/python run.py post KR value >> state/cron.log 2>&1 && ../.venv/bin/python run.py post US value >> state/cron.log 2>&1
-0  14 * * * cd $HOME/heightcue-autopilot/autopilot && ../.venv/bin/python run.py comments >> state/cron.log 2>&1
-0  16 * * * cd $HOME/heightcue-autopilot/autopilot && ../.venv/bin/python run.py post KR sales >> state/cron.log 2>&1 && ../.venv/bin/python run.py post US value >> state/cron.log 2>&1
-30 19 * * * cd $HOME/heightcue-autopilot/autopilot && ../.venv/bin/python run.py post KR value >> state/cron.log 2>&1 && ../.venv/bin/python run.py post US value >> state/cron.log 2>&1 && ../.venv/bin/python run.py comments >> state/cron.log 2>&1
-0  21 * * 0 cd $HOME/heightcue-autopilot/autopilot && ../.venv/bin/python run.py weekly >> state/cron.log 2>&1
+# cron의 기본 PATH는 /usr/bin:/bin 뿐이라 aside(~/.local/bin)·brew 도구를 못 찾는다.
+# 이게 없으면 harvest.py가 매일 FileNotFoundError로 죽는다 (2026-08-29 발견).
+PATH=/Users/leeheungkyu/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+30 8  * * * /Users/leeheungkyu/.hermes/scripts/heightcue-work.sh harvest >> $HOME/heightcue-autopilot/autopilot/state/cron.log 2>&1
+30 9  * * * /Users/leeheungkyu/.hermes/scripts/heightcue-work.sh daily >> $HOME/heightcue-autopilot/autopilot/state/cron.log 2>&1
+# 외부 대화 유통: 주제별 Aside 수집 → 근거 결속 답글 → 사전 예약 → 별도 read-back.
+30 10 * * * cd $HOME/heightcue-autopilot/autopilot && ../.venv/bin/python outreach_worker.py run 0 >> state/cron.log 2>&1
+0  15 * * * cd $HOME/heightcue-autopilot/autopilot && ../.venv/bin/python outreach_worker.py run 1 >> state/cron.log 2>&1
+30 20 * * * cd $HOME/heightcue-autopilot/autopilot && ../.venv/bin/python outreach_worker.py run 2 >> state/cron.log 2>&1
+# 댓글 응대: 24시간 3분 간격 (질문 방치 최대 3분). 실제 조회량은 comments.select_posts가
+# 글 나이별로 조절한다(6h 이내=매회 / 6~48h=15분 / 48h~7d=3시간 / 7d+=하루 1회).
+# 중복 실행은 state/comments.lock 파일 락이 막는다.
+*/3 * * * * /Users/leeheungkyu/.hermes/scripts/heightcue-work.sh comments >> $HOME/heightcue-autopilot/autopilot/state/cron.log 2>&1
+0  21 * * 0 /Users/leeheungkyu/.hermes/scripts/heightcue-work.sh weekly >> $HOME/heightcue-autopilot/autopilot/state/cron.log 2>&1
+# 로그 로테이션: cron.log가 5MB를 넘으면 .1로 밀어내고 새로 시작 (3분 주기 대비)
+15 4 * * * cd $HOME/heightcue-autopilot/autopilot/state && [ -f cron.log ] && [ $(wc -c < cron.log) -gt 5242880 ] && mv -f cron.log cron.log.1 || true
+20 4 * * * /usr/bin/python3 /Users/leeheungkyu/.hermes/scripts/company_work.py archive-old --board company-work --days 7 >> $HOME/heightcue-autopilot/autopilot/state/cron.log 2>&1
+# 상태 점검: 이상할 때만 cron.log에 남긴다(정상이면 exit 0 + 무출력이라 조용함).
+# 발행 게이트 꺼짐·크론 사망·외부 CLI 실종 같은 '조용한 실패'를 잡는 안전망.
+0 */4 * * * /Users/leeheungkyu/.hermes/scripts/heightcue-work.sh health > /tmp/hc_health.txt 2>&1 || (echo "[health] $(date '+\%F \%T') 이상 감지" && cat /tmp/hc_health.txt) >> $HOME/heightcue-autopilot/autopilot/state/cron.log

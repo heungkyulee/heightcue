@@ -17,7 +17,7 @@ from common import load_config, read_json
 RESULT_TEMPLATE = {
     "status": "done", "country": "KR", "category": "sleep",
     "audit_status": "approved",
-    "audited_by": "mungchi-proof",
+    "audited_by": "haneul-proof",
     "source_reverified_via": "aside:u0",
     "source_reverified_at": "2026-08-27T20:05:00+09:00",
     "demand_provenance": {"signal_id": "d-1", "source_post_id": "post-1",
@@ -57,14 +57,16 @@ def main():
     tmp = tempfile.mkdtemp(prefix="hc-queue-test-")
     cfg["paths"]["state_dir"] = tmp
     cfg["coupang"]["access_key"] = ""  # 테스트 중 API 경로 차단
-    with open(f"{tmp}/demand_signals.json", "w", encoding="utf-8") as f:
-        json.dump([
-            {"signal_id": f"d-{i}", "status": "validated", "source_post_id": f"post-{i}",
-             "observed_at": f"2026-08-27T19:0{i}:00+09:00", "signal": "반복 질문",
-             "connection_reason": "가치글 반응에서 확인된 문제", "repeated_count": 2,
-             "category": "posture", "sourcing_keyword": "어린이 높이조절 독서대", "is_food": False}
-            for i in range(1, 6)
-        ], f, ensure_ascii=False)
+    with open(f"{tmp}/friction_signals.jsonl", "w", encoding="utf-8") as f:
+        for i in range(1, 6):
+            signal = {
+                "friction_id": f"fr-{i}", "market": "KR", "domain": "study",
+                "source_type": "external_complaint", "source_pointer": f"https://source.test/{i}",
+                "verbatim": "독서할 때 고개를 숙이고 책상을 다시 정리해요", "recurrence": 5,
+                "intensity": 4, "mechanisms": ["height_adjust"], "lifecycle": "validated",
+                "sourcing_keyword": f"어린이 높이조절 독서대 {i}", "is_food": False,
+            }
+            f.write(json.dumps(signal, ensure_ascii=False) + "\n")
 
     ok = True
 
@@ -82,7 +84,12 @@ def main():
     check("요청 버퍼 3건 생성", added == 3 and len(reqs) == 3 and all(q["status"] == "pending" for q in reqs))
 
     # 2) Aside 결과 주입 → 소비
-    result = dict(RESULT_TEMPLATE, request_id=reqs[0]["id"], product_key="t-1")
+    result = dict(
+        RESULT_TEMPLATE, request_id=reqs[0]["id"], product_key="t-1",
+        friction_id=reqs[0]["friction_id"], source_pointers=reqs[0]["source_pointers"],
+        scores={field: 3 for field in sourcing.CANDIDATE_SCORE_FIELDS},
+        wrong_purchase_reversible=True,
+    )
     with open(res_p, "w", encoding="utf-8") as f:
         json.dump([result], f, ensure_ascii=False)
     picked = sourcing.pick(cfg, dry_run=False)
@@ -106,17 +113,16 @@ def main():
         json.dump([hold], f, ensure_ascii=False)
     check("감사 보류 상품 소비 차단", sourcing.pick(cfg, dry_run=False) is None)
 
-    # 6) 가치글 수요 신호가 없어도 Discovery 레인은 유지
-    with open(f"{tmp}/demand_signals.json", "w", encoding="utf-8") as f:
-        json.dump([], f)
+    # 6) 검증 friction이 없으면 공급자 중심 Discovery 요청을 만들지 않음
+    with open(f"{tmp}/friction_signals.jsonl", "w", encoding="utf-8") as f:
+        f.write("")
     with open(req_p, "w", encoding="utf-8") as f:
         json.dump([], f)
     with open(res_p, "w", encoding="utf-8") as f:
         json.dump([], f)
     added = sourcing.top_up_requests(cfg)
     discovery_reqs = read_json(req_p, [])
-    check("수요 신호 없어도 Discovery 요청 유지",
-          added == 3 and all(q.get("lane") == "discovery" for q in discovery_reqs))
+    check("수요 신호 없으면 요청 생성 금지", added == 0 and discovery_reqs == [])
 
     shutil.rmtree(tmp, ignore_errors=True)
     print("\n결과:", "PASS" if ok else "FAIL")
