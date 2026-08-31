@@ -128,7 +128,8 @@ def bind_friction_contract(task, country, resolved, result, stage=None):
         if any(row.get(key) in (None, "", []) for key in required):
             raise RuntimeError("incomplete friction-stage output")
         if task == "sales_post" and any(not row.get(key) for key in
-                ("mechanism", "failure_mode", "skip_if", "attributable_route", "disclosure")):
+                ("mechanism", "failure_mode", "skip_if", "price_band",
+                 "attributable_route", "disclosure")):
             raise RuntimeError("incomplete verdict output")
     return row
 

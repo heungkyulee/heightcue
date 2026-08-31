@@ -489,9 +489,21 @@ def _rehearsal_fixture_allowed(cfg):
     return mode.get("_rehearsal") is True and mode.get("publish") is False
 
 
-def queue_product_input_id(product):
-    """Immutable identity for the exact audited queue packet consumed by selection."""
+def canonical_queue_product(product, request=None):
+    """Build the one trusted KR queue packet used by selection and resolution."""
     packet = {key: value for key, value in product.items() if not str(key).startswith("_")}
+    request = request or {}
+    for key in ("formfactor_id", "ux_grade"):
+        if not packet.get(key) and request.get(key):
+            packet[key] = request[key]
+    if not packet.get("country"):
+        packet["country"] = "KR"
+    return packet
+
+
+def queue_product_input_id(product, request=None):
+    """Immutable identity for the canonical audited queue packet."""
+    packet = canonical_queue_product(product, request)
     raw = json.dumps(packet, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return f"queue_product:{packet['product_key']}:{hashlib.sha256(raw).hexdigest()}"
 
@@ -529,22 +541,20 @@ def _pick_from_queue(cfg):
                 and not _blacklisted(r.get("product_name", ""))
                 and is_audit_approved(r)
                 and score_candidate(r)["eligible"]):
+            reqs = read_json(req_p, [])
+            request = next((q for q in reqs if q.get("id") == r.get("request_id")), None)
+            packet = canonical_queue_product(r, request)
+            packet["_generation_input_id"] = queue_product_input_id(r, request)
             if not cfg["mode"].get("_rehearsal"):
                 history.append({"product_key": r["product_key"], "ts": time.strftime("%Y-%m-%d")})
                 write_json(state_path(cfg, "sourced_history.json"), history)
-                reqs = read_json(req_p, [])
                 for q in reqs:
                     if q.get("id") == r.get("request_id"):
                         q["status"] = "consumed"
-                        # 결과에 태그 누락 시 요청 쪽 태그로 보완
-                        r.setdefault("formfactor_id", q.get("formfactor_id"))
-                        r.setdefault("ux_grade", q.get("ux_grade"))
                 write_json(req_p, reqs)
-                _mark_sourced(cfg, r)
-            r.setdefault("country", "KR")
-            r["_generation_input_id"] = queue_product_input_id(r)
-            log(f"소싱(브라우저 큐): {r.get('product_name', '')[:40]}")
-            return r
+                _mark_sourced(cfg, packet)
+            log(f"소싱(브라우저 큐): {packet.get('product_name', '')[:40]}")
+            return packet
     return None
 
 

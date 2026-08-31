@@ -5,6 +5,7 @@ Fail-closed by design: US commerce never falls back to a local product registry.
 Credentials are read from the existing Company OS env file and never logged.
 """
 import json
+import math
 import os
 import socket
 import urllib.error
@@ -13,10 +14,25 @@ import urllib.request
 
 ENV_PATH = os.path.expanduser("~/.config/lifoli/companyos.env")
 DEFAULT_OWNER = "yujin-threads-us"
+USD_PRICE_BANDS = ((15, "US_UNDER_15"), (30, "US_15_30"),
+                   (50, "US_30_50"), (math.inf, "US_50_PLUS"))
 
 
 class CompanyOSError(RuntimeError):
     pass
+
+
+def price_band(price_info, explicit=None):
+    """Preserve an explicit band or derive one from a typed USD amount."""
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip()
+    if not isinstance(price_info, dict) or price_info.get("currency") != "USD":
+        raise CompanyOSError("Company OS claim contract requires USD price_info or price_band")
+    amount = price_info.get("amount")
+    if (isinstance(amount, bool) or not isinstance(amount, (int, float))
+            or not math.isfinite(float(amount)) or amount < 0):
+        raise CompanyOSError("Company OS claim contract requires typed USD price amount")
+    return next(label for ceiling, label in USD_PRICE_BANDS if amount < ceiling)
 
 
 def _load_credentials(path=ENV_PATH):
@@ -100,14 +116,23 @@ def claim_us_product(cfg, owner=DEFAULT_OWNER, transport=None):
     missing = [key for key in required if not row.get(key)]
     if missing:
         raise CompanyOSError("Company OS claim contract missing: " + ", ".join(missing))
+    price_info = row.get("price_info") or {}
     return {
         "product_key": row["product_key"], "country": "US",
         "category": row.get("category") or "nutrition",
         "product_name": row["product_name"],
+        "friction_id": row.get("friction_id"),
+        "source_pointers": row.get("source_pointers") or [],
+        "mechanism": row.get("mechanism"),
+        "failure_mode": row.get("failure_mode"),
+        "skip_if": row.get("skip_if"),
+        "formfactor_id": row.get("formfactor_id"),
+        "ux_grade": row.get("ux_grade"),
         "is_food": bool(row.get("is_food", False)),
         "is_certified_health_food": bool(row.get("is_certified_health_food", False)),
         "approved_claims": row.get("approved_claims") or [],
-        "price_info": row.get("price_info") or {},
+        "price_info": price_info,
+        "price_band": price_band(price_info, row.get("price_band")),
         "review_count": row.get("review_count"),
         "review_rating": row.get("review_rating"),
         "review_quotes": row.get("review_quotes") or [],

@@ -48,7 +48,8 @@ REHEARSAL_PRODUCTS = {
         "product_key": "us-ddrops-kids-600iu", "country": "US", "category": "nutrition",
         "product_name": "Ddrops Kids Booster Vitamin D3 600 IU",
         "is_food": True, "is_certified_health_food": False, "approved_claims": [],
-        "price_info": "", "review_count": None, "review_rating": None, "review_quotes": [],
+        "price_info": "", "price_band": "US_PRICE_UNAVAILABLE",
+        "review_count": None, "review_rating": None, "review_quotes": [],
         "spec_facts": ["600 IU vitamin D3 per labeled drop", "fractionated coconut oil"],
         "link": "https://heightcue.lifoli.co.kr/us/vitamin-d-drops.html", "sub_id": "us-guide",
         "friction_id": "fr-rehearsal-nutrition-us",
@@ -118,14 +119,17 @@ def resolve_inputs(project_root, task, input_ids, allow_rehearsal=False):
             row = next((x for x in rows if str(x.get("product_key")) == product_key), None)
             if row is None:
                 raise ValueError(f"unresolved input id: {ident}")
-            from sourcing import queue_product_input_id, score_candidate, AUDIT_OWNERS
-            if queue_product_input_id(row) != ident:
+            requests_path = state / "browser-queue/requests.json"
+            requests = _json(requests_path) if requests_path.exists() else []
+            request = next((x for x in requests if x.get("id") == row.get("request_id")), None)
+            from sourcing import canonical_queue_product, queue_product_input_id, score_candidate, AUDIT_OWNERS
+            if queue_product_input_id(row, request) != ident:
                 raise ValueError(f"audited queue packet digest mismatch: {ident}")
             if (row.get("status") != "done" or row.get("audit_status") != "approved"
                     or row.get("audited_by") not in AUDIT_OWNERS
                     or not score_candidate(row)["eligible"]):
                 raise ValueError(f"audited queue product no longer passes gates: {ident}")
-            found.append(row)
+            found.append(canonical_queue_product(row, request))
         elif kind == "product":
             if allow_rehearsal and value in REHEARSAL_PRODUCTS:
                 found.append(dict(REHEARSAL_PRODUCTS[value]))

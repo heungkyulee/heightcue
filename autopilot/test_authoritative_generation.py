@@ -202,7 +202,7 @@ class AuthoritativeBoundaryTest(unittest.TestCase):
     def test_all_task_result_schemas_and_task_specific_prompt_digests(self):
         state = self.root/"autopilot/state"
         (state/"browser-queue").mkdir()
-        (state/"browser-queue/results.json").write_text(json.dumps([{"product_key":"p1","name":"P","friction_id":"f1","source_pointers":["source:f1"],"mechanism":"front_open","failure_mode":"weak_latch","skip_if":"shallow shelf","link":"https://example.test/p1"}]))
+        (state/"browser-queue/results.json").write_text(json.dumps([{"product_key":"p1","name":"P","friction_id":"f1","source_pointers":["source:f1"],"mechanism":"front_open","failure_mode":"weak_latch","skip_if":"shallow shelf","price_band":"KR_PRICE_UNAVAILABLE","link":"https://example.test/p1"}]))
         (state/"comments_log.jsonl").write_text(json.dumps({"comment_id":"c1","text":"hi"})+"\n")
         (state/"published.jsonl").write_text(json.dumps({"media_id":"m1","text":"post"})+"\n")
         cases = {
