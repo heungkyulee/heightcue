@@ -333,7 +333,7 @@ def test_rehearsal_does_not_claim_or_read_legacy_us_rotation():
         path = Path(tmp, "us_products.json")
         original = [{"product_key": "x", "product_name": "Example", "site_url": "https://example.com", "last_used_ts": 0}]
         path.write_text(json.dumps(original))
-        cfg = {"mode": {"_rehearsal": True}, "paths": {"state_dir": tmp}}
+        cfg = {"mode": {"_rehearsal": True, "publish": False}, "paths": {"state_dir": tmp}}
         assert sourcing.pick_us(cfg)["product_key"] == "us-front-open-storage"
         assert json.loads(path.read_text()) == original
 
@@ -412,7 +412,8 @@ def test_attribution_completeness_and_subid_mapping():
         }
         complete_row.update({"friction_id": "fr-1", "stage": "verdict",
                              "mechanism": "front_open", "price_band": "20k",
-                             "affiliate_destination": "coupang"})
+                             "affiliate_destination": "coupang", "market": "KR",
+                             "source_pointers": ["review:r1"]})
         incomplete_row = {
             "media_id": "REAL-102", "country": "KR", "post_type": "sales",
             "hook_family": "F2", "angle_id": None, "product_id": "p1",

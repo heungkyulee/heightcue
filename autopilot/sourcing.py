@@ -484,6 +484,18 @@ def top_up_requests(cfg, buffer_target=3):
     return added
 
 
+def _rehearsal_fixture_allowed(cfg):
+    mode = cfg.get("mode") or {}
+    return mode.get("_rehearsal") is True and mode.get("publish") is False
+
+
+def queue_product_input_id(product):
+    """Immutable identity for the exact audited queue packet consumed by selection."""
+    packet = {key: value for key, value in product.items() if not str(key).startswith("_")}
+    raw = json.dumps(packet, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return f"queue_product:{packet['product_key']}:{hashlib.sha256(raw).hexdigest()}"
+
+
 def pick_us(cfg, dry_run=False, min_interval_days=7):
     """US 판매글 소재 선택 — Company OS Supabase 실행 SSOT.
 
@@ -491,9 +503,12 @@ def pick_us(cfg, dry_run=False, min_interval_days=7):
     로컬 JSON으로 폴백하지 않는다. 오래된 상품을 발행하는 것보다 슬롯을
     fail-closed 하는 것이 승인·근거 계약에 안전하다.
     """
-    if dry_run or (cfg.get("mode") or {}).get("_rehearsal"):
+    if _rehearsal_fixture_allowed(cfg):
         from generation_ssot import REHEARSAL_PRODUCTS
         return dict(REHEARSAL_PRODUCTS["us-front-open-storage"])
+    if dry_run or (cfg.get("mode") or {}).get("_rehearsal"):
+        log("US 소싱(dry): 리허설 경계 밖에서는 상품 픽스처를 사용하지 않음")
+        return None
     import companyos
     product = companyos.claim_us_product(cfg)
     if product:
@@ -527,6 +542,7 @@ def _pick_from_queue(cfg):
                 write_json(req_p, reqs)
                 _mark_sourced(cfg, r)
             r.setdefault("country", "KR")
+            r["_generation_input_id"] = queue_product_input_id(r)
             log(f"소싱(브라우저 큐): {r.get('product_name', '')[:40]}")
             return r
     return None
@@ -534,14 +550,12 @@ def _pick_from_queue(cfg):
 
 def pick(cfg, dry_run=False):
     """오늘의 판매글 상품 1개를 고른다. 반환: product dict 또는 None."""
-    if dry_run or (cfg.get("mode") or {}).get("_rehearsal"):
+    if _rehearsal_fixture_allowed(cfg):
         from generation_ssot import REHEARSAL_PRODUCTS
         return dict(REHEARSAL_PRODUCTS["kr-front-open-storage"])
-    if dry_run:
-        from generation_ssot import REHEARSAL_PRODUCTS
-        product = dict(REHEARSAL_PRODUCTS["kr-front-open-storage"])
-        log(f"소싱(dry): {product['product_name']}")
-        return product
+    if dry_run or (cfg.get("mode") or {}).get("_rehearsal"):
+        log("KR 소싱(dry): 리허설 경계 밖에서는 상품 픽스처를 사용하지 않음")
+        return None
 
     # 1순위: 브라우저 큐(Aside)가 채운 결과
     queued = _pick_from_queue(cfg)

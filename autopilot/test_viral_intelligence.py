@@ -618,7 +618,8 @@ def test_metrics_contract_reports_missing_attribution_fields():
         "formfactor_id": "ff1", "ux_grade": "novel", "country": "KR",
         "post_type": "sales", "writer_variant": "d2",
         "friction_id": "fr-1", "stage": "verdict", "mechanism": "front_open",
-        "price_band": "20k", "affiliate_destination": "coupang",
+        "price_band": "20k", "affiliate_destination": "coupang", "market": "KR",
+        "source_pointers": ["review:r1"],
     }
     assert analytics.attribution_gaps(complete) == []
 

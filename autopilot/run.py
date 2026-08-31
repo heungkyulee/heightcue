@@ -85,7 +85,8 @@ def _gate_and_publish(cfg, text, country, post_type, product=None, link=None, dr
             return None, "candidate_fail"
         meta_extra = {**(meta_extra or {}), **{key: validated.get(key) for key in (
             "friction_id", "stage", "market", "source_pointers", "mechanism",
-            "failure_mode", "skip_if", "attributable_route", "disclosure", "rehearsal_fixture")
+            "failure_mode", "skip_if", "price_band", "affiliate_destination",
+            "attributable_route", "disclosure", "rehearsal_fixture")
             if validated.get(key) is not None}}
     check = post_check.check_post({
         "country": country, "post_type": post_type, "text": text,
@@ -223,7 +224,8 @@ def make_and_publish_value(cfg, dry_run=False, country="KR", stage="discovery"):
         suffix = "" if country == "KR" else "-us"
         signal = {"friction_id": f"fr-rehearsal-storage{suffix}", "market": country,
                   "source_pointer": f"rehearsal:approved-friction{suffix}",
-                  "verbatim": "stacked bins must be emptied to reach the lower toys"}
+                  "verbatim": "stacked bins must be emptied to reach the lower toys",
+                  "mechanisms": ["front_open"]}
     if not signal:
         log("검증된 friction ledger 입력 없음 — 비상업 글 생성 건너뜀")
         return None, "no_validated_friction"
@@ -231,6 +233,8 @@ def make_and_publish_value(cfg, dry_run=False, country="KR", stage="discovery"):
 
     candidate_meta = {"friction_id": signal["friction_id"], "stage": stage,
                       "market": country, "source_pointers": [signal["source_pointer"]]}
+    if stage == "bridge":
+        candidate_meta["mechanism"] = signal.get("mechanism") or (signal.get("mechanisms") or [None])[0]
     meta_extra = dict(candidate_meta)
 
     # Thread publication remains supported, but ordinary friction stages use a single mobile screen.
@@ -272,6 +276,9 @@ def make_and_publish_value(cfg, dry_run=False, country="KR", stage="discovery"):
             cfg, kind, topic=topic, recent=recent, dry_run=dry_run, country=country,
             input_ids=input_ids, stage=stage)
         generate.validate_friction_candidate(result)
+        stage_fields = ("friction_id", "stage", "market", "source_pointers", "mechanism")
+        candidate_meta.update({key: result.get(key) for key in stage_fields if result.get(key) is not None})
+        meta_extra.update({key: result.get(key) for key in stage_fields if result.get(key) is not None})
         # 토너먼트 산출물을 발행 meta에 실어야 나중에 "어떤 앵글·점수가 실제로
         # 조회수를 냈는지" 귀속할 수 있다. 안 실으면 토너먼트를 돌린 의미가 없다.
         meta_extra.update({k: result.get(k) for k in
@@ -322,6 +329,8 @@ def _kr_sales(cfg, hint, dry_run):
         "product_id": product.get("product_key"),
         "formfactor_id": product.get("formfactor_id"),
         "ux_grade": product.get("ux_grade"), "sub_id": product.get("sub_id"),
+        "price_band": product.get("price_band"),
+        "affiliate_destination": link, "attributable_route": link,
     }
     verdict_candidate = {}
 
@@ -369,6 +378,9 @@ def _us_sales(cfg, hint, dry_run):
             "sub_id": product.get("sub_id"),
             "workflow_id": (product.get("_workflow") or {}).get("workflow_id"),
             "evidence_revision": (product.get("_workflow") or {}).get("evidence_revision"),
+            "price_band": product.get("price_band"),
+            "affiliate_destination": product.get("link"),
+            "attributable_route": product.get("link"),
         }
         verdict_candidate = {}
 

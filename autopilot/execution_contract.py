@@ -28,9 +28,9 @@ _CODE_OWNED = {
     "publisher": "publish.publish_text",
 }
 _TASK_INPUT_SCHEMAS = {
-    "sales_master": ("product:",),
-    "sales_hooks": ("product:",),
-    "sales_post": ("product:",),
+    "sales_master": (("product:", "queue_product:"),),
+    "sales_hooks": (("product:", "queue_product:"),),
+    "sales_post": (("product:", "queue_product:"),),
     "value_post": ("friction:",),
     "value_thread": ("friction:",),
     "comment_reply": ("comment:", "post:"),

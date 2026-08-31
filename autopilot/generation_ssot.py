@@ -20,6 +20,7 @@ REHEARSAL_PRODUCTS = {
         "wrong_purchase_reversible": True, "mechanism": "front_open",
         "failure_mode": "weak_latch", "skip_if": "선반 깊이가 얕은 집",
         "is_food": False, "approved_claims": [], "price_info": "20,000원",
+        "price_band": "KR_10_30K",
         "review_quotes": ["잠금이 약한 제품은 문이 벌어져요"],
         "spec_facts": ["앞으로 여는 구조", "적층 상태에서 내부 접근"],
         "link": "https://heightcue.lifoli.co.kr/kr/", "sub_id": "hc-fr-rehearsal-storage",
@@ -37,6 +38,7 @@ REHEARSAL_PRODUCTS = {
         "wrong_purchase_reversible": True, "mechanism": "front_open",
         "failure_mode": "weak_latch", "skip_if": "your shelf is too shallow",
         "is_food": False, "approved_claims": [], "price_info": "$24",
+        "price_band": "US_15_30",
         "review_quotes": ["Weak latches let the door bow open"],
         "spec_facts": ["front-opening access", "access while bins remain stacked"],
         "link": "https://heightcue.lifoli.co.kr/us/", "sub_id": "hc-fr-rehearsal-storage-us",
@@ -106,6 +108,23 @@ def resolve_inputs(project_root, task, input_ids, allow_rehearsal=False):
             row = next((x for x in rows if str(x.get("atom_id")) == value), None)
             if row is None:
                 raise ValueError(f"unresolved input id: {ident}")
+            found.append(row)
+        elif kind == "queue_product":
+            product_key, digest_sep, expected_digest = value.rpartition(":")
+            if not digest_sep or not product_key or not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
+                raise ValueError(f"invalid audited queue product id: {ident}")
+            local = state / "browser-queue/results.json"
+            rows = _json(local) if local.exists() else []
+            row = next((x for x in rows if str(x.get("product_key")) == product_key), None)
+            if row is None:
+                raise ValueError(f"unresolved input id: {ident}")
+            from sourcing import queue_product_input_id, score_candidate, AUDIT_OWNERS
+            if queue_product_input_id(row) != ident:
+                raise ValueError(f"audited queue packet digest mismatch: {ident}")
+            if (row.get("status") != "done" or row.get("audit_status") != "approved"
+                    or row.get("audited_by") not in AUDIT_OWNERS
+                    or not score_candidate(row)["eligible"]):
+                raise ValueError(f"audited queue product no longer passes gates: {ident}")
             found.append(row)
         elif kind == "product":
             if allow_rehearsal and value in REHEARSAL_PRODUCTS:

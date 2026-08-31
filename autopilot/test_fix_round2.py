@@ -70,7 +70,7 @@ def test_rehearsal_returns_nonzero_when_daily_records_any_stage_error(tmp_path):
 
 def test_rehearsal_products_are_explicit_complete_fixtures_and_production_has_no_fallback():
     for market, key in (("KR", "kr-front-open-storage"), ("US", "us-front-open-storage")):
-        cfg = {"mode": {"_rehearsal": True}}
+        cfg = {"mode": {"_rehearsal": True, "publish": False}}
         product = sourcing.pick(cfg) if market == "KR" else sourcing.pick_us(cfg)
         assert product["product_key"] == key
         assert product["rehearsal_fixture"] is True

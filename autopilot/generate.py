@@ -123,6 +123,10 @@ def _authoritative_mode(cfg):
     )
 
 
+def _product_input_id(product):
+    return product.get("_generation_input_id") or f"product:{product.get('product_key')}"
+
+
 # ── 판매글 체인: A2 → A3-KR ─────────────────────────────────────────────────
 
 def make_master(cfg, product, playbook_hint="", dry_run=False):
@@ -142,11 +146,11 @@ def make_master(cfg, product, playbook_hint="", dry_run=False):
     if _authoritative_mode(cfg):
         return execution_contract.request_authoritative_generation(
             "sales_master", product.get("country", "KR"),
-            [f"product:{product.get('product_key')}"],
+            [_product_input_id(product)],
             rehearsal=bool((cfg.get("mode") or {}).get("_rehearsal")))
     contract, provenance = _contract(
         cfg, "sales_master", product.get("country", "KR"),
-        input_ids=[f"product:{product.get('product_key')}"])
+        input_ids=[_product_input_id(product)])
     payload = {**dict(product), "execution_contract": contract}
     if playbook_hint:
         payload["playbook_hint"] = playbook_hint
@@ -162,7 +166,7 @@ def generate_hooks(cfg, master, product, playbook_hint="", attempts=3):
     if _authoritative_mode(cfg):
         result = execution_contract.request_authoritative_generation(
             "sales_hooks", product.get("country", "KR"),
-            [f"product:{product.get('product_key')}"],
+            [_product_input_id(product)],
             rehearsal=bool((cfg.get("mode") or {}).get("_rehearsal")))
         return result.get("hooks", result)
     import post_check
@@ -172,7 +176,7 @@ def generate_hooks(cfg, master, product, playbook_hint="", attempts=3):
     seen_texts = set()
     country = str(product.get("country", "KR")).upper()
     contract, _ = _contract(cfg, "sales_hooks", country,
-                            input_ids=[f"product:{product.get('product_key')}"])
+                            input_ids=[_product_input_id(product)])
     for _ in range(attempts):
         response = _gemini(cfg, """You are HeightCue's Gemini hook generator.
 Return JSON with exactly six unique hooks. Each hook needs id h1-h6, text, hook_family F1-F4, angle_id, and rationale.
@@ -242,11 +246,11 @@ def make_sales_post(cfg, master, product, playbook_hint="", dry_run=False):
     country = product.get("country", "KR")
     if _authoritative_mode(cfg):
         return execution_contract.request_authoritative_generation(
-            "sales_post", country, [f"product:{product.get('product_key')}"],
+            "sales_post", country, [_product_input_id(product)],
             rehearsal=bool((cfg.get("mode") or {}).get("_rehearsal")))
     contract, provenance = _contract(
         cfg, "sales_post", country,
-        input_ids=[f"product:{product.get('product_key')}"])
+        input_ids=[_product_input_id(product)])
     skill = "A3-KR" if country == "KR" else "A3-US"
     system = load_skill(cfg, skill, country=country) + "\n\n" + viral_intelligence.DRAFT_GATE
     import post_check

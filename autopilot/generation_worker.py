@@ -113,12 +113,15 @@ def bind_friction_contract(task, country, resolved, result, stage=None):
         pointers = source.get("source_pointers") or [source.get("source_pointer")]
         row.update({"friction_id": source.get("friction_id"), "stage": active_stage,
                     "market": country, "source_pointers": [x for x in pointers if x]})
+        if active_stage == "bridge":
+            row["mechanism"] = source.get("mechanism") or (source.get("mechanisms") or [None])[0]
     elif task == "sales_post":
         disclosure = "#ad" if country == "US" else "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."
         row.update({"friction_id": source.get("friction_id"), "stage": "verdict",
                     "market": country, "source_pointers": source.get("source_pointers") or [],
                     "mechanism": source.get("mechanism"), "failure_mode": source.get("failure_mode"),
-                    "skip_if": source.get("skip_if"), "attributable_route": source.get("link"),
+                    "skip_if": source.get("skip_if"), "price_band": source.get("price_band"),
+                    "affiliate_destination": source.get("link"), "attributable_route": source.get("link"),
                     "disclosure": disclosure})
     if task in {"value_post", "value_thread", "sales_post"}:
         required = ("friction_id", "stage", "market", "source_pointers")
@@ -207,9 +210,7 @@ def run(capability):
                                    'Set disqualified=true for ANY invented number, price, ingredient, product fact, '
                                    'family history, purchase/use experience, medical fact, comparison, prevalence '
                                    'claim (including phrases such as half the time, often, or many), or first-person '
-                                   'memory not explicitly present in source_of_truth. The fixed operator persona '
-                                   '(26-year-old man who stopped at 167cm / 5\'6) is trusted context, but no other '
-                                   'personal memory is. Also disqualify fake DM claims, teacher-style wrap-ups, '
+                                   'memory not explicitly present in source_of_truth. Also disqualify fake DM claims, teacher-style wrap-ups, '
                                    'AI essay cadence, moral conclusions, and content that advances no link in '
                                    'reach -> follow/trust -> commercial click -> purchase. A polished fabrication '
                                    'must lose to a plain grounded draft. Among non-disqualified drafts, score scroll '

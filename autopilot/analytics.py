@@ -18,9 +18,12 @@ REQUIRED_ATTRIBUTION_FIELDS = (
     "hook_family", "angle_id", "product_id", "formfactor_id",
     "ux_grade", "country", "post_type", "writer_variant",
 )
-FRICTION_ATTRIBUTION_FIELDS = (
-    "friction_id", "stage", "mechanism", "price_band", "affiliate_destination",
-)
+STAGE_ATTRIBUTION_FIELDS = {
+    "discovery": ("friction_id", "stage", "market", "source_pointers"),
+    "bridge": ("friction_id", "stage", "market", "source_pointers", "mechanism"),
+    "verdict": ("friction_id", "stage", "market", "source_pointers", "mechanism",
+                "price_band", "affiliate_destination"),
+}
 
 FRICTION_DIMENSIONS = ("friction_id", "stage", "mechanism", "product_id", "price_band",
                        "hook_family", "affiliate_destination")
@@ -73,8 +76,12 @@ def is_video_row(row):
 
 
 def attribution_gaps(row):
-    fields = (REQUIRED_VIDEO_ATTRIBUTION_FIELDS if is_video_row(row)
-              else REQUIRED_ATTRIBUTION_FIELDS + FRICTION_ATTRIBUTION_FIELDS)
+    if is_video_row(row):
+        fields = REQUIRED_VIDEO_ATTRIBUTION_FIELDS
+    elif row.get("stage") in STAGE_ATTRIBUTION_FIELDS:
+        fields = STAGE_ATTRIBUTION_FIELDS[row["stage"]]
+    else:
+        fields = REQUIRED_ATTRIBUTION_FIELDS
     return [field for field in fields if not row.get(field)]
 
 
@@ -135,9 +142,12 @@ def collect(cfg, dry_run=False):
             "post_type": meta.get("post_type"),
             "friction_id": meta.get("friction_id"),
             "stage": meta.get("stage"),
+            "market": meta.get("market") or p.get("country"),
+            "source_pointers": meta.get("source_pointers"),
             "mechanism": meta.get("mechanism"),
             "price_band": meta.get("price_band"),
-            "affiliate_destination": meta.get("affiliate_destination") or meta.get("link_mode"),
+            "affiliate_destination": (meta.get("affiliate_destination")
+                                      or meta.get("attributable_route") or meta.get("link_mode")),
             "hook_pattern": meta.get("hook_pattern"),
             "hook_family": meta.get("hook_family") or meta.get("hook_pattern"),
             "angle_id": meta.get("angle_id"),

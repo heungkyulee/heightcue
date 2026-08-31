@@ -6,8 +6,9 @@ ROOT = Path(__file__).resolve().parents[1]
 ACTIVE = [
     "context/persona.md", "context/voice-kr.md", "context/voice-us.md",
     "heightcue-gemini-skills.md", "autopilot/viral_intelligence.py",
+    "autopilot/generation_worker.py",
 ]
-BANNED = ("167cm", "5'6", "short uncle", "raw_memory", "story-bank.md")
+BANNED = ("167cm", "5'6", "26-year-old", "short uncle", "raw_memory", "story-bank.md")
 
 
 def test_active_generation_contract_has_no_retired_identity_tokens():

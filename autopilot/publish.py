@@ -291,6 +291,12 @@ def publish_text(cfg, country, text, link=None, reply_to=None, dry_run=False, me
                      {"why": "language_fail", "stage": "publish_boundary", **record})
         log("발행 차단(KR): 한국어 없음 — 보류함 기록")
         return None
+    fixture_marked = bool(record["meta"].get("rehearsal_fixture"))
+    if fixture_marked and (dry_run or not (
+            bool((cfg.get("mode") or {}).get("_rehearsal"))
+            and (cfg.get("mode") or {}).get("publish") is False)):
+        log(f"발행 차단({country}): 리허설 픽스처 경계 불충족")
+        return None
     if dry_run:
         record["meta"]["publish_status"] = "dry_run"
         record["meta"]["publisher"] = "publish.publish_text"

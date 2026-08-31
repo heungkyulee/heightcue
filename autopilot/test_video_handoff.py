@@ -657,10 +657,11 @@ class AnalyticsCompatTest(unittest.TestCase):
                "formfactor_id": "d", "ux_grade": "proven", "country": "KR",
                "post_type": "sales", "writer_variant": "v1", "friction_id": "fr-1",
                "stage": "verdict", "mechanism": "front_open", "price_band": "20k",
-               "affiliate_destination": "coupang"}
+               "affiliate_destination": "coupang", "market": "KR",
+               "source_pointers": ["review:r1"]}
         self.assertEqual(analytics.attribution_gaps(row), [])
         self.assertEqual(analytics.attribution_gaps({}),
-                         list(analytics.REQUIRED_ATTRIBUTION_FIELDS + analytics.FRICTION_ATTRIBUTION_FIELDS))
+                         list(analytics.REQUIRED_ATTRIBUTION_FIELDS))
 
     def test_video_row_uses_video_attribution_fields(self):
         row = {"post_type": analytics.VIDEO_POST_TYPE, "country": "KR",
