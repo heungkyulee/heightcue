@@ -23,6 +23,24 @@ REHEARSAL_PRODUCTS = {
         "review_quotes": ["잠금이 약한 제품은 문이 벌어져요"],
         "spec_facts": ["앞으로 여는 구조", "적층 상태에서 내부 접근"],
         "link": "https://heightcue.lifoli.co.kr/kr/", "sub_id": "hc-fr-rehearsal-storage",
+        "rehearsal_fixture": True,
+    },
+    "us-front-open-storage": {
+        "product_key": "us-front-open-storage", "approved_product_id": "us-front-open-storage",
+        "country": "US", "category": "storage", "product_name": "Front-opening toy storage bin",
+        "friction_id": "fr-rehearsal-storage-us",
+        "source_pointers": ["rehearsal:approved-friction-us", "review:weak-latch-us"],
+        "scores": {"friction_frequency": 4, "friction_intensity": 4, "mechanism_clarity": 5,
+                   "mobile_demo_clarity": 5, "consideration_cost": 1, "price_resistance": 1,
+                   "review_evidence_strength": 4, "failure_mode_severity": 2, "compliance_cost": 1,
+                   "expected_commission_value": 3, "attribution_readiness": 5},
+        "wrong_purchase_reversible": True, "mechanism": "front_open",
+        "failure_mode": "weak_latch", "skip_if": "your shelf is too shallow",
+        "is_food": False, "approved_claims": [], "price_info": "$24",
+        "review_quotes": ["Weak latches let the door bow open"],
+        "spec_facts": ["front-opening access", "access while bins remain stacked"],
+        "link": "https://heightcue.lifoli.co.kr/us/", "sub_id": "hc-fr-rehearsal-storage-us",
+        "rehearsal_fixture": True,
     },
     "us-ddrops-kids-600iu": {
         "product_key": "us-ddrops-kids-600iu", "country": "US", "category": "nutrition",
@@ -31,6 +49,11 @@ REHEARSAL_PRODUCTS = {
         "price_info": "", "review_count": None, "review_rating": None, "review_quotes": [],
         "spec_facts": ["600 IU vitamin D3 per labeled drop", "fractionated coconut oil"],
         "link": "https://heightcue.lifoli.co.kr/us/vitamin-d-drops.html", "sub_id": "us-guide",
+        "friction_id": "fr-rehearsal-nutrition-us",
+        "source_pointers": ["rehearsal:approved-nutrition-us", "label:ddrops-600iu"],
+        "mechanism": "single_labeled_drop", "failure_mode": "label_mismatch",
+        "skip_if": "the exact label or fractionated coconut oil does not fit",
+        "rehearsal_fixture": True,
     }
 }
 

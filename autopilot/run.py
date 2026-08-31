@@ -85,7 +85,7 @@ def _gate_and_publish(cfg, text, country, post_type, product=None, link=None, dr
             return None, "candidate_fail"
         meta_extra = {**(meta_extra or {}), **{key: validated.get(key) for key in (
             "friction_id", "stage", "market", "source_pointers", "mechanism",
-            "failure_mode", "skip_if", "attributable_route", "disclosure")
+            "failure_mode", "skip_if", "attributable_route", "disclosure", "rehearsal_fixture")
             if validated.get(key) is not None}}
     check = post_check.check_post({
         "country": country, "post_type": post_type, "text": text,
@@ -114,6 +114,8 @@ def _gate_and_publish(cfg, text, country, post_type, product=None, link=None, dr
     media = publish.publish_text(cfg, country, text, link=link, dry_run=dry_run,
                                  meta={"post_type": post_type, "hook_pattern": _guess_pattern(hook),
                                        "format_score": check["format_score"], **(meta_extra or {})})
+    if not media and (cfg.get("mode") or {}).get("_rehearsal"):
+        record_error(cfg, f"publish_{country}_{post_type}", RuntimeError("preview publication gate failed"))
     return (media, "published") if media else (None, "publish_failed")
 
 
@@ -209,7 +211,7 @@ def _publish_thread(cfg, parts, country, dry_run=False, meta_extra=None, candida
     return root, "published"
 
 
-def make_and_publish_value(cfg, dry_run=False, country="KR"):
+def make_and_publish_value(cfg, dry_run=False, country="KR", stage="discovery"):
     recent = [p.get("text", "").splitlines()[0]
               for p in read_jsonl(state_path(cfg, "published.jsonl"))
               if is_real_publication(p)][-10:]
@@ -218,14 +220,15 @@ def make_and_publish_value(cfg, dry_run=False, country="KR"):
     import friction
     signal = friction.pick_signal(state_path(cfg, "friction_signals.jsonl"), country)
     if not signal and cfg["mode"].get("_rehearsal"):
-        signal = {"friction_id": "fr-rehearsal-storage", "market": country,
-                  "source_pointer": "rehearsal:approved-friction",
+        suffix = "" if country == "KR" else "-us"
+        signal = {"friction_id": f"fr-rehearsal-storage{suffix}", "market": country,
+                  "source_pointer": f"rehearsal:approved-friction{suffix}",
                   "verbatim": "stacked bins must be emptied to reach the lower toys"}
     if not signal:
         log("검증된 friction ledger 입력 없음 — 비상업 글 생성 건너뜀")
         return None, "no_validated_friction"
     topic = signal["verbatim"]
-    stage = "discovery"
+
     candidate_meta = {"friction_id": signal["friction_id"], "stage": stage,
                       "market": country, "source_pointers": [signal["source_pointer"]]}
     meta_extra = dict(candidate_meta)
@@ -275,6 +278,8 @@ def make_and_publish_value(cfg, dry_run=False, country="KR"):
                            ("angle_used", "writer_variant", "viral_score",
                             "critic_model", "tournament_fallback")
                            if result.get(k) is not None})
+        if result.get("rehearsal_fixture"):
+            meta_extra["rehearsal_fixture"] = True
         provenance = result.get("_provenance")
         if isinstance(provenance, dict):
             meta_extra.update(execution_contract.merge_provenance({}, provenance))
@@ -318,12 +323,14 @@ def _kr_sales(cfg, hint, dry_run):
         "formfactor_id": product.get("formfactor_id"),
         "ux_grade": product.get("ux_grade"), "sub_id": product.get("sub_id"),
     }
+    verdict_candidate = {}
 
     def build():
         result = generate.make_sales_post(cfg, master, product, playbook_hint=hint, dry_run=dry_run)
+        verdict_candidate.update(result)
         publication_meta.update({key: result.get(key) for key in
                                  ("hook_family", "angle_id", "writer_variant",
-                                  "viral_score", "critic_model")
+                                  "viral_score", "critic_model", "rehearsal_fixture")
                                  if result.get(key) is not None})
         provenance = result.get("_provenance")
         if isinstance(provenance, dict):
@@ -334,7 +341,7 @@ def _kr_sales(cfg, hint, dry_run):
 
     _publish_with_retry(cfg, build, product.get("country", "KR"), "sales",
                         product=product, link=link, dry_run=dry_run,
-                        meta_extra=publication_meta)
+                        meta_extra=publication_meta, candidate=verdict_candidate)
 
 
 def _us_sales(cfg, hint, dry_run):
@@ -363,13 +370,15 @@ def _us_sales(cfg, hint, dry_run):
             "workflow_id": (product.get("_workflow") or {}).get("workflow_id"),
             "evidence_revision": (product.get("_workflow") or {}).get("evidence_revision"),
         }
+        verdict_candidate = {}
 
         def build():
             result = generate.make_sales_post(cfg, master, product, playbook_hint=hint, dry_run=dry_run)
+            verdict_candidate.update(result)
             built["text"] = result["text"]
             publication_meta.update({key: result.get(key) for key in
                                      ("hook_family", "angle_id", "writer_variant",
-                                      "viral_score", "critic_model")
+                                      "viral_score", "critic_model", "rehearsal_fixture")
                                      if result.get(key) is not None})
             provenance = result.get("_provenance")
             if isinstance(provenance, dict):
@@ -380,7 +389,7 @@ def _us_sales(cfg, hint, dry_run):
 
         publish_result = _publish_with_retry(cfg, build, "US", "sales",
                                              product=product, link=product.get("link"), dry_run=dry_run,
-                                             meta_extra=publication_meta)
+                                             meta_extra=publication_meta, candidate=verdict_candidate)
         if isinstance(publish_result, tuple) and len(publish_result) == 2:
             media, reason = publish_result
         else:
@@ -456,7 +465,8 @@ def daily(cfg, dry_run=False):
         record_error(cfg, "kr_sales", e)
     # KR 가치 1 (두 번째는 post 명령이 저녁 슬롯에서)
     try:
-        make_and_publish_value(cfg, dry_run=dry_run)
+        make_and_publish_value(cfg, dry_run=dry_run, stage="discovery")
+        make_and_publish_value(cfg, dry_run=dry_run, stage="bridge")
     except Exception as e:
         record_error(cfg, "kr_value", e)
 
@@ -469,7 +479,8 @@ def daily(cfg, dry_run=False):
             record_error(cfg, "us_sales", e)
     if cfg["mode"].get("us_value_posts", True) and us_ready:
         try:
-            make_and_publish_value(cfg, dry_run=dry_run, country="US")
+            make_and_publish_value(cfg, dry_run=dry_run, country="US", stage="discovery")
+            make_and_publish_value(cfg, dry_run=dry_run, country="US", stage="bridge")
         except Exception as e:
             record_error(cfg, "us_value", e)
 
@@ -525,6 +536,7 @@ def rehearsal(cfg):
     if subprocess.call([sys.executable, "validate.py"]):
         log("자격 검증 실패 — 생성하지 않고 중단합니다.")
         return 1
+    before_errors = len(read_jsonl(state_path(cfg, "errors.jsonl")))
     cfg["mode"]["_rehearsal"] = True
     try:
         daily(cfg, dry_run=False)
@@ -534,6 +546,10 @@ def rehearsal(cfg):
     for rec in read_jsonl(state_path(cfg, "preview.jsonl"))[-5:]:
         print(f"\n[{rec.get('country')}] {'링크: ' + str(rec.get('link')) if rec.get('link') else '(링크 없음)'}")
         print(rec.get("text", ""))
+    new_errors = read_jsonl(state_path(cfg, "errors.jsonl"))[before_errors:]
+    if new_errors:
+        log(f"리허설 실패: {len(new_errors)}개 단계 오류가 기록됨")
+        return 1
     print("\n→ 이 내용을 Claude에게 공유해 톤·품질 점검을 받은 뒤, 만족스러우면 `python3 run.py golive`")
     return 0
 

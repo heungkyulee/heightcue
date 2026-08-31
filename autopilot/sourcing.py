@@ -292,8 +292,12 @@ def audit_readiness_reasons(result):
 
     if not result.get("friction_id"):
         reasons.append("friction_id_missing")
-    if not result.get("source_pointers"):
+    pointers = result.get("source_pointers")
+    if not pointers:
         reasons.append("friction_source_pointers_missing")
+    elif (not isinstance(pointers, list)
+          or not all(isinstance(pointer, str) and pointer.strip() for pointer in pointers)):
+        reasons.append("friction_source_pointers_invalid")
 
     price = result.get("price_provenance") or {}
     if not isinstance(price, dict):
@@ -489,7 +493,7 @@ def pick_us(cfg, dry_run=False, min_interval_days=7):
     """
     if dry_run or (cfg.get("mode") or {}).get("_rehearsal"):
         from generation_ssot import REHEARSAL_PRODUCTS
-        return dict(REHEARSAL_PRODUCTS["us-ddrops-kids-600iu"])
+        return dict(REHEARSAL_PRODUCTS["us-front-open-storage"])
     import companyos
     product = companyos.claim_us_product(cfg)
     if product:
@@ -530,6 +534,9 @@ def _pick_from_queue(cfg):
 
 def pick(cfg, dry_run=False):
     """오늘의 판매글 상품 1개를 고른다. 반환: product dict 또는 None."""
+    if dry_run or (cfg.get("mode") or {}).get("_rehearsal"):
+        from generation_ssot import REHEARSAL_PRODUCTS
+        return dict(REHEARSAL_PRODUCTS["kr-front-open-storage"])
     if dry_run:
         from generation_ssot import REHEARSAL_PRODUCTS
         product = dict(REHEARSAL_PRODUCTS["kr-front-open-storage"])

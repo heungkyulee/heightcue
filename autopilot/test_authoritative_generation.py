@@ -26,7 +26,7 @@ class AuthoritativeBoundaryTest(unittest.TestCase):
         (self.root/"context/execution-contract.json").write_text(json.dumps(manifest))
         (self.root/"autopilot/config.json").write_text(json.dumps({"openrouter":{"model":"trusted-model", "critic_model":"trusted-critic"}}))
         (self.root/"autopilot/state/insight_atoms.json").write_text(json.dumps([{"atom_id":"a1","fact":"resolved fact"}]))
-        (self.root/"autopilot/state/friction_signals.jsonl").write_text(json.dumps({"friction_id":"f1","lifecycle":"validated","market":"KR"})+"\n")
+        (self.root/"autopilot/state/friction_signals.jsonl").write_text(json.dumps({"friction_id":"f1","lifecycle":"validated","market":"KR","source_pointer":"source:f1"})+"\n")
         self.keys=self.root/"keys"
 
     def call(self, ids=("friction:f1",), fixture=FIXTURE):
@@ -175,7 +175,7 @@ class AuthoritativeBoundaryTest(unittest.TestCase):
         self.assertEqual([x["phase"] for x in calls], ["writer", "critic"])
         self.assertEqual(calls[1]["model"], "trusted-critic")
         self.assertEqual(result["_attestation"]["payload"]["critic_model"], "trusted-critic")
-        self.assertEqual(set(calls[0]["payload"]), {"task", "country", "resolved_payload"})
+        self.assertEqual(set(calls[0]["payload"]), {"task", "country", "stage", "resolved_payload"})
 
     def test_critic_cannot_select_a_high_scoring_fabricated_candidate(self):
         candidates = [
@@ -202,7 +202,7 @@ class AuthoritativeBoundaryTest(unittest.TestCase):
     def test_all_task_result_schemas_and_task_specific_prompt_digests(self):
         state = self.root/"autopilot/state"
         (state/"browser-queue").mkdir()
-        (state/"browser-queue/results.json").write_text(json.dumps([{"product_key":"p1","name":"P"}]))
+        (state/"browser-queue/results.json").write_text(json.dumps([{"product_key":"p1","name":"P","friction_id":"f1","source_pointers":["source:f1"],"mechanism":"front_open","failure_mode":"weak_latch","skip_if":"shallow shelf","link":"https://example.test/p1"}]))
         (state/"comments_log.jsonl").write_text(json.dumps({"comment_id":"c1","text":"hi"})+"\n")
         (state/"published.jsonl").write_text(json.dumps({"media_id":"m1","text":"post"})+"\n")
         cases = {

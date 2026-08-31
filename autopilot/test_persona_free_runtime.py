@@ -61,6 +61,7 @@ def test_top_up_requests_does_not_create_category_or_discovery_request_without_f
 
 def test_every_product_selection_entry_point_fails_closed_without_score_and_friction(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path)
+    cfg["mode"].pop("_rehearsal", None)
     state = Path(cfg["paths"]["state_dir"])
     (state / "manual_products.json").write_text(json.dumps([{"product_key": "legacy", "product_name": "legacy"}]), encoding="utf-8")
     monkeypatch.setattr(sourcing, "search_products", lambda *_: [{"productId": "api", "productName": "api"}])

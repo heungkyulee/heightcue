@@ -126,7 +126,7 @@ def _authoritative_mode(cfg):
 # ── 판매글 체인: A2 → A3-KR ─────────────────────────────────────────────────
 
 def make_master(cfg, product, playbook_hint="", dry_run=False):
-    if dry_run:
+    if dry_run or (cfg.get("mode") or {}).get("_rehearsal"):
         return {
             "hooks": [
                 "'하루 300개 미션'으로 소파에서 아이를 떼어냈다는 집들의 공통 아이템 🤸",
@@ -204,7 +204,7 @@ No medical framing, generic roundup, AI-report voice, fabricated review quote, o
 
 
 def make_sales_post(cfg, master, product, playbook_hint="", dry_run=False):
-    if dry_run:
+    if dry_run or (cfg.get("mode") or {}).get("_rehearsal"):
         if product.get("country") == "US":
             facts = product.get("spec_facts") or []
             label_line = facts[0] if facts else "Read the exact product label"
@@ -212,23 +212,23 @@ def make_sales_post(cfg, master, product, playbook_hint="", dry_run=False):
                 label_line += f"; the other listed ingredient is {facts[1]}"
             skip_line = ("Skip if: the exact label or fractionated coconut oil does not fit your household."
                          if len(facts) > 1 else "Skip if: the exact label does not fit your household.")
-            text = (
-                "2 label facts—not vitamin hype. #ad\n\n"
-                "I checked the exact label before the pitch.\n\n"
-                f"{label_line}.\n\n"
-                f"{skip_line}\n\n"
-                f"Full breakdown and where to buy: {product['link']}"
-            )
+            if product.get("category") == "storage":
+                text = ("#ad\nBins stay stacked while the front door opens.\n\n"
+                        "The mechanism removes the empty-and-restack step. Weak latches are the repeated failure mode.\n\n"
+                        f"Skip if: {product['skip_if']}.\n\n"
+                        f"Full breakdown and current listing: {product['link']} (paid link)")
+            else:
+                text = ("2 label facts—not vitamin hype. #ad\n\n"
+                        "I checked the exact label before the pitch.\n\n"
+                        f"{label_line}.\n\n{skip_line}\n\n"
+                        f"Full breakdown and where to buy: {product['link']}")
         else:
             text = (
-                f"{master['hooks'][0].replace(' 🤸', '')}\n"
+                "수납함 3개, 아래 통 하나 꺼내려고 전부 내리나요?\n"
                 "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n\n"
-                "리뷰와 스펙 원문부터 확인했습니다.\n\n"
-                f"{master['verified_points'][0]}. {master['verified_points'][1]}.\n\n"
-                f"{master['review_summary']}.\n\n"
-                "비추천: 이미 집에서 잘 쓰는 운동 도구가 있는 집. 또 살 이유 없습니다.\n"
-                f"{master['usage_caveat']}. 자세한 구성은 링크에서 확인하세요.\n"
-                f"{product['link']}"
+                "앞으로 여는 구조라 비우고 다시 쌓는 동작을 줄입니다. 잠금이 약해 문이 벌어지는 게 반복 실패 지점입니다.\n\n"
+                f"비추천: {product.get('skip_if') or '이미 같은 불편을 해결한 집'}.\n"
+                f"자세한 구조와 현재 판매 링크: {product['link']}"
             )
         disclosure = "#ad" if product.get("country") == "US" else "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."
         return {"text": text, "char_count": len(text), "self_check": {},
@@ -237,7 +237,8 @@ def make_sales_post(cfg, master, product, playbook_hint="", dry_run=False):
                 "source_pointers": product.get("source_pointers") or [],
                 "mechanism": product.get("mechanism"), "failure_mode": product.get("failure_mode"),
                 "skip_if": product.get("skip_if"), "attributable_route": product.get("link"),
-                "disclosure": disclosure}
+                "disclosure": disclosure,
+                "rehearsal_fixture": bool((cfg.get("mode") or {}).get("_rehearsal"))}
     country = product.get("country", "KR")
     if _authoritative_mode(cfg):
         return execution_contract.request_authoritative_generation(
@@ -358,7 +359,7 @@ def make_value_post(cfg, kind, episode=None, topic=None, recent=None, dry_run=Fa
     if stage not in {"discovery", "bridge"}:
         raise ValueError("non-commercial generator supports discovery or bridge only")
 
-    if dry_run:
+    if dry_run or (cfg.get("mode") or {}).get("_rehearsal"):
         selected_angle = angle_override if angle_override else random.choice(angles)
         if country == "US":
             text = ("Bedtime cleanup takes twelve minutes because every bin opens from the top."
@@ -371,12 +372,13 @@ def make_value_post(cfg, kind, episode=None, topic=None, recent=None, dry_run=Fa
         return {"text": text, "kind": "info", "angle_used": selected_angle,
                 "friction_id": friction_id, "stage": stage, "market": country,
                 "source_pointers": source_pointers,
+                "rehearsal_fixture": bool((cfg.get("mode") or {}).get("_rehearsal")),
                 "self_check": {"링크_제품_없음": True, "각색_없음": True, "480자_이내": True, "신파_없음": True}}
 
     if _authoritative_mode(cfg):
         return execution_contract.request_authoritative_generation(
             "value_post", country, list(input_ids or []),
-            rehearsal=bool((cfg.get("mode") or {}).get("_rehearsal")))
+            rehearsal=bool((cfg.get("mode") or {}).get("_rehearsal")), stage=stage)
     contract, provenance = _contract(cfg, "value_post", country, input_ids=input_ids)
     from common import recent_context
     ctx = recent_context(cfg, country)

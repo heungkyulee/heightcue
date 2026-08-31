@@ -297,11 +297,13 @@ def test_value_attribution_reaches_publication():
         "cadence": {},
     }
 
-    atom = {"atom_id": "a1", "topic": "수납", "distance": "D0", "confidence": "weak"}
+    signal = {"friction_id": "fr-1", "verbatim": "아래 통을 꺼낼 때 전부 내린다",
+              "source_pointer": "source:1", "market": "KR"}
+    winner.update({"friction_id": "fr-1", "stage": "discovery", "market": "KR",
+                   "source_pointers": ["source:1"]})
     with patch.object(run.generate, "make_value_post", return_value=winner), \
          patch.object(run, "read_jsonl", return_value=[]), \
-         patch.object(run.evidence, "pick_atom", return_value=atom), \
-         patch.object(run.evidence, "to_generation_topic", return_value="topic"), \
+         patch("friction.pick_signal", return_value=signal), \
          patch.object(run.publish, "publish_text", side_effect=fake_publish_text), \
          patch.object(run, "append_jsonl"), \
          patch.object(run.post_check, "check_post",
@@ -320,31 +322,18 @@ def test_value_attribution_reaches_publication():
 def test_value_thread_contract_reaches_every_publication_part():
     import run
 
-    atom = {"atom_id": "a1", "topic": "수면", "distance": "D0", "confidence": "strong"}
-    result = {
-        "parts": ["첫 편 한국어", "둘째 편 한국어"],
-        "_provenance": {"contract_id": "heightcue-content-v1", "model": "m"},
-    }
     captured = {}
-    cfg = {
-        "mode": {"value_thread_ratio": 1.0},
-        "paths": {"state_dir": "/tmp"},
-    }
-
-    def fake_thread(cfg, parts, country, dry_run=False, meta_extra=None):
-        captured.update(meta_extra or {})
-        return "MID", "published"
-
-    with patch.object(run, "read_jsonl", return_value=[]), \
-         patch.object(run.evidence, "pick_atom", return_value=atom), \
-         patch.object(run.evidence, "to_generation_topic", return_value="topic"), \
-         patch.object(run.generate, "make_value_thread", return_value=result), \
-         patch.object(run, "_publish_thread", side_effect=fake_thread), \
-         patch.object(run.random, "random", return_value=0.0), \
-         patch.object(run.evidence, "mark_used"):
-        run.make_and_publish_value(cfg, dry_run=True, country="KR")
-
-    assert captured["execution_contract"]["contract_id"] == "heightcue-content-v1", captured
+    cfg = {"mode": {"auto_publish_clean": True}, "paths": {"state_dir": "/tmp"}}
+    candidate = {"friction_id": "fr-1", "stage": "discovery", "market": "KR",
+                 "source_pointers": ["source:1"]}
+    def fake_publish(*args, **kwargs):
+        captured.setdefault("rows", []).append(kwargs["meta"])
+        return "MID"
+    with patch.object(run.post_check, "check_post", return_value={"verdict": "PASS", "risk_notes": []}), \
+         patch.object(run.publish, "publish_text", side_effect=fake_publish):
+        assert run._publish_thread(cfg, ["첫 편 한국어", "둘째 편 한국어"], "KR",
+                                   candidate=candidate)[1] == "published"
+    assert all(row["friction_id"] == "fr-1" for row in captured["rows"])
 
 
 if __name__ == "__main__":

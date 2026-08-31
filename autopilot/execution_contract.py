@@ -336,7 +336,7 @@ def _validate_fixture_boundary(project_root, key_dir, fixture):
     if not os.path.isfile(executable) or not os.access(executable, os.X_OK):
         raise ContractError("test fixture must be an executable file")
 
-def request_authoritative_generation(task, country, input_ids, *, project_root=PROJECT_ROOT, key_dir=DEFAULT_KEY_DIR, test_fixture_executable=None, rehearsal=False):
+def request_authoritative_generation(task, country, input_ids, *, project_root=PROJECT_ROOT, key_dir=DEFAULT_KEY_DIR, test_fixture_executable=None, rehearsal=False, stage=None):
     _validate_input_ids(str(task), list(input_ids))
     _validate_fixture_boundary(project_root, key_dir, test_fixture_executable)
     manifest, _, _, _ = _source_context(project_root, str(task))
@@ -345,6 +345,8 @@ def request_authoritative_generation(task, country, input_ids, *, project_root=P
         raise ContractError(f"unsupported execution country: {normalized_country}")
     _start_authoritative_service(os.path.abspath(project_root),os.path.abspath(os.path.expanduser(key_dir)),test_fixture_executable,rehearsal=bool(rehearsal))
     request={"task":str(task),"country":normalized_country,"input_ids":list(input_ids)}
+    if stage is not None:
+        request["stage"] = str(stage)
     with _WORKER_LOCK:
         _SERVICE.stdin.write(json.dumps(request,ensure_ascii=False)+"\n"); _SERVICE.stdin.flush(); line=_SERVICE.stdout.readline()
     if not line: raise ContractError("authoritative generation service exited")

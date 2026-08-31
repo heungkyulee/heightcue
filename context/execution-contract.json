@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "contract_id": "heightcue-content-v1",
+  "owner_profile": "jaehyun-publisher",
+  "execution_mode": "script_only",
+  "business_kpi": "Coupang Partners and Amazon Associates actual sales, conversions, and commissions",
+  "intent_source": "context/user-intent-contract.md",
+  "prompt_sources": [
+    "context/compliance.md",
+    "context/persona.md",
+    "context/voice-kr.md",
+    "context/voice-us.md",
+    "heightcue-gemini-skills.md"
+  ],
+  "model_source": "runtime_config:openrouter.model",
+  "validator": "post_check.check_post",
+  "publisher": "publish.publish_text",
+  "tasks": [
+    "sales_master",
+    "sales_hooks",
+    "sales_post",
+    "value_post",
+    "value_thread",
+    "comment_reply"
+  ],
+  "countries": ["KR", "US"]
+}

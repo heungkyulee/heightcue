@@ -98,40 +98,30 @@ def _queue_cfg(state_dir):
     }
 
 
-def test_discovery_lane_fills_queue_without_demand_signals():
+def test_queue_fails_closed_without_validated_friction_signal():
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _queue_cfg(tmp)
-        Path(tmp, "demand_signals.json").write_text("[]", encoding="utf-8")
         added = sourcing.top_up_requests(cfg, buffer_target=2)
         requests = read_json(Path(tmp, "browser-queue", "requests.json"), [])
-        assert added == 2
-        assert len(requests) == 2
-        assert all(request["lane"] == "discovery" for request in requests)
-        assert all(request["comparison_contract"] == {
-            "candidate_pool_min": 5,
-            "compared_min": 3,
-            "rejected_min": 2,
-            "winner_count": 1,
-        } for request in requests)
+        assert added == 0
+        assert requests == []
 
 
-def test_demand_lane_preserves_validated_signal_provenance():
+def test_friction_lane_preserves_validated_source_provenance():
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _queue_cfg(tmp)
-        signal = {
-            "signal_id": "d-1", "status": "validated", "source_post_id": "p-1",
-            "observed_at": "2026-08-27T10:00:00+09:00", "signal": "반복 질문",
-            "connection_reason": "가치글 반응에서 확인", "repeated_count": 3,
-            "category": "posture", "sourcing_keyword": "어린이 독서대", "is_food": False,
-        }
-        Path(tmp, "demand_signals.json").write_text(
-            json.dumps([signal], ensure_ascii=False), encoding="utf-8"
-        )
+        signal = {"friction_id": "fr-1", "lifecycle": "validated", "market": "KR",
+                  "domain": "storage", "source_type": "external_complaint",
+                  "source_pointer": "https://source.test/1", "verbatim": "아래 통을 꺼낼 때 전부 내린다",
+                  "recurrence": 3, "intensity": 4, "mechanisms": ["front_open"],
+                  "sourcing_keyword": "앞으로 여는 수납함", "is_food": False}
+        Path(tmp, "friction_signals.jsonl").write_text(
+            json.dumps(signal, ensure_ascii=False) + "\n", encoding="utf-8")
         sourcing.top_up_requests(cfg, buffer_target=1)
         request = read_json(Path(tmp, "browser-queue", "requests.json"), [])[0]
-        assert request["lane"] == "demand"
-        assert request["demand_signal_id"] == "d-1"
-        assert request["demand_provenance"]["source_post_id"] == "p-1"
+        assert request["lane"] == "friction"
+        assert request["friction_id"] == "fr-1"
+        assert request["source_pointers"] == ["https://source.test/1"]
 
 
 def test_sourcing_result_requires_five_to_three_to_one_comparison():
@@ -157,9 +147,9 @@ def test_discovery_result_never_invents_demand_provenance():
     assert not any(reason.startswith("demand_") for reason in reasons)
 
 
-def test_malformed_demand_provenance_is_held_instead_of_crashing():
-    reasons = sourcing.audit_readiness_reasons({"lane": "demand", "demand_provenance": "legacy free text"})
-    assert "demand_provenance_invalid" in reasons
+def test_malformed_friction_provenance_is_held_instead_of_crashing():
+    reasons = sourcing.audit_readiness_reasons({"lane": "friction", "source_pointers": "legacy free text"})
+    assert "friction_source_pointers_invalid" in reasons
 
 
 def test_malformed_price_provenance_is_held_instead_of_crashing():
@@ -627,6 +617,8 @@ def test_metrics_contract_reports_missing_attribution_fields():
         "hook_family": "F1", "angle_id": "price-reversal", "product_id": "p1",
         "formfactor_id": "ff1", "ux_grade": "novel", "country": "KR",
         "post_type": "sales", "writer_variant": "d2",
+        "friction_id": "fr-1", "stage": "verdict", "mechanism": "front_open",
+        "price_band": "20k", "affiliate_destination": "coupang",
     }
     assert analytics.attribution_gaps(complete) == []
 
