@@ -21,6 +21,51 @@ from common import log, read_json, state_path, write_json
 
 COUPANG_HOST = "https://api-gateway.coupang.com"
 
+CANDIDATE_SCORE_FIELDS = (
+    "friction_frequency", "friction_intensity", "mechanism_clarity", "mobile_demo_clarity",
+    "consideration_cost", "price_resistance", "review_evidence_strength",
+    "failure_mode_severity", "compliance_cost", "expected_commission_value",
+    "attribution_readiness",
+)
+NEGATIVE_SCORE_FIELDS = {"consideration_cost", "price_resistance", "failure_mode_severity", "compliance_cost"}
+
+
+def score_candidate(candidate):
+    """Return an inspectable low-consideration gate and component score."""
+    row = dict(candidate or {})
+    components = row.get("scores") or {}
+    reasons = []
+    if not row.get("friction_id"):
+        reasons.append("friction_id_missing")
+    if not row.get("source_pointers"):
+        reasons.append("source_pointers_missing")
+    for flag in ("requires_professional_advice", "high_risk_child_safety",
+                 "creator_testimony_required", "health_outcome_primary"):
+        if row.get(flag):
+            reasons.append(flag)
+    if not row.get("wrong_purchase_reversible"):
+        reasons.append("wrong_purchase_not_reversible")
+    parsed = {}
+    for field in CANDIDATE_SCORE_FIELDS:
+        value = components.get(field)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 5:
+            reasons.append(f"score_invalid:{field}")
+        else:
+            parsed[field] = float(value)
+    total = sum((-value if field in NEGATIVE_SCORE_FIELDS else value)
+                for field, value in parsed.items())
+    return {"eligible": not reasons, "reasons": reasons, "final_score": round(total, 3),
+            "components": parsed, "source_pointers": list(row.get("source_pointers") or []),
+            "friction_id": row.get("friction_id")}
+
+
+def revenue_rank(metrics):
+    """Lexicographic learning hierarchy: commission/orders, clicks, progression, engagement, views."""
+    row = metrics or {}
+    return (float(row.get("commission") or 0), int(row.get("orders") or 0),
+            int(row.get("clicks") or 0), int(row.get("progression") or 0),
+            int(row.get("qualified_engagement") or 0), int(row.get("views") or 0))
+
 # 컨셉 카테고리 로테이션 (요일 % len 으로 순환)
 # keyword: 스펙 수식어를 포함해 저가 양산형이 상위에 깔리는 것을 방지 (선별자 소싱)
 # alt_keywords: 1차 검색 결과가 저가 양산형 위주일 때 쓰는 보강 검색어
@@ -470,37 +515,22 @@ def top_up_requests(cfg, buffer_target=3):
 
 
 def pick_us(cfg, dry_run=False, min_interval_days=7):
-    """US 판매글 소재 선택 — 사이트 경유 방식.
+    """US 판매글 소재 선택 — Company OS Supabase 실행 SSOT.
 
-    Threads에 아마존 태그 링크를 직접 걸지 않는다. 대신 Associates에 등록된 사이트의
-    가이드 페이지(state/us_products.json 레지스트리)로 보낸다. 페이지별 재사용 간격을 두고 로테이션.
-    새 가이드 페이지가 사이트에 추가되면 레지스트리에 항목만 추가하면 된다.
+    실운영은 원자적 RPC claim만 사용한다. Supabase 장애나 활성 상품 부재 시
+    로컬 JSON으로 폴백하지 않는다. 오래된 상품을 발행하는 것보다 슬롯을
+    fail-closed 하는 것이 승인·근거 계약에 안전하다.
     """
-    if dry_run:
-        return {
-            "product_key": "us-dry-ddrops", "country": "US", "category": "nutrition",
-            "product_name": "Ddrops Kids Booster Vitamin D3 600 IU",
-            "is_food": True, "is_certified_health_food": False, "approved_claims": [],
-            "price_info": "", "review_count": None, "review_rating": None, "review_quotes": [],
-            "spec_facts": ["600 IU vitamin D3 per labeled drop",
-                            "fractionated coconut oil"],
-            "link": "https://heightcue.lifoli.co.kr/us/vitamin-d-drops.html", "sub_id": "us-guide",
-        }
-    path = state_path(cfg, "us_products.json")
-    items = read_json(path, [])
-    now = time.time()
-    for it in items:
-        if now - it.get("last_used_ts", 0) >= min_interval_days * 86400 and not _blacklisted(it.get("product_name", "")):
-            if not cfg["mode"].get("_rehearsal"):
-                it["last_used_ts"] = now
-                write_json(path, items)
-            product = dict(it)
-            product.setdefault("country", "US")
-            product["link"] = it.get("site_url") or it.get("link")
-            log(f"US 소싱(사이트 경유): {product.get('product_name', '')[:40]}")
-            return product
-    log("US 판매 소재 없음 (레지스트리 비었거나 재사용 간격 미충족) → 오늘 US 판매글 건너뜀")
-    return None
+    if dry_run or (cfg.get("mode") or {}).get("_rehearsal"):
+        from generation_ssot import REHEARSAL_PRODUCTS
+        return dict(REHEARSAL_PRODUCTS["us-ddrops-kids-600iu"])
+    import companyos
+    product = companyos.claim_us_product(cfg)
+    if product:
+        log(f"US 소싱(Company OS): {product.get('product_name', '')[:40]}")
+    else:
+        log("US 판매 소재 없음 (승인+오퍼+랜딩 검증+쿨다운 게이트) → 오늘 US 판매글 건너뜀")
+    return product
 
 
 def _pick_from_queue(cfg):

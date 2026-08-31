@@ -47,8 +47,8 @@ autopilot/
 
 **④ LLM 키 (OpenRouter)** — ✅ 완료: `config.json`의 `openrouter.api_key`, 모델은 SSOT 원칙대로 Gemini 계열(`google/gemini-2.5-flash`).
 
-**⑤ 스토리 뱅크 확정 (10분) — 발행 전 필수**
-`story-bank.md`의 **E6(성장기 습관)은 AI가 넣은 자리표시자**입니다. 실제 습관으로 교체하거나 삭제해 주세요. V-0 고정핀 글과 판매글 예시 1의 훅("우유 도망")도 같은 확인 대상입니다. E1~E5는 말씀 주신 실화 그대로 정리되어 있으니 훑어보고 틀린 부분만 고치면 됩니다.
+**⑤ 활성 프롬프트 경계 확인**
+`docs/archive/`와 역사 자료는 보존하지만 활성 생성 입력으로 사용하지 않습니다. 실행 전 persona-free contract 테스트가 서사 아카이브 비로딩과 단계별 `friction_id` 계약을 확인해야 합니다.
 
 **⑥ 리허설 → 실전 전환 (원커맨드)**
 `../.venv/bin/python run.py rehearsal` — validate 재검증 → 실제 LLM 생성·검사(발행 없음) → 미리보기 출력. 미리보기를 점검하고, 만족 시 `../.venv/bin/python run.py golive`(dry_run 해제 + publish 켜짐 + crontab 안내) → crontab 등록으로 가동. 그 외: `../.venv/bin/python run.py status`(상태 요약).
@@ -178,9 +178,10 @@ fail-open 이어서 `"false"` 가 True 로 읽혔다(= 돈 게이트가 열렸�
 순서: ① `rehearsal` 로 전제조건·게이트 확인(무료) → ② OpenMontage transcriber 확보 →
 ③ 라이브 종단 게이트 통과 → ④ 그때 비로소 두 플래그를 켠다(리터럴 `true`).
 
-### 5-3. 현재 한계 — `process` 는 아직 끝까지 돌지 않는다
+### 5-3. `process` 종단 실행 경계
 
-게이트를 모두 통과해도 `video process` 는 **exit 5 로 멈춘다.** 스토리보드→첫프레임→컷
-→합성→QA→핸드오프를 한 프로세스로 잇는 종단 오케스트레이터가 아직 배선되지 않았기
-때문이다. 지금은 모듈을 순서대로 직접 호출해야 한다. 조용히 성공을 반환해서 "돌았는데
-아무 일도 안 일어났다"가 되지 않도록 명시적으로 실패시킨다.
+게이트를 모두 통과하면 `video process`가 원장의 대기 잡을 claim하고 스토리보드→실물
+Ken-Burns/생성 첫 프레임→MiniMax H3 Max 모션 컷→클린 마스터+자막본+SRT→양쪽 QA
+→핸드오프를 순서대로 실행한다. 성공 상태는 `ready_to_publish`이며 **이 명령은 발행하지
+않는다.** QA 실패는 `qa_failed`, 재시도 가능한 단계 실패는 원장 정책에 따라 다시
+`queued` 또는 `dead_letter`로 남으므로 잡을 잃지 않는다.

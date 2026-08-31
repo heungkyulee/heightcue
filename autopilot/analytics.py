@@ -11,13 +11,41 @@ import re
 import time
 
 import publish
-from common import append_jsonl, log, read_jsonl, state_path
+from common import append_jsonl, log, read_json, read_jsonl, state_path, write_json
 
 
 REQUIRED_ATTRIBUTION_FIELDS = (
     "hook_family", "angle_id", "product_id", "formfactor_id",
     "ux_grade", "country", "post_type", "writer_variant",
 )
+FRICTION_ATTRIBUTION_FIELDS = (
+    "friction_id", "stage", "mechanism", "price_band", "affiliate_destination",
+)
+
+FRICTION_DIMENSIONS = ("friction_id", "stage", "mechanism", "product_id", "price_band",
+                       "hook_family", "affiliate_destination")
+
+
+def _revenue_rank(row):
+    return (float(row.get("commission") or 0), int(row.get("orders") or row.get("conversions") or 0),
+            int(row.get("clicks") or row.get("link_clicks") or 0), int(row.get("progression") or 0),
+            int(row.get("qualified_engagement") or 0), int(row.get("views") or 0))
+
+
+def friction_summary(rows):
+    """Observed friction-funnel dimensions; hypotheses are explicitly separate."""
+    observed = list(rows or [])
+    winner = max(observed, key=_revenue_rank) if observed else None
+    by_dimension = {}
+    for dimension in FRICTION_DIMENSIONS:
+        values = defaultdict(int)
+        for row in observed:
+            if row.get(dimension):
+                values[str(row[dimension])] += 1
+        by_dimension[dimension] = dict(values)
+    return {"dimensions": list(FRICTION_DIMENSIONS), "by_dimension": by_dimension,
+            "observed": {"rows": len(observed)}, "revenue_winner": winner,
+            "hypotheses": []}
 
 
 # --- 영상(UGC) 행 인식 — 추가만 하고 텍스트 경로는 건드리지 않는다 -------------
@@ -79,8 +107,10 @@ def collect(cfg, dry_run=False):
         log("지표 수집(dry): 운영 metrics 기록 생략")
         return 0
     published = read_jsonl(state_path(cfg, "published.jsonl"))
+    gone = set(read_json(state_path(cfg, "gone_posts.json"), []))
     posts = [p for p in published if p.get("media_id") and not _is_dry(p)
-             and p.get("meta", {}).get("kind") != "reply"][-40:]
+             and p.get("meta", {}).get("kind") != "reply"
+             and p.get("media_id") not in gone][-40:]
     clicks_by_url = {}
     for country in {p["country"] for p in posts}:
         try:
@@ -92,6 +122,10 @@ def collect(cfg, dry_run=False):
         try:
             ins = publish.fetch_insights(cfg, p["country"], p["media_id"], dry_run=dry_run)
         except Exception as e:
+            if "400" in str(e) and p["media_id"] not in gone:
+                gone.add(p["media_id"])
+                write_json(state_path(cfg, "gone_posts.json"), sorted(gone))
+                log(f"게시물 조회 불가(삭제 추정) — 지표 수집 건너뜀: {p['media_id']}")
             log(f"insights 실패 {p['media_id']}: {e}")
             continue
         meta = p.get("meta", {})
@@ -99,6 +133,11 @@ def collect(cfg, dry_run=False):
         metrics_row = {
             "media_id": p["media_id"], "country": p["country"],
             "post_type": meta.get("post_type"),
+            "friction_id": meta.get("friction_id"),
+            "stage": meta.get("stage"),
+            "mechanism": meta.get("mechanism"),
+            "price_band": meta.get("price_band"),
+            "affiliate_destination": meta.get("affiliate_destination") or meta.get("link_mode"),
             "hook_pattern": meta.get("hook_pattern"),
             "hook_family": meta.get("hook_family") or meta.get("hook_pattern"),
             "angle_id": meta.get("angle_id"),

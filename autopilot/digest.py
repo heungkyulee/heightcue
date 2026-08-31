@@ -49,12 +49,29 @@ def _country_packet(records, country):
         audience_vibe = "No measured comment sentiment is present in this packet; do not invent audience mood."
         do_not = "No AI wrap-up. " + ("Repeated hooks: " + " | ".join(overused) if overused else "Do not clone the recent hook structure.")
 
+    friction_ids = []
+    stages = []
+    mechanisms = []
+    for post in posts:
+        meta = post.get("meta") or {}
+        for target, value in ((friction_ids, meta.get("friction_id")),
+                              (stages, meta.get("stage")),
+                              (mechanisms, meta.get("mechanism"))):
+            if value and value not in target:
+                target.append(value)
+
     return {
         "current_tension": tension,
         "recent_angles_used": angles,
         "overused_hooks": overused,
         "audience_vibe": audience_vibe,
         "do_not_do_today": do_not,
+        "recent_friction_ids": friction_ids[-8:],
+        "recent_stages": stages[-6:],
+        "recent_mechanisms": mechanisms[-6:],
+        "funnel_bottleneck": "insufficient_data",
+        "observed_metrics": {"published_posts": len(posts)},
+        "strategic_hypotheses": [],
         "source_post_count": len(posts),
         "source_post_ids": [str(post.get("media_id")) for post in posts],
         "generated_from_real_data": True,

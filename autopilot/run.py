@@ -19,6 +19,7 @@
 리스크 메모 있음 → 보류함 / 깨끗함 → (publish=true일 때) 발행, 아니면 preview 기록.
 각 단계는 오류 격리된다 — 한 단계가 죽어도 나머지는 계속 실행되고 errors.jsonl에 남는다.
 """
+import hashlib
 import json
 import os
 import random
@@ -29,13 +30,14 @@ import sys
 import analytics
 import comments as comments_mod
 import evidence
+import execution_contract
 import generate
 import improve
 import post_check
 import publish
 import sitegen
 import sourcing
-from common import (append_jsonl, is_real_publication, load_config, load_story_episodes, log,
+from common import (append_jsonl, is_real_publication, load_config, log,
                     recent_context, read_json, read_jsonl, record_error, set_mode_flags, state_path)
 
 
@@ -90,16 +92,18 @@ def _gate_and_publish(cfg, text, country, post_type, product=None, link=None, dr
         return None, "format_fail"
     if check["risk_notes"] and cfg["mode"].get("hold_flagged", True):
         append_jsonl(state_path(cfg, "holdbox.jsonl"),
-                     {"why": "risk_flagged", "country": country, "text": text, "notes": check["risk_notes"]})
+                     {"why": "risk_flagged", "country": country, "post_type": post_type,
+                      "text": text, "notes": check["risk_notes"]})
         log("→ 리스크 메모가 있어 보류함(주간 리포트에서 확인)")
         return None, "risk_hold"
     if not cfg["mode"].get("auto_publish_clean", True):
-        append_jsonl(state_path(cfg, "holdbox.jsonl"), {"why": "manual_mode", "country": country, "text": text})
+        append_jsonl(state_path(cfg, "holdbox.jsonl"),
+                     {"why": "manual_mode", "country": country, "post_type": post_type, "text": text})
         return None, "manual_hold"
     media = publish.publish_text(cfg, country, text, link=link, dry_run=dry_run,
                                  meta={"post_type": post_type, "hook_pattern": _guess_pattern(hook),
                                        "format_score": check["format_score"], **(meta_extra or {})})
-    return media, "published"
+    return (media, "published") if media else (None, "publish_failed")
 
 
 def _publish_with_retry(cfg, build_fn, country, post_type, product=None, link=None, dry_run=False, meta_extra=None):
@@ -184,29 +188,21 @@ def _publish_thread(cfg, parts, country, dry_run=False, meta_extra=None):
 
 
 def make_and_publish_value(cfg, dry_run=False, country="KR"):
-    episodes = load_story_episodes(cfg)
     recent = [p.get("text", "").splitlines()[0]
               for p in read_jsonl(state_path(cfg, "published.jsonl"))
               if is_real_publication(p)][-10:]
-    kind = "story" if (episodes and random.random() < 0.6) else "info"
-    episode = random.choice(episodes) if (kind == "story" and episodes) else None
+    kind = "info"
+    episode = None
 
-    # info 글은 증거 원장의 검증된 원자에서 주제를 받는다. 원장이 비면
-    # 지어낸 사실이 나가는 대신 story로 폴백한다(무근거 발행 금지).
-    atom = None
-    topic = None
-    if not episode:
-        atom = evidence.pick_atom(cfg, country=country, channel="threads")
-        if atom:
-            topic = evidence.to_generation_topic(atom)
-        elif episodes:
-            log("증거 원장 비어 있음 — story로 폴백")
-            kind, episode = "story", random.choice(episodes)
-        else:
-            topic = "성장기 수면·식사·검진 중 하나를 사실 위주로 정리"
+    # Non-commercial stages are sourced only from the validated evidence/friction path.
+    atom = evidence.pick_atom(cfg, country=country, channel="threads")
+    if not atom:
+        log("검증된 friction/evidence 입력 없음 — 가치글 생성 건너뜀")
+        return None, "no_validated_friction"
+    topic = evidence.to_generation_topic(atom)
 
     meta_extra = {"atom_id": atom["atom_id"], "topic": atom["topic"],
-                  "distance": atom["distance"]} if atom else None
+                  "distance": atom["distance"]} if atom else {}
 
     # 근거가 탄탄한 원자(strong/moderate)는 타래로 푼다. 사실·반론·실행이
     # 한 원자에 다 들어있어 480자 단편에 넣으면 정보가 뭉개진다.
@@ -216,10 +212,16 @@ def make_and_publish_value(cfg, dry_run=False, country="KR"):
             and random.random() < thread_ratio):
         parts_n = 4 if atom.get("confidence") == "strong" else 3
         try:
-            result = generate.make_value_thread(cfg, topic, parts=parts_n,
-                                                dry_run=dry_run, country=country)
+            result = generate.make_value_thread(
+                cfg, topic, parts=parts_n, dry_run=dry_run, country=country,
+                input_ids=[f"atom:{atom['atom_id']}"])
             parts = [p for p in (result.get("parts") or []) if (p or "").strip()]
             if len(parts) >= 2:
+                provenance = result.get("_provenance")
+                if isinstance(provenance, dict):
+                    meta_extra.update(execution_contract.merge_provenance({}, provenance))
+                if isinstance(result.get("_attestation"), dict):
+                    meta_extra["generation_attestation"] = result["_attestation"]
                 media, reason = _publish_thread(cfg, parts, country, dry_run=dry_run,
                                                 meta_extra=meta_extra)
                 if reason in ("published", "thread_partial"):
@@ -232,8 +234,30 @@ def make_and_publish_value(cfg, dry_run=False, country="KR"):
             log("타래 생성 오류 — 단편으로 폴백")
 
     def build():
-        result = generate.make_value_post(cfg, kind, episode=episode, topic=topic,
-                                          recent=recent, dry_run=dry_run, country=country)
+        if atom:
+            input_ids = [f"atom:{atom['atom_id']}"]
+        elif episode:
+            episode_id = episode.get("episode_id") or episode.get("id")
+            stable = episode_id or hashlib.sha256(
+                json.dumps(episode, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
+            input_ids = [f"episode:{stable}"]
+        else:
+            stable = hashlib.sha256(str(topic).encode()).hexdigest()[:16]
+            input_ids = [f"topic:{stable}"]
+        result = generate.make_value_post(
+            cfg, kind, episode=episode, topic=topic, recent=recent,
+            dry_run=dry_run, country=country, input_ids=input_ids)
+        # 토너먼트 산출물을 발행 meta에 실어야 나중에 "어떤 앵글·점수가 실제로
+        # 조회수를 냈는지" 귀속할 수 있다. 안 실으면 토너먼트를 돌린 의미가 없다.
+        meta_extra.update({k: result.get(k) for k in
+                           ("angle_used", "writer_variant", "viral_score",
+                            "critic_model", "tournament_fallback")
+                           if result.get(k) is not None})
+        provenance = result.get("_provenance")
+        if isinstance(provenance, dict):
+            meta_extra.update(execution_contract.merge_provenance({}, provenance))
+        if isinstance(result.get("_attestation"), dict):
+            meta_extra["generation_attestation"] = result["_attestation"]
         return result["text"]
 
     media, reason = _publish_with_retry(cfg, build, country, "value",
@@ -278,7 +302,14 @@ def _kr_sales(cfg, hint, dry_run):
     def build():
         result = generate.make_sales_post(cfg, master, product, playbook_hint=hint, dry_run=dry_run)
         publication_meta.update({key: result.get(key) for key in
-                                 ("hook_family", "angle_id", "writer_variant", "viral_score")})
+                                 ("hook_family", "angle_id", "writer_variant",
+                                  "viral_score", "critic_model")
+                                 if result.get(key) is not None})
+        provenance = result.get("_provenance")
+        if isinstance(provenance, dict):
+            publication_meta.update(execution_contract.merge_provenance({}, provenance))
+        if isinstance(result.get("_attestation"), dict):
+            publication_meta["generation_attestation"] = result["_attestation"]
         return result["text"]
 
     _publish_with_retry(cfg, build, product.get("country", "KR"), "sales",
@@ -290,32 +321,77 @@ def _us_sales(cfg, hint, dry_run):
     product = sourcing.pick_us(cfg, dry_run=dry_run)
     if not product:
         return
-    master = generate.make_master(cfg, product, playbook_hint=hint, dry_run=dry_run)
+    import companyos
+    media = None
+    built = {"text": ""}
+    try:
+        master = generate.make_master(cfg, product, playbook_hint=hint, dry_run=dry_run)
 
-    # US 판매글은 자사 가이드 경유 여부와 무관하게 추천 자체의 경제적 이해관계를 첫 줄에 고지한다.
-    # FTC의 clear/conspicuous·recommendation 근접 원칙상 #ad 유무는 성과 실험 대상이 아니다.
-    ad_mode = "on"
-    product = {**product, "ad_mode": ad_mode}
-    log(f"US 판매글 #ad 모드: {ad_mode}")
+        # US 판매글은 자사 가이드 경유 여부와 무관하게 추천 자체의 경제적 이해관계를 첫 줄에 고지한다.
+        # FTC의 clear/conspicuous·recommendation 근접 원칙상 #ad 유무는 성과 실험 대상이 아니다.
+        ad_mode = "on"
+        product = {**product, "ad_mode": ad_mode}
+        log(f"US 판매글 #ad 모드: {ad_mode}")
 
-    publication_meta = {
-        "ad_mode": ad_mode,
-        "product_id": product.get("product_key"),
-        "formfactor_id": product.get("formfactor_id"),
-        "ux_grade": product.get("ux_grade"),
-        "category": product.get("category"),
-        "sub_id": product.get("sub_id"),
-    }
+        publication_meta = {
+            "ad_mode": ad_mode,
+            "product_id": product.get("product_key"),
+            "formfactor_id": product.get("formfactor_id"),
+            "ux_grade": product.get("ux_grade"),
+            "category": product.get("category"),
+            "sub_id": product.get("sub_id"),
+            "workflow_id": (product.get("_workflow") or {}).get("workflow_id"),
+            "evidence_revision": (product.get("_workflow") or {}).get("evidence_revision"),
+        }
 
-    def build():
-        result = generate.make_sales_post(cfg, master, product, playbook_hint=hint, dry_run=dry_run)
-        publication_meta.update({key: result.get(key) for key in
-                                 ("hook_family", "angle_id", "writer_variant", "viral_score")})
-        return result["text"]
+        def build():
+            result = generate.make_sales_post(cfg, master, product, playbook_hint=hint, dry_run=dry_run)
+            built["text"] = result["text"]
+            publication_meta.update({key: result.get(key) for key in
+                                     ("hook_family", "angle_id", "writer_variant",
+                                      "viral_score", "critic_model")
+                                     if result.get(key) is not None})
+            provenance = result.get("_provenance")
+            if isinstance(provenance, dict):
+                publication_meta.update(execution_contract.merge_provenance({}, provenance))
+            if isinstance(result.get("_attestation"), dict):
+                publication_meta["generation_attestation"] = result["_attestation"]
+            return result["text"]
 
-    _publish_with_retry(cfg, build, "US", "sales",
-                        product=product, link=product.get("link"), dry_run=dry_run,
-                        meta_extra=publication_meta)
+        publish_result = _publish_with_retry(cfg, build, "US", "sales",
+                                             product=product, link=product.get("link"), dry_run=dry_run,
+                                             meta_extra=publication_meta)
+        if isinstance(publish_result, tuple) and len(publish_result) == 2:
+            media, reason = publish_result
+        else:
+            media, reason = None, "publish_not_confirmed"
+        mode_cfg = cfg.get("mode") or {}
+        preview_only = bool(media) and (
+            str(media).startswith("PREVIEW-")
+            or ("publish" in mode_cfg and mode_cfg.get("publish") is False)
+        )
+        if not dry_run and media and reason == "published" and not preview_only:
+            workflow = product.get("_workflow") or {}
+            publication_url = publish.verified_publication_url(cfg, media)
+            companyos.record_product_publication(
+                product, media_id=media, publication_url=publication_url, text=built["text"],
+                tracking_key=workflow.get("tracking_key") or product.get("sub_id") or "",
+                sub_id=product.get("sub_id") or "", readback_verified=True)
+        elif not dry_run and product.get("_workflow"):
+            release_reason = "preview_only" if preview_only else (reason or "not_published")
+            companyos.release_product_claim(product, release_reason,
+                                            {"actor": "heightcue-autopilot"})
+        return media, reason
+    except Exception:
+        # A remotely verified post must never be released back to the active pool merely
+        # because the subsequent DB acknowledgement failed; that would permit duplication.
+        if not dry_run and not media and product.get("_workflow"):
+            try:
+                companyos.release_product_claim(product, "generation_or_publish_failed",
+                                                {"actor": "heightcue-autopilot"})
+            except Exception as release_error:
+                record_error(cfg, "us_product_claim_release", release_error)
+        raise
 
 
 def daily(cfg, dry_run=False):
@@ -410,7 +486,7 @@ def status(cfg):
     print(f"발행 이력        : 실발행 {len(published)}건 / 리허설 preview {len(preview)}건")
     print(f"보류함          : {len(holds)}건 (주간 리포트에서 검토)")
     print(f"오류 로그        : {len(errors)}건" + (f" — 최근: {errors[-1]['where']}" if errors else ""))
-    print(f"스토리 뱅크      : 사용 가능 에피소드 {len(load_story_episodes(cfg))}개 (하이브리드 모드)")
+    print("friction ledger : active prompt assembly does not read narrative archives")
     ux = sourcing.ux_store(cfg)["formfactors"]
     cand = sum(1 for f in ux if f.get("status") == "candidate")
     novel = sum(1 for f in ux if f.get("ux_grade") == "novel" and f.get("status") == "active")
@@ -460,6 +536,7 @@ VIDEO_DEFAULTS = {
     "daily_budget_usd": 2.0,
     "max_jobs_per_run": 1,
     "max_attempts": 3,
+    "lease_seconds": 3600,
     "ledger_root": None,
 }
 
@@ -659,7 +736,242 @@ def _video_enqueue(cfg, settings, args):
     return 0
 
 
-def _video_process(cfg, settings, args):
+def _video_fal_client(request, *, api_key=None, session=None, sleep=None,
+                      max_polls=900):
+    """``video_generate.generate_cuts(client=...)`` 용 fal 큐 전송 어댑터.
+
+    모델·해상도·프롬프트 확장 정책은 이 함수가 만들지 않는다. 검증을 마친
+    ``video_generate.build_cut_request`` 를 그대로 전송하고 provider 의 실제
+    request_id 와 결과 바이트만 돌려준다.
+    """
+    import time
+
+    import fal_upload
+    import requests
+
+    key = fal_upload.resolve_api_key(api_key)
+    http = session or requests
+    nap = sleep or time.sleep
+    headers = {"Authorization": f"Key {key}"}
+
+    def checked(response, what):
+        status = int(getattr(response, "status_code", 0) or 0)
+        if not 200 <= status < 300:
+            body = fal_upload.redact(str(getattr(response, "text", ""))[:300], key)
+            raise RuntimeError(f"{what} HTTP {status}: {body}")
+        return response
+
+    def payload(response, what):
+        checked(response, what)
+        try:
+            value = response.json()
+        except Exception as exc:
+            raise RuntimeError(f"{what} 응답이 JSON 이 아니다") from exc
+        if not isinstance(value, dict):
+            raise RuntimeError(f"{what} 응답이 객체가 아니다: {type(value).__name__}")
+        return value
+
+    submitted = payload(http.post(
+        request["url"], json=request["payload"], headers=headers, timeout=60),
+        "fal submit")
+    request_id = str(submitted.get("request_id") or "").strip()
+    status_url = str(submitted.get("status_url") or "").strip()
+    response_url = str(submitted.get("response_url") or "").strip()
+    if not request_id or not status_url or not response_url:
+        raise RuntimeError("fal submit 응답에 request_id/status_url/response_url 이 없다")
+
+    for poll in range(int(max_polls)):
+        status_payload = payload(
+            http.get(status_url, headers=headers, timeout=60), "fal status")
+        status = str(status_payload.get("status") or "").upper()
+        if status == "COMPLETED":
+            break
+        if status in ("FAILED", "CANCELLED"):
+            raise RuntimeError(
+                f"fal request {request_id} {status}: "
+                f"{status_payload.get('error') or status_payload.get('detail') or ''}")
+        if poll + 1 >= int(max_polls):
+            raise TimeoutError(f"fal request {request_id} 가 완료 시간 안에 끝나지 않았다")
+        nap(2)
+    else:
+        raise TimeoutError(f"fal request {request_id} 상태를 확인하지 못했다")
+
+    result = payload(http.get(response_url, headers=headers, timeout=60),
+                     "fal result")
+    data = result.get("data") if isinstance(result.get("data"), dict) else result
+    video = data.get("video") if isinstance(data, dict) else None
+    video_url = str((video or {}).get("url") or "").strip()
+    if not video_url:
+        raise RuntimeError(f"fal request {request_id} 결과에 video.url 이 없다")
+
+    downloaded = checked(http.get(video_url, timeout=180), "fal video download")
+    output = os.path.abspath(os.path.expanduser(str(request["output_path"])))
+    os.makedirs(os.path.dirname(output), exist_ok=True)
+    partial = output + ".part"
+    try:
+        with open(partial, "wb") as fh:
+            chunks = (downloaded.iter_content(chunk_size=1024 * 1024)
+                      if callable(getattr(downloaded, "iter_content", None))
+                      else (getattr(downloaded, "content", b""),))
+            for chunk in chunks:
+                if chunk:
+                    fh.write(chunk)
+        if not os.path.isfile(partial) or os.path.getsize(partial) <= 0:
+            raise RuntimeError(f"fal request {request_id} 가 빈 영상을 돌려줬다")
+        os.replace(partial, output)
+    except BaseException:
+        try:
+            os.unlink(partial)
+        except OSError:
+            pass
+        raise
+    return {"request_id": request_id, "output_path": output,
+            "expanded_prompt": (data or {}).get("expanded_prompt")}
+
+
+def _video_remotion_renderer(request, *, runner=None, composer_root=None):
+    """HeightCue 전용 Remotion composition 을 실행하는 얇은 전송 어댑터."""
+    import video_compose as vcomp
+
+    root = os.path.abspath(os.path.expanduser(
+        composer_root or os.path.join("~/OpenMontage", "remotion-composer")))
+    if request.get("composition_id") != vcomp.COMPOSITION_ID:
+        raise RuntimeError(
+            f"등록된 composition 은 {vcomp.COMPOSITION_ID!r} 하나뿐이다")
+    props = os.path.abspath(str(request.get("props_path") or ""))
+    output = os.path.abspath(str(request.get("output_path") or ""))
+    if not os.path.isfile(props):
+        raise RuntimeError(f"Remotion props 파일이 없다: {props}")
+    command = [
+        "npx", "remotion", "render", os.path.join(root, "src", "index.tsx"),
+        vcomp.COMPOSITION_ID, output, f"--props={props}", "--codec=h264",
+    ]
+    public_dir = os.path.join(root, "public")
+    if os.path.isdir(public_dir):
+        command.append(f"--public-dir={public_dir}")
+    execute = runner or subprocess.run
+    result = execute(command, cwd=root, capture_output=True, text=True,
+                     timeout=1800)
+    if int(getattr(result, "returncode", 0) or 0) != 0:
+        raise RuntimeError(
+            f"Remotion render 실패({result.returncode}): "
+            f"{str(getattr(result, 'stderr', '') or '')[-500:]}")
+    layers = (request.get("overlay_plan") or {}).get("text_layers") or []
+    return {"output_path": output, "runtime": vcomp.RENDER_RUNTIME,
+            "text_layers": [str(layer.get("text") or "")
+                            for layer in layers if isinstance(layer, dict)]}
+
+
+def _video_setting_for_job(settings, name, job):
+    value = settings.get(name)
+    if isinstance(value, dict):
+        value = value.get(job.product_id, value.get(job.market))
+    return value
+
+
+def _video_process_deps(cfg, settings):
+    """운영 의존성. 테스트는 ``_video_process(..., deps=...)`` 로 전부 교체한다."""
+    import fal_upload
+    import video_compose as vcomp
+    import video_generate as vg
+    import video_handoff as vh
+    import video_qa as vqa
+    import video_storyboard as vs
+
+    # 키는 claim 전에 확인한다. 자격증명 누락만으로 attempts 를 태우지 않는다.
+    fal_key = fal_upload.resolve_api_key()
+    projects_root = os.path.abspath(os.path.expanduser(
+        settings.get("projects_root") or vg.DEFAULT_PROJECTS_ROOT))
+
+    def asset_dir(job):
+        return os.path.join(state_path(cfg, "product_assets"), job.product_id)
+
+    def load_asset_manifest(job):
+        path = os.path.join(asset_dir(job), "product_assets.json")
+        with open(path, encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        if not isinstance(manifest, dict):
+            raise ValueError(f"상품 자산 매니페스트가 객체가 아니다: {path}")
+        return manifest
+
+    def resolve_affiliate_link(job):
+        value = _video_setting_for_job(settings, "affiliate_links", job)
+        if not str(value or "").strip():
+            raise ValueError(
+                f"video.affiliate_links[{job.product_id!r}] 가 없다 — "
+                "제휴 링크 없는 핸드오프는 만들지 않는다")
+        return str(value).strip()
+
+    def resolve_account(job):
+        value = (cfg.get("threads") or {}).get(f"{job.market.lower()}_user_id")
+        if not str(value or "").strip():
+            raise ValueError(f"threads.{job.market.lower()}_user_id 가 비어 있다")
+        return str(value).strip()
+
+    def load_identity_signoff(job, master_path):
+        configured = _video_setting_for_job(
+            settings, "identity_signoff_path", job)
+        path = (os.path.abspath(os.path.expanduser(str(configured)))
+                if configured else os.path.join(
+                    projects_root, f"heightcue_{job.run_id}", "qa",
+                    f"{job.job_id}_identity_signoff.json"))
+        try:
+            with open(path, encoding="utf-8") as fh:
+                value = json.load(fh)
+        except (OSError, ValueError):
+            return None
+        return value if isinstance(value, dict) else None
+
+    return {
+        "worker_id": f"heightcue-video-{os.getpid()}",
+        "generate_storyboard": vs.generate_storyboard,
+        "generate_first_frames": vg.generate_first_frames,
+        "generate_cuts": vg.generate_cuts,
+        "compose_master": vcomp.compose_master,
+        "compose_subtitled": vcomp.compose_subtitled,
+        "run_qa": vqa.run_qa,
+        "promote_to_ready": vh.promote_to_ready,
+        "load_asset_manifest": load_asset_manifest,
+        "resolve_asset_sha256": lambda job, manifest: _video_setting_for_job(
+            settings, "asset_sha256", job),
+        "resolve_affiliate_link": resolve_affiliate_link,
+        "resolve_account": resolve_account,
+        "load_identity_signoff": load_identity_signoff,
+        "product_asset_dir": asset_dir,
+        "cut_client": lambda request: _video_fal_client(
+            request, api_key=fal_key),
+        "image_url_for": fal_upload.make_image_url_for(api_key=fal_key),
+        "renderer": _video_remotion_renderer,
+        "runtime_probe": None,
+        "projects_root": projects_root,
+    }
+
+
+def _video_compose_lineage(frames_manifest, generated_lineage):
+    """생성 모션 컷과 실물 Ken-Burns 사진을 합성 입력 한 줄로 합친다."""
+    import video_contracts as vc
+    import video_storyboard as vs
+
+    lineage = [dict(c, cut_kind=c.get("cut_kind", vs.CUT_KIND_MOTION))
+               for c in (generated_lineage or [])]
+    for still in (frames_manifest or {}).get("still_cuts") or []:
+        if still.get("generated") or still.get("paid"):
+            raise ValueError("Ken-Burns 실물 사진이 생성/유료 컷으로 표시됐다")
+        lineage.append({
+            "cut_index": int(still.get("cut_index") or 0),
+            "cut_kind": vs.CUT_KIND_STILL,
+            "output_path": str(still.get("source_path") or ""),
+            "output_sha256": str(still.get("source_sha256") or ""),
+            "duration_seconds": vc.CUT_DURATION_SECONDS,
+            "ken_burns_move": still.get("ken_burns_move")
+                              or vs.DEFAULT_KEN_BURNS_MOVE,
+            "generated": False,
+            "paid": False,
+        })
+    return sorted(lineage, key=lambda c: int(c.get("cut_index") or 0))
+
+
+def _video_process(cfg, settings, args, *, deps=None):
     """유료 생성 진입점. **기본은 거부한다.**
 
     거부할 때 잡을 claim 하지 않는 것이 중요하다 — 리스를 잡았다 놓으면 attempts 가
@@ -698,24 +1010,218 @@ def _video_process(cfg, settings, args):
         for line in lines:
             print(line)
         return 3
-    # 여기부터가 실제 유료 경로다. 게이트를 전부 통과했을 때만 도달한다.
-    #
-    # 정직하게: 전 단계(스토리보드→첫프레임→컷→합성→QA→핸드오프)를 한 프로세스로
-    # 잇는 오케스트레이터는 아직 없다. 지금은 각 모듈을 사람이 순서대로 부른다.
-    # 여기서 조용히 성공을 반환하면 "돌았는데 아무 일도 안 일어났다"가 되므로
-    # 명시적으로 실패시키고 다음 행동을 알려준다.
-    print("게이트는 모두 통과했다. 그러나 종단 오케스트레이터가 아직 배선되지 않았다 —")
-    print("  현재는 모듈을 순서대로 직접 호출해야 한다:")
-    print("    video_storyboard → video_generate(첫프레임→컷) → video_compose")
-    print("    → video_qa → video_handoff.promote_to_ready")
-    print("  잘못된 성공을 보고하지 않기 위해 여기서 멈춘다(비용은 발생하지 않았다).")
-    return 5
+    queued = ledger.list_jobs(state="queued")
+    if not queued:
+        print("대기 중인 영상 잡이 없다.")
+        return 0
+
+    import video_compose as vcomp
+    import video_contracts as vc
+    import video_generate as vg
+
+    try:
+        max_jobs = max(0, int(settings["max_jobs_per_run"]))
+        lease_seconds = max(1.0, float(settings.get("lease_seconds", 3600)))
+        daily_cap = min(float(settings["daily_budget_usd"]),
+                        vg.MAX_DAILY_SPEND_USD)
+    except (KeyError, TypeError, ValueError) as exc:
+        print(f"영상 실행 설정이 잘못됐다 — claim 하지 않는다: {exc}")
+        return 3
+    if max_jobs == 0:
+        print("video.max_jobs_per_run=0 — claim 하지 않는다.")
+        return 0
+    if daily_cap <= 0:
+        print("video.daily_budget_usd 가 0 이하라 claim 하지 않는다.")
+        return 3
+
+    # 운영 의존성(키 포함)은 claim 전에 만든다. 테스트는 이 dict 를 통째로
+    # 주입해 네트워크·유료 호출·실렌더를 0건으로 고정한다.
+    if deps is None:
+        try:
+            deps = _video_process_deps(cfg, settings)
+        except Exception as exc:
+            print(f"영상 실행 사전점검 실패 — claim 하지 않는다: "
+                  f"{type(exc).__name__}: {exc}")
+            return 3
+
+    worker_id = str(deps.get("worker_id") or f"heightcue-video-{os.getpid()}")
+    projects_root = os.path.abspath(os.path.expanduser(
+        deps.get("projects_root") or vg.DEFAULT_PROJECTS_ROOT))
+    edit_decisions = {
+        "render_runtime": vcomp.RENDER_RUNTIME,
+        "composition_mode": vcomp.COMPOSITION_MODE,
+        "aspect_ratio": vc.VIDEO_ASPECT_RATIO,
+        "resolution": vc.VIDEO_RESOLUTION,
+    }
+    failed = False
+    processed = 0
+
+    for _ in range(max_jobs):
+        claimed = ledger.claim(worker_id, lease_seconds=lease_seconds)
+        if claimed is None:
+            break
+        processed += 1
+        job_id = claimed["job_id"]
+        job = vc.VideoJob.from_dict(claimed["job"])
+        project = os.path.join(projects_root, f"heightcue_{job.run_id}")
+        renders = os.path.join(project, "renders")
+        qa_dir = os.path.join(project, "qa")
+        os.makedirs(renders, exist_ok=True)
+        os.makedirs(qa_dir, exist_ok=True)
+        qa_path = os.path.join(qa_dir, f"{job.job_id}_qa.json")
+
+        try:
+            # 링크/계정/자산은 모델·provider 지출 전에 확정한다.
+            affiliate_link = deps["resolve_affiliate_link"](job)
+            account = deps["resolve_account"](job)
+            asset_manifest = deps["load_asset_manifest"](job)
+            asset_sha256 = deps["resolve_asset_sha256"](job, asset_manifest)
+
+            complexity = {1: "simple", 2: "standard", 3: "complex"}[
+                len(job.storyboard.cuts)]
+            storyboard = deps["generate_storyboard"](
+                cfg, evidence=job.evidence, market=job.market,
+                run_id=job.run_id,
+                content_draft_id=job.storyboard.content_draft_id,
+                viral_pattern_ids=list(job.storyboard.viral_pattern_ids),
+                complexity=complexity,
+                storyboard_id=job.storyboard.storyboard_id)
+            ledger.heartbeat(job_id, worker_id, lease_seconds)
+
+            frames = deps["generate_first_frames"](
+                storyboard, asset_manifest, projects_root=projects_root,
+                bridge=deps.get("image_bridge"),
+                preflight_runner=deps.get("image_preflight"),
+                asset_sha256=asset_sha256)
+            ledger.heartbeat(job_id, worker_id, lease_seconds)
+
+            generated = deps["generate_cuts"](
+                storyboard, frames, client=deps["cut_client"],
+                job_id=job_id,
+                ledger_path=os.path.join(ledger.root, "spend_ledger.json"),
+                projects_root=projects_root,
+                run_cap_usd=min(daily_cap, vg.MAX_RUN_SPEND_USD),
+                daily_cap_usd=daily_cap,
+                image_url_for=deps.get("image_url_for"),
+                sleep=deps.get("sleep"))
+            ledger.heartbeat(job_id, worker_id, lease_seconds)
+
+            generation_state = generated.get("state")
+            if generation_state != vc.STATE_READY_TO_PUBLISH:
+                reason = str(generated.get("failure") or
+                             f"video_generate state={generation_state}")
+                if generation_state == vc.STATE_QA_FAILED:
+                    report = vc.QAReport(
+                        job_id=job_id, run_id=job.run_id, passed=False,
+                        checks={"generation": {"passed": False}},
+                        failures=[f"generation: {reason}"]).validate()
+                    vc.atomic_write_json(qa_path, report.to_dict())
+                    ledger.complete(job_id, worker_id, qa_report=report)
+                else:
+                    ledger.retry(job_id, worker_id, reason=reason)
+                print(f"영상 잡 실패: {job_id} — {reason}")
+                failed = True
+                break
+
+            raw_manifest = generated.get("manifest")
+            manifest = (raw_manifest if isinstance(raw_manifest,
+                                                   vc.GenerationManifest)
+                        else vc.GenerationManifest.from_dict(
+                            raw_manifest or {})).validate()
+            cut_lineage = _video_compose_lineage(
+                frames, generated.get("cut_lineage"))
+            storyboard_dict = storyboard.to_dict()
+
+            master_path = os.path.join(
+                renders, f"{job_id}_clean-master.mp4")
+            master = deps["compose_master"](
+                storyboard=storyboard_dict, cut_lineage=cut_lineage,
+                edit_decisions=edit_decisions, job_id=job_id,
+                output_path=master_path, renderer=deps["renderer"],
+                runtime_probe=deps.get("runtime_probe"))
+            ledger.heartbeat(job_id, worker_id, lease_seconds)
+
+            deliverable_path = os.path.join(
+                renders, f"{job_id}_subtitled.mp4")
+            deliverable = deps["compose_subtitled"](
+                master=master, storyboard=storyboard_dict,
+                edit_decisions=edit_decisions, job_id=job_id,
+                output_path=deliverable_path, renderer=deps["renderer"],
+                runtime_probe=deps.get("runtime_probe"))
+            ledger.heartbeat(job_id, worker_id, lease_seconds)
+
+            disclosure = vcomp.extract_disclosure(storyboard_dict, job.market)
+            spoken = vcomp.extract_captions(storyboard_dict)
+            caption = (("\n".join(spoken) + "\n\n") if spoken else "") + disclosure
+            stills = frames.get("still_cuts") or []
+            motion_frames = frames.get("frames") or []
+            product_image = (str(stills[0].get("source_path") or "")
+                             if stills else str(
+                                 (motion_frames[0] if motion_frames else {}).get(
+                                     "source_path") or ""))
+            identity_signoff = deps["load_identity_signoff"](
+                job, master["output_path"])
+            product_asset_dir = (deps["product_asset_dir"](job)
+                                 if deps.get("product_asset_dir")
+                                 else os.path.dirname(product_image))
+            report = deps["run_qa"](
+                job_id=job_id, run_id=job.run_id,
+                video_path=deliverable["output_path"],
+                storyboard=storyboard_dict, caption=caption,
+                overlay_texts=deliverable.get("rendered_text_layers") or [],
+                product_image_path=product_image,
+                identity_signoff=identity_signoff,
+                product_asset_dir=product_asset_dir,
+                fidelity_checker=deps.get("fidelity_checker"),
+                master_path=master["output_path"],
+                master_caption=disclosure,
+                master_overlay_texts=master.get("rendered_text_layers") or [],
+                frame_sampler=deps.get("frame_sampler"),
+                transcriber=deps.get("transcriber"),
+                audio_probe=deps.get("audio_probe"),
+                workdir=os.path.join(qa_dir, "work"))
+            report.validate()
+            vc.atomic_write_json(qa_path, report.to_dict())
+            ledger.heartbeat(job_id, worker_id, lease_seconds)
+
+            if not report.passed:
+                ledger.complete(job_id, worker_id, manifest=manifest,
+                                qa_report=report)
+                print(f"영상 QA 실패: {job_id} — "
+                      f"{'; '.join(report.failures)}")
+                failed = True
+                break
+
+            deps["promote_to_ready"](
+                ledger, job_id=job_id, worker_id=worker_id,
+                manifest=manifest, qa_report=report,
+                video_path=deliverable["output_path"], caption=caption,
+                disclosure=disclosure, affiliate_link=affiliate_link,
+                qa_report_path=qa_path, account=account)
+            print(f"영상 준비 완료: {job_id} → ready_to_publish "
+                  "(이 프로세스는 발행하지 않음)")
+        except Exception as exc:
+            reason = f"{type(exc).__name__}: {exc}"
+            try:
+                ledger.retry(job_id, worker_id, reason=reason)
+            except Exception as recovery_exc:
+                print(f"영상 잡 복구 위임: {job_id} — 리스 소유권이 바뀌어 "
+                      f"현재 원장을 덮어쓰지 않는다 ({recovery_exc})")
+            print(f"영상 잡 재시도 대기: {job_id} — {reason}")
+            failed = True
+            break
+
+    if processed == 0:
+        print("claim 가능한 영상 잡이 없다.")
+    return 1 if failed else 0
 
 
 def _video_status(cfg, settings, args):
     stats = _video_ledger(settings).stats()
     if args.json:
-        print(json.dumps({"settings": settings, "ledger": stats},
+        print(json.dumps({"settings": settings, "ledger": stats,
+                          "orchestrator": {"wired": True,
+                                           "publishes": False}},
                          ensure_ascii=False, indent=2))
         return 0
     flag = "켜짐" if settings["production_generation_enabled"] else "꺼짐"
@@ -732,6 +1238,7 @@ def _video_status(cfg, settings, args):
     print(f"kill_switch                    : {settings['kill_switch']}")
     print(f"markets / 일예산 / 회당최대     : {settings['markets']} / "
           f"${settings['daily_budget_usd']} / {settings['max_jobs_per_run']}건")
+    print("종단 오케스트레이터             : 배선됨 · ready_to_publish까지만 · 발행하지 않음")
     return 0
 
 
@@ -771,6 +1278,9 @@ def _video_rehearsal(cfg, settings, args):
     print(f"  video.kill_switch                   : {settings['kill_switch']}")
 
     print("\n리허설 결과: 유료 호출 0건 · 발행 0건")
+    print("종단 오케스트레이터 배선: storyboard → 실물/첫프레임 → H3 Max 컷 → "
+          "클린 마스터+자막본+SRT → 양쪽 QA → ready_to_publish")
+    print("이 process 경로 자체에는 publish 호출이 없다.")
     if not ok:
         print("→ 전제조건 미충족. 위 [미충족] 항목을 설치하기 전에는 실행하지 마라 —")
         print("  QA 는 fail-closed 라 생성한 영상이 전량 탈락하고 비용만 나간다.")
@@ -840,6 +1350,10 @@ def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "dryrun"
     cfg = load_config()
     dry = cfg["mode"].get("dry_run", True) or cmd == "dryrun"
+    if cmd in ("daily", "dryrun", "post", "comments", "weekly", "rehearsal", "golive"):
+        # 선언만 존재하는 계약은 실행 통제가 아니다. 콘텐츠/댓글 경로는
+        # dispatch 전에 모델·source·task·country 전체를 조립할 수 있어야 한다.
+        execution_contract.validate_runtime(cfg)
     if cmd in ("daily", "dryrun"):
         daily(cfg, dry_run=dry)
         if cmd == "dryrun":
@@ -870,7 +1384,7 @@ def main():
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            log("댓글 응대 건너뜀: 이전 실행이 아직 진행 중")
+            # 3분마다 도는 작업이라 조용히 넘어간다(로그를 남기면 cron.log가 커진다).
             return
         try:
             comments_mod.run(cfg, dry_run=dry)
