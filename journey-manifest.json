@@ -1,0 +1,36 @@
+{
+  "products": [
+    {
+      "approved_revision": 1,
+      "evidence_revision": 1,
+      "landing_url": "https://heightcue.lifoli.co.kr/us/vitamin-d-drops.html",
+      "market": "US",
+      "offer_id": "947ced6f-c42d-48af-987d-be3a55cdf108",
+      "packet_digest": "7e0b9a9346195cc892604237a3900fd9076b32854aa074a1a34f6672748d9e90",
+      "product_key": "us-ddrops-kids-600iu",
+      "tracking_key": "amazon-us-ddrops-kids-600iu"
+    }
+  ],
+  "routes": [
+    "disclosure.html",
+    "index.html",
+    "kr/c/meals_lunch.html",
+    "kr/c/play_movement.html",
+    "kr/c/sleep_morning.html",
+    "kr/c/storage_cleanup.html",
+    "kr/c/study_routine.html",
+    "kr/index.html",
+    "kr/p/153976571-444051272.html",
+    "kr/p/kr-sleepcomfort-junior-milkpillow-plus-55x34x8.html",
+    "measurement/index.html",
+    "privacy.html",
+    "sitemap.xml",
+    "us/c/meals_lunch.html",
+    "us/c/play_movement.html",
+    "us/c/sleep_morning.html",
+    "us/c/storage_cleanup.html",
+    "us/c/study_routine.html",
+    "us/index.html",
+    "us/vitamin-d-drops.html"
+  ]
+}
