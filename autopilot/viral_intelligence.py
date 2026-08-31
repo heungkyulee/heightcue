@@ -101,7 +101,7 @@ def validate_hooks(hooks):
 
 def build_hook_critic_payload(hooks):
     hooks = validate_hooks(hooks)
-    visible = ("id", "text", "hook_family", "angle_id")
+    visible = ("id", "text")
     return {"hooks": [{key: hook[key] for key in visible} for hook in hooks]}
 
 

@@ -74,7 +74,7 @@ def is_video_row(row):
 
 def attribution_gaps(row):
     fields = (REQUIRED_VIDEO_ATTRIBUTION_FIELDS if is_video_row(row)
-              else REQUIRED_ATTRIBUTION_FIELDS)
+              else REQUIRED_ATTRIBUTION_FIELDS + FRICTION_ATTRIBUTION_FIELDS)
     return [field for field in fields if not row.get(field)]
 
 
@@ -161,6 +161,7 @@ def collect(cfg, dry_run=False):
             "reposts": ins.get("reposts") if isinstance(ins, dict) else None,
             "saves": ins.get("saves") if isinstance(ins, dict) else None,
             "conversions": meta.get("conversions"),
+            "orders": meta.get("orders"),
             "commission": meta.get("commission"),
             "collected_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         }
@@ -221,9 +222,17 @@ def weekly_summary(cfg):
         "by_experiment": {exp: {arm: agg(values) for arm, values in arms.items()}
                           for exp, arms in by_experiment.items()},
         "top_posts": sorted(
-            [{"hook": r.get("hook"), "views": (r.get("insights") or {}).get("views", 0),
-              "clicks": r.get("link_clicks")} for r in latest.values()],
-            key=lambda x: x["views"], reverse=True)[:5],
+            [{"media_id": r.get("media_id"), "friction_id": r.get("friction_id"),
+              "hook": r.get("hook"), "views": (r.get("insights") or {}).get("views", 0),
+              "qualified_engagement": r.get("qualified_engagement") or 0,
+              "progression": r.get("progression") or 0, "clicks": r.get("link_clicks") or 0,
+              "orders": r.get("orders") or r.get("conversions") or 0,
+              "commission": r.get("commission") or 0} for r in latest.values()],
+            key=_revenue_rank, reverse=True)[:5],
+        "friction_funnel": friction_summary([
+            {**r, "views": (r.get("insights") or {}).get("views", 0),
+             "clicks": r.get("link_clicks") or 0} for r in latest.values()
+        ]),
         "todo_human": ["쿠팡 파트너스 리포트에서 서브ID별 전환·수익 대조"],
     }
     return summary

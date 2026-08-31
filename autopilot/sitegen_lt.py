@@ -13,7 +13,7 @@ SITE_BASE = "https://heightcue.lifoli.co.kr"
 KR_DISCLOSURE = "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."
 THREADS_URL = "https://www.threads.com/@heightcue"
 
-NAME = "heightcue | 167cm 팩트폭격기"
+NAME = "heightcue | 생활 마찰 편집실"
 BIO = "성분표 뜯어보고 돈값 하는 것만 남깁니다."
 
 
@@ -127,7 +127,7 @@ def render_hub(catalog):
         btns.append(f'<a class="lbtn" href="{SITE_BASE}/kr/p/{esc(it["slug"])}.html">{esc(it["name"])}{sub}</a>')
     body = ("".join(btns)
             + f'<a class="lbtn hollow" href="{THREADS_URL}" target="_blank" rel="noopener">Threads 팔로우 — @heightcue</a>')
-    return (_head("heightcue | 167cm 팩트폭격기", "성분표 뜯어보고 돈값 하는 것만 남깁니다.", canonical)
+    return (_head("heightcue | 생활 마찰 편집실", "성분표 뜯어보고 돈값 하는 것만 남깁니다.", canonical)
             + body + _foot())
 
 

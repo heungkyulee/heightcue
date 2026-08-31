@@ -9,6 +9,21 @@ import tempfile
 from pathlib import Path
 
 REHEARSAL_PRODUCTS = {
+    "kr-front-open-storage": {
+        "product_key": "kr-front-open-storage", "approved_product_id": "kr-front-open-storage",
+        "country": "KR", "category": "storage", "product_name": "앞으로 여는 장난감 수납함",
+        "friction_id": "fr-rehearsal-storage", "source_pointers": ["rehearsal:approved-friction", "review:weak-latch"],
+        "scores": {"friction_frequency": 4, "friction_intensity": 4, "mechanism_clarity": 5,
+                   "mobile_demo_clarity": 5, "consideration_cost": 1, "price_resistance": 1,
+                   "review_evidence_strength": 4, "failure_mode_severity": 2, "compliance_cost": 1,
+                   "expected_commission_value": 3, "attribution_readiness": 5},
+        "wrong_purchase_reversible": True, "mechanism": "front_open",
+        "failure_mode": "weak_latch", "skip_if": "선반 깊이가 얕은 집",
+        "is_food": False, "approved_claims": [], "price_info": "20,000원",
+        "review_quotes": ["잠금이 약한 제품은 문이 벌어져요"],
+        "spec_facts": ["앞으로 여는 구조", "적층 상태에서 내부 접근"],
+        "link": "https://heightcue.lifoli.co.kr/kr/", "sub_id": "hc-fr-rehearsal-storage",
+    },
     "us-ddrops-kids-600iu": {
         "product_key": "us-ddrops-kids-600iu", "country": "US", "category": "nutrition",
         "product_name": "Ddrops Kids Booster Vitamin D3 600 IU",
@@ -23,7 +38,7 @@ TASK_DIRECTIVES = {
     "sales_master": 'Return only JSON: {"hooks":["..."],"verified_points":["..."]}. Both arrays must be non-empty and grounded only in the resolved product.',
     "sales_hooks": 'Return only JSON: {"hooks":["...","...","...","...","...","..."]}. Supply exactly six non-empty unique hooks grounded only in the resolved product.',
     "sales_post": 'Return only JSON: {"candidates":[{"id":"a","text":"..."},{"id":"b","text":"..."}]}. Supply at least two candidates with unique IDs for a compliant sales post grounded only in the resolved product. Keep every finished candidate at or below 440 characters. The first line must contain a concrete number, question, or explicit contrast. Include this exact non-fit line: skip if: the exact label or fractionated coconut oil does not fit. Every candidate must end exactly in this shape, using the resolved product link field copied verbatim: Full breakdown and current listing: <link> (paid link). Never use emojis, never use affiliate_link in the post body, and never emit a placeholder such as [HeightCue guide link], [link], or URL_HERE.',
-    "value_post": 'Return only JSON: {"candidates":[{"id":"a","text":"..."},{"id":"b","text":"..."}]}. Supply at least two candidates with unique IDs for a value post grounded only in the resolved input. For episode inputs, use only approved_facts and do not invent personal scenes or memories. No teacher wrap-up, moral, generic advice, follow request, or AI conclusion; end on a concrete observation or abrupt human reaction.',
+    "value_post": 'Return only JSON candidates for the requested friction stage, grounded only in the validated friction input. No biography or product/link in discovery or bridge. No teacher wrap-up, moral, generic advice, follow request, or AI conclusion.',
     "value_thread": 'Return only JSON: {"parts":["...","..."]}. Supply two to four non-empty thread posts grounded only in the resolved input. No teacher wrap-up, moral, generic advice, follow request, or AI conclusion; end on a concrete observation or abrupt human reaction.',
     "comment_reply": 'Return only JSON with non-empty category, action, reason, and text when action is reply: {"category":"...","action":"reply|hold|skip","reason":"...","text":"..."}. Ground it only in the resolved comment and post.',
 }
@@ -41,38 +56,6 @@ def _json(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _resolve_episode(root, episode_id):
-    """Resolve an operator-confirmed story-bank episode into stable facts.
-
-    The story bank is an input source, not a generation fallback.  Only a
-    headed episode without an explicit unconfirmed marker is accepted, and
-    editorial angle/rule bullets are deliberately excluded from facts.
-    """
-    path = root / "story-bank.md"
-    if not path.exists():
-        raise ValueError(f"unresolved episode: {episode_id}")
-    text = path.read_text(encoding="utf-8")
-    match = re.search(
-        rf"^###\s+({re.escape(episode_id)})\.\s*([^\n]+)\n(.*?)(?=^###\s+E\d+\.|^##\s|\Z)",
-        text,
-        flags=re.MULTILINE | re.DOTALL,
-    )
-    if match is None:
-        raise ValueError(f"unresolved episode: {episode_id}")
-    title, body = match.group(2).strip(), match.group(3).strip()
-    if "⚠️" in title or "⚠️" in body or "미확인" in title or "미확인" in body:
-        raise ValueError(f"unresolved episode: {episode_id}")
-    facts = []
-    for line in body.splitlines():
-        fact = line.strip()
-        if not fact or fact.startswith("*"):
-            continue
-        facts.append(fact)
-    if not facts:
-        raise ValueError(f"unresolved episode: {episode_id}")
-    return {"episode_id": episode_id, "title": title, "approved_facts": facts}
-
-
 def resolve_inputs(project_root, task, input_ids, allow_rehearsal=False):
     """Resolve stable input identities without mutation, network, environment, or global state."""
     root = Path(project_root)
@@ -82,17 +65,25 @@ def resolve_inputs(project_root, task, input_ids, allow_rehearsal=False):
         kind, sep, value = str(ident).partition(":")
         if not sep or not value:
             raise ValueError("invalid input id")
-        if kind == "episode":
-            found.append(_resolve_episode(root, value))
-        elif kind in ("atom", "topic"):
+        if kind in ("episode", "topic"):
+            raise ValueError(f"retired or unvalidated input id: {ident}")
+        elif kind == "friction":
+            path = state / "friction_signals.jsonl"
+            rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()] if path.exists() else []
+            row = next((x for x in rows if str(x.get("friction_id")) == value
+                        and x.get("lifecycle") in {"validated", "active"}), None)
+            if row is None:
+                raise ValueError(f"unresolved input id: {ident}")
+            found.append(row)
+        elif kind == "atom":
             path = state / "insight_atoms.json"
             rows = _json(path) if path.exists() else []
             if isinstance(rows, dict):
                 rows = rows.get("atoms", [])
             row = next((x for x in rows if str(x.get("atom_id")) == value), None)
-            if row is None and kind == "atom":
+            if row is None:
                 raise ValueError(f"unresolved input id: {ident}")
-            found.append(row if row is not None else {kind: value})
+            found.append(row)
         elif kind == "product":
             if allow_rehearsal and value in REHEARSAL_PRODUCTS:
                 found.append(dict(REHEARSAL_PRODUCTS[value]))

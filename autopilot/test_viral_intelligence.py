@@ -26,7 +26,8 @@ def test_generation_uses_openrouter_gemini_37_flash():
 
 
 def test_real_publication_filter_rejects_dry_and_missing_ids():
-    assert is_real_publication({"media_id": "181234"}) is True
+    assert is_real_publication({"media_id": "181234", "meta": {"publish_status": "verified"}}) is True
+    assert is_real_publication({"media_id": "181234", "meta": {"publish_status": "verification_pending"}}) is False
     assert is_real_publication({"media_id": "DRY-123"}) is False
     assert is_real_publication({}) is False
 
@@ -240,9 +241,9 @@ def test_audit_owner_accepts_current_and_legacy_proof_bot_handles():
 def test_digest_builds_acp_from_real_posts_and_ignores_dry_records():
     records = [
         {"country": "KR", "text": "가짜 고정 훅\n본문", "media_id": "DRY-1", "meta": {"post_type": "value"}},
-        {"country": "KR", "text": "실제 반복 훅\n첫 본문", "media_id": "real-1", "meta": {"post_type": "value", "hook_pattern": "팩트체크"}},
-        {"country": "KR", "text": "실제 반복 훅\n둘째 본문", "media_id": "real-2", "meta": {"post_type": "sales", "hook_pattern": "팩트체크"}},
-        {"country": "US", "text": "Real US hook\nBody", "media_id": "real-us", "meta": {"post_type": "value", "hook_pattern": "myth_bust"}},
+        {"country": "KR", "text": "실제 반복 훅\n첫 본문", "media_id": "real-1", "meta": {"post_type": "value", "hook_pattern": "팩트체크", "publish_status": "verified"}},
+        {"country": "KR", "text": "실제 반복 훅\n둘째 본문", "media_id": "real-2", "meta": {"post_type": "sales", "hook_pattern": "팩트체크", "publish_status": "verified"}},
+        {"country": "US", "text": "Real US hook\nBody", "media_id": "real-us", "meta": {"post_type": "value", "hook_pattern": "myth_bust", "publish_status": "verified"}},
         {"country": "KR", "text": "댓글", "media_id": "reply-1", "meta": {"kind": "reply"}},
     ]
     acp = digest.build_account_memory(records)
@@ -316,7 +317,7 @@ def test_hook_critic_payload_is_blind_to_generator_rationale():
     payload = viral_intelligence.build_hook_critic_payload(_six_hooks())
     assert len(payload["hooks"]) == 6
     assert all("rationale" not in hook for hook in payload["hooks"])
-    assert set(payload["hooks"][0]) == {"id", "text", "hook_family", "angle_id"}
+    assert set(payload["hooks"][0]) == {"id", "text"}
 
 
 def test_hook_scores_select_exactly_top_two():
@@ -493,30 +494,27 @@ def test_single_quoted_review_paraphrase_is_ineligible():
     assert viral_intelligence.draft_is_eligible(check) is False
 
 
-def test_llm_call_retries_openrouter_payload_without_choices(monkeypatch):
-    payloads = [
-        {"error": {"message": "provider temporarily unavailable"}},
-        {"choices": [{"message": {"content": '{"ok": true}'}}]},
-    ]
+def test_llm_call_retries_http_generation(monkeypatch):
     calls = []
 
     class Response:
-        def __init__(self, payload):
-            self.payload = payload
-
         def raise_for_status(self):
             return None
 
         def json(self):
-            return self.payload
+            return {"choices": [{"message": {"content": json.dumps({"ok": True})}}]}
 
     def fake_post(*args, **kwargs):
         calls.append((args, kwargs))
-        return Response(payloads[len(calls) - 1])
+        if len(calls) == 1:
+            raise ValueError("provider temporarily unavailable")
+        return Response()
 
     monkeypatch.setattr(generate.requests, "post", fake_post)
     cfg = {"openrouter": {"model": "google/gemini-3.7-flash", "api_key": "test"}}
-    assert generate.llm_call(cfg, "system", {"input": "test"}, retry=1) == {"ok": True}
+    result = generate.llm_call(cfg, "system", {"input": "test"}, retry=1)
+    assert result["ok"] is True
+    assert result == {"ok": True}
     assert len(calls) == 2
 
 
@@ -533,7 +531,8 @@ def test_hook_generation_retries_semantically_invalid_bundle(monkeypatch):
         return responses[len(calls) - 1]
 
     monkeypatch.setattr(generate, "_gemini", fake_gemini)
-    hooks = generate.generate_hooks({}, {"master": "note"}, {"product_key": "p1"})
+    hooks = generate.generate_hooks({"openrouter": {"model": "test-model"}},
+                                    {"master": "note"}, {"product_key": "p1"})
     assert len(hooks) == 6
     assert len(calls) == 2
 
@@ -554,7 +553,8 @@ def test_hook_generation_retries_bundle_outside_product_evidence(monkeypatch):
 
     monkeypatch.setattr(generate, "_gemini", fake_gemini)
     product = {"country": "US", "product_key": "us-ddrops-kids-600iu"}
-    hooks = generate.generate_hooks({}, {"master": "note"}, product)
+    hooks = generate.generate_hooks({"openrouter": {"model": "test-model"}},
+                                    {"master": "note"}, product)
     assert len(hooks) == 6
     assert all(not post_check.evidence_boundary_notes(hook["text"], "US", product) for hook in hooks)
     assert len(calls) == 2
@@ -577,7 +577,8 @@ def test_hook_generation_accumulates_safe_hooks_across_bundles(monkeypatch):
 
     monkeypatch.setattr(generate, "_gemini", fake_gemini)
     product = {"country": "US", "product_key": "us-ddrops-kids-600iu"}
-    hooks = generate.generate_hooks({}, {"master": "note"}, product)
+    hooks = generate.generate_hooks({"openrouter": {"model": "test-model"}},
+                                    {"master": "note"}, product)
     assert [hook["id"] for hook in hooks] == [f"h{i}" for i in range(1, 7)]
     assert all(not post_check.evidence_boundary_notes(hook["text"], "US", product) for hook in hooks)
     assert len(calls) == 2

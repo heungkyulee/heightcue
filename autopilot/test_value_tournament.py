@@ -58,7 +58,7 @@ def test_value_post_runs_tournament():
          patch.object(generate, "load_skill", return_value="V1"), \
          patch("common.recent_context", _fake_ctx):
         out = generate.make_value_post(
-            cfg, "story", topic="sleep", country="KR", input_ids=["topic:sleep"])
+            cfg, "story", topic="sleep", country="KR", input_ids=["friction:sleep"])
 
     writer_calls = [c for c in calls if "critic" not in c["system"].lower()]
     critic_calls = [c for c in calls if "critic" in c["system"].lower()]
@@ -195,7 +195,7 @@ def test_value_post_has_fact_gate():
          patch("common.recent_context", _fake_ctx):
         generate.make_value_post(
             CFG, "info", topic="영양제 함량", country="KR", candidates=1,
-            input_ids=["topic:supplement-content"])
+            input_ids=["friction:supplement-content"])
 
     assert "evidence_contract" in captured, "가치글에 사실 게이트가 없다"
     contract = captured["evidence_contract"]

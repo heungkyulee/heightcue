@@ -26,9 +26,10 @@ class AuthoritativeBoundaryTest(unittest.TestCase):
         (self.root/"context/execution-contract.json").write_text(json.dumps(manifest))
         (self.root/"autopilot/config.json").write_text(json.dumps({"openrouter":{"model":"trusted-model", "critic_model":"trusted-critic"}}))
         (self.root/"autopilot/state/insight_atoms.json").write_text(json.dumps([{"atom_id":"a1","fact":"resolved fact"}]))
+        (self.root/"autopilot/state/friction_signals.jsonl").write_text(json.dumps({"friction_id":"f1","lifecycle":"validated","market":"KR"})+"\n")
         self.keys=self.root/"keys"
 
-    def call(self, ids=("atom:a1",), fixture=FIXTURE):
+    def call(self, ids=("friction:f1",), fixture=FIXTURE):
         return ec.request_authoritative_generation("value_post","KR",list(ids),project_root=str(self.root),key_dir=str(self.keys),test_fixture_executable=fixture)
 
     def test_high_level_service_returns_restart_verifiable_ed25519_attestation(self):
@@ -45,7 +46,7 @@ class AuthoritativeBoundaryTest(unittest.TestCase):
         self.assertFalse(ec.verify_attestation(a,{"text":"다른 글"},project_root=str(self.root),key_dir=str(self.keys)))
         bad=json.loads(json.dumps(a)); bad["payload"]["task"]="sales_post"
         self.assertFalse(ec.verify_attestation(bad,r,project_root=str(self.root),key_dir=str(self.keys)))
-        thread=ec.request_authoritative_generation("value_thread","KR",["atom:a1"],project_root=str(self.root),key_dir=str(self.keys),test_fixture_executable=FIXTURE)
+        thread=ec.request_authoritative_generation("value_thread","KR",["friction:f1"],project_root=str(self.root),key_dir=str(self.keys),test_fixture_executable=FIXTURE)
         self.assertFalse(ec.verify_attestation(thread["_attestation"],{"parts":list(reversed(thread["parts"]))},project_root=str(self.root),key_dir=str(self.keys)))
         probe=subprocess.run([sys.executable,"-c","import generation_worker as w; assert not hasattr(w,'sign') and not hasattr(w,'bind') and not hasattr(w,'handle'); print('blocked')"],cwd=Path(__file__).parent,text=True,capture_output=True)
         self.assertEqual((probe.returncode,probe.stdout.strip()),(0,"blocked"),probe.stderr)
@@ -93,22 +94,22 @@ class AuthoritativeBoundaryTest(unittest.TestCase):
 
     def test_fixture_is_rejected_with_either_production_authority_path(self):
         with self.assertRaises(ec.ContractError):
-            ec.request_authoritative_generation("value_post", "KR", ["atom:a1"],
+            ec.request_authoritative_generation("value_post", "KR", ["friction:f1"],
                 project_root=ec.PROJECT_ROOT, key_dir=str(self.keys), test_fixture_executable=FIXTURE)
         with self.assertRaises(ec.ContractError):
-            ec.request_authoritative_generation("value_post", "KR", ["atom:a1"],
+            ec.request_authoritative_generation("value_post", "KR", ["friction:f1"],
                 project_root=str(self.root), key_dir=ec.DEFAULT_KEY_DIR, test_fixture_executable=FIXTURE)
 
     def test_input_row_mutation_invalidates_attestation(self):
         result = self.call()
-        rows = [{"atom_id":"a1", "fact":"mutated after generation"}]
-        (self.root/"autopilot/state/insight_atoms.json").write_text(json.dumps(rows))
+        rows = [{"friction_id":"f1", "lifecycle":"validated", "market":"KR", "verbatim":"mutated after generation"}]
+        (self.root/"autopilot/state/friction_signals.jsonl").write_text(json.dumps(rows[0])+"\n")
         self.assertFalse(ec.verify_attestation(result["_attestation"], result,
             project_root=str(self.root), key_dir=str(self.keys)))
 
     def test_undeclared_and_publication_mismatched_countries_are_rejected(self):
         with self.assertRaises(ec.ContractError):
-            ec.request_authoritative_generation("value_post", "XX", ["atom:a1"],
+            ec.request_authoritative_generation("value_post", "XX", ["friction:f1"],
                 project_root=str(self.root), key_dir=str(self.keys),
                 test_fixture_executable=FIXTURE)
         result = self.call()
@@ -117,20 +118,19 @@ class AuthoritativeBoundaryTest(unittest.TestCase):
         self.assertTrue(ec.verify_attestation(result["_attestation"], result,
             project_root=str(self.root), key_dir=str(self.keys), expected_country="KR"))
 
-    def test_episode_identity_resolves_approved_story_facts(self):
+    def test_episode_identity_is_retired_even_when_story_exists(self):
         import generation_ssot
-        resolved = generation_ssot.resolve_inputs(self.root, "value_post", ["episode:E5"])
-        self.assertEqual(resolved[0]["episode_id"], "E5")
-        self.assertIn("남들이 하지 않는 사업을 진행 중이다.", resolved[0]["approved_facts"])
+        with self.assertRaisesRegex(ValueError, "retired or unvalidated"):
+            generation_ssot.resolve_inputs(self.root, "value_post", ["episode:E5"])
 
     def test_episode_identity_fails_closed_for_missing_or_unconfirmed_story(self):
         import generation_ssot
-        with self.assertRaisesRegex(ValueError, "unresolved episode"):
+        with self.assertRaisesRegex(ValueError, "retired or unvalidated"):
             generation_ssot.resolve_inputs(self.root, "value_post", ["episode:E9"])
         (self.root/"story-bank.md").write_text(
             "### E5. 키 큰 사람들 사이에서 ⚠️(미확인)\n확인되지 않은 사실\n",
             encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "unresolved episode"):
+        with self.assertRaisesRegex(ValueError, "retired or unvalidated"):
             generation_ssot.resolve_inputs(self.root, "value_post", ["episode:E5"])
 
     def test_sales_directive_requires_exact_resolved_landing_url(self):
@@ -207,8 +207,8 @@ class AuthoritativeBoundaryTest(unittest.TestCase):
         (state/"published.jsonl").write_text(json.dumps({"media_id":"m1","text":"post"})+"\n")
         cases = {
             "sales_master": ["product:p1"], "sales_hooks": ["product:p1"],
-            "sales_post": ["product:p1"], "value_post": ["atom:a1"],
-            "value_thread": ["atom:a1"], "comment_reply": ["comment:c1", "post:m1"],
+            "sales_post": ["product:p1"], "value_post": ["friction:f1"],
+            "value_thread": ["friction:f1"], "comment_reply": ["comment:c1", "post:m1"],
         }
         from unittest import mock
         with mock.patch("companyos.get_product", return_value={"product_key": "p1", "approved_claims": ["fact"]}):

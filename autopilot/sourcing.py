@@ -18,6 +18,7 @@ from collections import defaultdict
 import requests
 
 from common import log, read_json, state_path, write_json
+import friction
 
 COUPANG_HOST = "https://api-gateway.coupang.com"
 
@@ -37,7 +38,9 @@ def score_candidate(candidate):
     reasons = []
     if not row.get("friction_id"):
         reasons.append("friction_id_missing")
-    if not row.get("source_pointers"):
+    pointers = row.get("source_pointers")
+    if (not isinstance(pointers, list) or not pointers
+            or any(not isinstance(pointer, str) or not pointer.strip() for pointer in pointers)):
         reasons.append("source_pointers_missing")
     for flag in ("requires_professional_advice", "high_risk_child_safety",
                  "creator_testimony_required", "health_outcome_primary"):
@@ -55,7 +58,7 @@ def score_candidate(candidate):
     total = sum((-value if field in NEGATIVE_SCORE_FIELDS else value)
                 for field, value in parsed.items())
     return {"eligible": not reasons, "reasons": reasons, "final_score": round(total, 3),
-            "components": parsed, "source_pointers": list(row.get("source_pointers") or []),
+            "components": parsed, "source_pointers": list(pointers or []) if isinstance(pointers, list) else [],
             "friction_id": row.get("friction_id")}
 
 
@@ -287,19 +290,10 @@ def audit_readiness_reasons(result):
     if not result.get("sub_id"):
         reasons.append("sub_id_missing")
 
-    if result.get("lane") == "discovery":
-        if not result.get("formfactor_id"):
-            reasons.append("discovery_formfactor_id_missing")
-        if not result.get("friction_solved"):
-            reasons.append("discovery_friction_solved_missing")
-    else:
-        demand = result.get("demand_provenance") or {}
-        if not isinstance(demand, dict):
-            reasons.append("demand_provenance_invalid")
-            demand = {}
-        for key in ("signal_id", "source_post_id", "observed_at", "signal", "connection_reason"):
-            if not demand.get(key):
-                reasons.append(f"demand_{key}_missing")
+    if not result.get("friction_id"):
+        reasons.append("friction_id_missing")
+    if not result.get("source_pointers"):
+        reasons.append("friction_source_pointers_missing")
 
     price = result.get("price_provenance") or {}
     if not isinstance(price, dict):
@@ -423,30 +417,23 @@ def _queue_paths(cfg):
 
 
 def top_up_requests(cfg, buffer_target=3):
-    """Demand와 Discovery 레인을 번갈아 채워 소싱 탐색의 교착을 막는다."""
+    """Create requests exclusively from validated friction-ledger demand."""
     req_p, res_p, _ = _queue_paths(cfg)
     reqs = read_json(req_p, [])
     results = read_json(res_p, [])
     used = {h.get("product_key") for h in read_json(state_path(cfg, "sourced_history.json"), [])}
     ready = [r for r in results if r.get("status") == "done"
-             and r.get("product_key") not in used and is_audit_approved(r)]
+             and r.get("product_key") not in used and is_audit_approved(r)
+             and score_candidate(r)["eligible"]]
     pending = [q for q in reqs if q.get("status") == "pending"]
     need = buffer_target - len(ready) - len(pending)
     added = 0
-    signals = read_json(state_path(cfg, "demand_signals.json"), [])
-    used_signal_ids = {q.get("demand_signal_id") for q in reqs}
-    available = [s for s in signals if s.get("status") == "validated"
-                 and s.get("signal_id") and s.get("signal_id") not in used_signal_ids
-                 and s.get("source_post_id") and s.get("observed_at")
-                 and s.get("signal") and s.get("connection_reason")
-                 and s.get("category") in {"nutrition", "sleep", "posture", "exercise"}
+    used_friction_ids = {q.get("friction_id") for q in reqs}
+    available = [s for s in friction.load_signals(state_path(cfg, "friction_signals.jsonl"))
+                 if s.get("lifecycle") in {"validated", "active"}
+                 and s.get("market") == "KR" and s.get("friction_id") not in used_friction_ids
                  and s.get("sourcing_keyword")]
-    available.sort(key=lambda s: (-(s.get("repeated_count") or 1), s.get("observed_at", "")))
-    used_formfactors = {q.get("formfactor_id") for q in reqs if q.get("formfactor_id")}
-    discovery = [f for f in ux_store(cfg)["formfactors"]
-                 if f.get("status") in ("candidate", "active")
-                 and f.get("id") not in used_formfactors and f.get("keyword")]
-    discovery.sort(key=lambda f: (f.get("ux_grade") != "novel", f.get("sourced_count", 0), f["id"]))
+    available.sort(key=lambda s: (-s["recurrence"], -s["intensity"], s["friction_id"]))
     comparison_contract = {
         "candidate_pool_min": 5,
         "compared_min": 3,
@@ -454,38 +441,19 @@ def top_up_requests(cfg, buffer_target=3):
         "winner_count": 1,
     }
 
-    while need > 0 and (available or discovery):
-        use_demand = bool(available) and (not discovery or (len(pending) + added) % 2 == 0)
-        if use_demand:
-            signal = available.pop(0)
-            cat = {"key": signal["category"], "keyword": signal["sourcing_keyword"],
-                   "is_food": bool(signal.get("is_food"))}
-            ff_id, ff_grade = signal.get("formfactor_id"), signal.get("ux_grade")
-            lane = "demand"
-            demand_signal_id = signal["signal_id"]
-            demand_provenance = {key: signal[key] for key in
-                                 ("signal_id", "source_post_id", "observed_at", "signal", "connection_reason")}
-            friction_solved = signal.get("signal")
-        else:
-            formfactor = discovery.pop(0)
-            cat = {"key": formfactor["category"], "keyword": formfactor["keyword"],
-                   "is_food": bool(formfactor.get("is_food"))}
-            ff_id, ff_grade = formfactor["id"], formfactor.get("ux_grade")
-            lane = "discovery"
-            demand_signal_id = None
-            demand_provenance = None
-            friction_solved = formfactor.get("friction_solved")
-
+    while need > 0 and available:
+        signal = available.pop(0)
         request = {
             "id": f"req-{time.strftime('%Y%m%d%H%M%S')}-{added}",
             "status": "pending", "country": "KR",
-            "lane": lane,
-            "category": cat["key"], "keyword": cat["keyword"], "is_food": cat["is_food"],
-            "formfactor_id": ff_id, "ux_grade": ff_grade,
-            "friction_solved": friction_solved,
-            "demand_signal_id": demand_signal_id,
+            "lane": "friction", "friction_id": signal["friction_id"],
+            "source_pointers": [signal["source_pointer"]],
+            "category": signal["domain"], "keyword": signal["sourcing_keyword"],
+            "is_food": bool(signal.get("is_food")),
+            "formfactor_id": (signal.get("mechanisms") or [None])[0],
+            "friction_solved": signal["verbatim"],
             "comparison_contract": comparison_contract,
-            "sub_id": f"{cfg['coupang'].get('sub_id_prefix', 'hc')}-{time.strftime('%Y%m%d')}-{cat['key']}",
+            "sub_id": f"{cfg['coupang'].get('sub_id_prefix', 'hc')}-{signal['friction_id']}",
             "needs": ["파트너스 공식 링크 + 요청 subId 필수(누락 시 done 금지)", "리뷰 수",
                       "쿠팡 상품 원페이지 URL + 수집시각",
                       "일반 반복구매가와 쿠폰·와우·첫구매 변동가를 price_provenance로 분리하고 가격 출처 URL 기록",
@@ -501,8 +469,6 @@ def top_up_requests(cfg, buffer_target=3):
                       "결과에 요청의 formfactor_id·ux_grade 그대로 기록"],
             "requested_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         }
-        if demand_provenance:
-            request["demand_provenance"] = demand_provenance
         reqs.append(request)
         added += 1
         need -= 1
@@ -510,7 +476,7 @@ def top_up_requests(cfg, buffer_target=3):
         write_json(req_p, reqs)
         log(f"소싱 요청 {added}건 추가 → state/browser-queue/requests.json (Aside 루틴이 채움)")
     elif need > 0:
-        log("소싱 요청 생성 안 함: 사용 가능한 Demand·Discovery 후보 없음")
+        log("소싱 요청 생성 안 함: 검증된 friction ledger 입력 없음")
     return added
 
 
@@ -542,7 +508,8 @@ def _pick_from_queue(cfg):
         if (r.get("status") == "done" and r.get("product_key")
                 and r["product_key"] not in used
                 and not _blacklisted(r.get("product_name", ""))
-                and is_audit_approved(r)):
+                and is_audit_approved(r)
+                and score_candidate(r)["eligible"]):
             if not cfg["mode"].get("_rehearsal"):
                 history.append({"product_key": r["product_key"], "ts": time.strftime("%Y-%m-%d")})
                 write_json(state_path(cfg, "sourced_history.json"), history)
@@ -563,23 +530,9 @@ def _pick_from_queue(cfg):
 
 def pick(cfg, dry_run=False):
     """오늘의 판매글 상품 1개를 고른다. 반환: product dict 또는 None."""
-    history = read_json(state_path(cfg, "sourced_history.json"), [])
-    seen = {h.get("product_key") for h in history}
-    day_idx = int(time.time() // 86400)
-    cat = CATEGORIES[day_idx % len(CATEGORIES)]
-
     if dry_run:
-        product = {
-            "product_key": "dryrun-jumprope",
-            "country": "KR", "category": cat["key"],
-            "product_name": "[DRY] 실내 무소음 줄넘기 층간소음 매트 세트",
-            "is_food": False, "is_certified_health_food": False,
-            "approved_claims": [], "price_info": "23,900원",
-            "review_count": 4200, "review_rating": 4.6,
-            "review_quotes": ["넷플릭스 틀어놓고 하루 300개 미션 중이에요", "층간소음 걱정이 없어요", "조립이랄 게 없어서 편해요"],
-            "spec_facts": ["무소음 볼 줄넘기", "층간소음 매트 포함 옵션", "실내용"],
-            "link": "https://link.coupang.com/DRYRUN", "sub_id": "hc-dryrun",
-        }
+        from generation_ssot import REHEARSAL_PRODUCTS
+        product = dict(REHEARSAL_PRODUCTS["kr-front-open-storage"])
         log(f"소싱(dry): {product['product_name']}")
         return product
 
@@ -588,45 +541,6 @@ def pick(cfg, dry_run=False):
     if queued:
         return queued
 
-    # 2순위: 수동 소싱 대기열
-    manual = read_json(state_path(cfg, "manual_products.json"), [])
-    fresh = [p for p in manual if p.get("product_key") not in seen]
-    if fresh:
-        product = fresh[0]
-        if not cfg["mode"].get("_rehearsal"):
-            history.append({"product_key": product["product_key"], "ts": time.strftime("%Y-%m-%d")})
-            write_json(state_path(cfg, "sourced_history.json"), history)
-        log(f"소싱(수동 대기열): {product.get('product_name')}")
-        return product
-
-    if not cfg["coupang"].get("access_key"):
-        log("소싱 결과 없음: 브라우저 큐·수동 대기열 비어 있음 → 오늘 판매글 건너뜀 (가치글만 발행), 요청 버퍼 충전")
-        top_up_requests(cfg)
-        return None
-
-    candidates = search_products(cfg, cat["keyword"])
-    for c in candidates:
-        name = c.get("productName", "")
-        key = str(c.get("productId") or name)
-        if _blacklisted(name) or key in seen:
-            continue
-        sub_id = f"{cfg['coupang'].get('sub_id_prefix','hc')}-{time.strftime('%Y%m%d')}-{cat['key']}"
-        product = {
-            "product_key": key, "country": "KR", "category": cat["key"],
-            "product_name": name,
-            "is_food": cat["is_food"],
-            # 식품인데 건기식 여부를 API로 단정할 수 없으면 False로 두어 인증 표기를 막는다(보수적).
-            "is_certified_health_food": False,
-            "approved_claims": [], "price_info": f"{c.get('productPrice','')}원",
-            "review_count": None, "review_rating": None, "review_quotes": [],
-            "spec_facts": [], "link": make_deeplink(cfg, c.get("productUrl", ""), sub_id),
-            "sub_id": sub_id,
-        }
-        if not cfg["mode"].get("_rehearsal"):
-            history.append({"product_key": key, "ts": time.strftime("%Y-%m-%d")})
-            write_json(state_path(cfg, "sourced_history.json"), history)
-        log(f"소싱(API): {name[:40]}")
-        return product
-
-    log("소싱: 적합 후보 없음")
+    log("소싱: 검증된 friction + 저관여 점수 + 감사 승인을 모두 통과한 큐 후보 없음")
+    top_up_requests(cfg)
     return None

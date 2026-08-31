@@ -20,7 +20,7 @@ def test_stage_contract_rejects_commercial_coupling_and_biography():
 def test_bridge_and_verdict_have_stage_specific_requirements():
     bridge = {"text": "책을 눈높이까지 올리면 고개 숙이는 각도가 줄어듭니다", "friction_id": "fr-2", "stage": "bridge", "market": "US", "source_pointers": ["signal:s2"]}
     assert generate.validate_friction_candidate(bridge)["stage"] == "bridge"
-    verdict = {"text": "#ad\nFront opening removes the restack. Bad reviews report weak latches. Skip if your shelf is shallow. https://heightcue.test/p/1", "friction_id": "fr-2", "stage": "verdict", "market": "US", "source_pointers": ["product:p1", "review:r1"], "mechanism": "front opening", "failure_mode": "weak latches", "skip_if": "shelf is shallow", "attributable_route": "https://heightcue.test/p/1"}
+    verdict = {"text": "#ad\nFront opening removes the restack. Bad reviews report weak latches. Skip if your shelf is shallow. https://heightcue.test/p/1", "friction_id": "fr-2", "stage": "verdict", "market": "US", "source_pointers": ["product:p1", "review:r1"], "mechanism": "front opening", "failure_mode": "weak latches", "skip_if": "shelf is shallow", "attributable_route": "https://heightcue.test/p/1", "disclosure": "#ad"}
     assert generate.validate_friction_candidate(verdict)["stage"] == "verdict"
     del verdict["failure_mode"]
     try:

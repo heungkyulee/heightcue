@@ -65,7 +65,8 @@ def _sales_arm(cfg, country, key, default="ab"):
     return "on" if n % 2 == 0 else "off"
 
 
-def _gate_and_publish(cfg, text, country, post_type, product=None, link=None, dry_run=False, meta_extra=None):
+def _gate_and_publish(cfg, text, country, post_type, product=None, link=None, dry_run=False,
+                      meta_extra=None, candidate=None):
     text = text or ""
     if not text.strip():
         return None, "format_fail"
@@ -76,6 +77,16 @@ def _gate_and_publish(cfg, text, country, post_type, product=None, link=None, dr
     if country == "KR" and not re.search(r"[가-힣]", text):
         log("검사(KR): 한국어 없음 — 한국어로 재생성")
         return None, "language_fail"
+    if candidate is not None:
+        try:
+            validated = generate.validate_friction_candidate({**candidate, "text": text})
+        except ValueError as exc:
+            log(f"friction candidate gate: {exc}")
+            return None, "candidate_fail"
+        meta_extra = {**(meta_extra or {}), **{key: validated.get(key) for key in (
+            "friction_id", "stage", "market", "source_pointers", "mechanism",
+            "failure_mode", "skip_if", "attributable_route", "disclosure")
+            if validated.get(key) is not None}}
     check = post_check.check_post({
         "country": country, "post_type": post_type, "text": text,
         # 원문 리뷰·라벨·스펙과 대조하는 검사가 추가돼도 근거가 잘리지 않도록 전체 제품 증거를 넘긴다.
@@ -106,7 +117,8 @@ def _gate_and_publish(cfg, text, country, post_type, product=None, link=None, dr
     return (media, "published") if media else (None, "publish_failed")
 
 
-def _publish_with_retry(cfg, build_fn, country, post_type, product=None, link=None, dry_run=False, meta_extra=None):
+def _publish_with_retry(cfg, build_fn, country, post_type, product=None, link=None, dry_run=False,
+                        meta_extra=None, candidate=None):
     """포맷·언어 실패 때만 1회 재생성. 리스크 보류는 재시도하지 않는다."""
     last_text = None
     last_reason = None
@@ -114,7 +126,8 @@ def _publish_with_retry(cfg, build_fn, country, post_type, product=None, link=No
         text = build_fn()
         last_text = text
         media, reason = _gate_and_publish(cfg, text, country, post_type,
-                                          product=product, link=link, dry_run=dry_run, meta_extra=meta_extra)
+                                          product=product, link=link, dry_run=dry_run,
+                                          meta_extra=meta_extra, candidate=candidate)
         if reason not in ("format_fail", "language_fail"):
             return media, reason
         last_reason = reason
@@ -125,7 +138,7 @@ def _publish_with_retry(cfg, build_fn, country, post_type, product=None, link=No
     return None, last_reason
 
 
-def _publish_thread(cfg, parts, country, dry_run=False, meta_extra=None):
+def _publish_thread(cfg, parts, country, dry_run=False, meta_extra=None, candidate=None):
     """타래 발행 — 각 편을 검사기에 태우고 앞 편에 답글로 잇는다.
 
     설계 결정: **전량 사전 검사 후 발행.** 1편을 올린 뒤 2편이 검사에서
@@ -147,6 +160,12 @@ def _publish_thread(cfg, parts, country, dry_run=False, meta_extra=None):
             return None, "language_fail"
         if country == "KR" and not re.search(r"[가-힣]", text):
             return None, "language_fail"
+        if candidate is not None:
+            try:
+                generate.validate_friction_candidate({**candidate, "text": text})
+            except ValueError as exc:
+                log(f"타래 {i}편 friction candidate gate: {exc}")
+                return None, "candidate_fail"
         check = post_check.check_post({"country": country, "post_type": "value",
                                        "text": text, "product": {}})
         if check["verdict"] == "FAIL":
@@ -166,8 +185,11 @@ def _publish_thread(cfg, parts, country, dry_run=False, meta_extra=None):
     # 2단계 — 순차 발행. 각 편은 직전 편에 답글로 붙는다.
     root, prev = None, None
     for i, text in enumerate(parts, 1):
+        candidate_meta = {key: (candidate or {}).get(key) for key in (
+            "friction_id", "stage", "market", "source_pointers")
+            if (candidate or {}).get(key) is not None}
         meta = {"post_type": "value", "thread_part": i, "thread_total": len(parts),
-                **(meta_extra or {})}
+                **candidate_meta, **(meta_extra or {})}
         if i == 1:
             meta["hook_pattern"] = _guess_pattern(text.splitlines()[0][:70])
         media = publish.publish_text(cfg, country, text.strip(), reply_to=prev,
@@ -192,17 +214,25 @@ def make_and_publish_value(cfg, dry_run=False, country="KR"):
               for p in read_jsonl(state_path(cfg, "published.jsonl"))
               if is_real_publication(p)][-10:]
     kind = "info"
-    episode = None
 
-    # Non-commercial stages are sourced only from the validated evidence/friction path.
-    atom = evidence.pick_atom(cfg, country=country, channel="threads")
-    if not atom:
-        log("검증된 friction/evidence 입력 없음 — 가치글 생성 건너뜀")
+    import friction
+    signal = friction.pick_signal(state_path(cfg, "friction_signals.jsonl"), country)
+    if not signal and cfg["mode"].get("_rehearsal"):
+        signal = {"friction_id": "fr-rehearsal-storage", "market": country,
+                  "source_pointer": "rehearsal:approved-friction",
+                  "verbatim": "stacked bins must be emptied to reach the lower toys"}
+    if not signal:
+        log("검증된 friction ledger 입력 없음 — 비상업 글 생성 건너뜀")
         return None, "no_validated_friction"
-    topic = evidence.to_generation_topic(atom)
+    topic = signal["verbatim"]
+    stage = "discovery"
+    candidate_meta = {"friction_id": signal["friction_id"], "stage": stage,
+                      "market": country, "source_pointers": [signal["source_pointer"]]}
+    meta_extra = dict(candidate_meta)
 
-    meta_extra = {"atom_id": atom["atom_id"], "topic": atom["topic"],
-                  "distance": atom["distance"]} if atom else {}
+    # Thread publication remains supported, but ordinary friction stages use a single mobile screen.
+    atom = None
+    episode = None
 
     # 근거가 탄탄한 원자(strong/moderate)는 타래로 푼다. 사실·반론·실행이
     # 한 원자에 다 들어있어 480자 단편에 넣으면 정보가 뭉개진다.
@@ -234,19 +264,11 @@ def make_and_publish_value(cfg, dry_run=False, country="KR"):
             log("타래 생성 오류 — 단편으로 폴백")
 
     def build():
-        if atom:
-            input_ids = [f"atom:{atom['atom_id']}"]
-        elif episode:
-            episode_id = episode.get("episode_id") or episode.get("id")
-            stable = episode_id or hashlib.sha256(
-                json.dumps(episode, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
-            input_ids = [f"episode:{stable}"]
-        else:
-            stable = hashlib.sha256(str(topic).encode()).hexdigest()[:16]
-            input_ids = [f"topic:{stable}"]
+        input_ids = [f"friction:{signal['friction_id']}"]
         result = generate.make_value_post(
-            cfg, kind, episode=episode, topic=topic, recent=recent,
-            dry_run=dry_run, country=country, input_ids=input_ids)
+            cfg, kind, topic=topic, recent=recent, dry_run=dry_run, country=country,
+            input_ids=input_ids, stage=stage)
+        generate.validate_friction_candidate(result)
         # 토너먼트 산출물을 발행 meta에 실어야 나중에 "어떤 앵글·점수가 실제로
         # 조회수를 냈는지" 귀속할 수 있다. 안 실으면 토너먼트를 돌린 의미가 없다.
         meta_extra.update({k: result.get(k) for k in
@@ -260,10 +282,8 @@ def make_and_publish_value(cfg, dry_run=False, country="KR"):
             meta_extra["generation_attestation"] = result["_attestation"]
         return result["text"]
 
-    media, reason = _publish_with_retry(cfg, build, country, "value",
-                                        dry_run=dry_run, meta_extra=meta_extra)
-    if atom and media and not dry_run:
-        evidence.mark_used(cfg, atom["atom_id"], "threads", country, media)
+    media, reason = _publish_with_retry(cfg, build, country, "value", dry_run=dry_run,
+                                        meta_extra=meta_extra, candidate=candidate_meta)
     return media, reason
 
 

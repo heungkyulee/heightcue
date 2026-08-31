@@ -39,7 +39,7 @@ def validate_friction_candidate(candidate):
         if re.search(r"https?://|#ad|affiliate|쿠팡 파트너스|아마존 어소시에이트|\bbrand\b|\bproduct\b|제품", text, re.I):
             raise ValueError("non-commercial stage contains commercial coupling")
     if row["stage"] == "verdict":
-        required = ("mechanism", "failure_mode", "skip_if", "attributable_route")
+        required = ("mechanism", "failure_mode", "skip_if", "attributable_route", "disclosure")
         absent = [key for key in required if not row.get(key)]
         if absent:
             raise ValueError("missing verdict fields: " + ",".join(absent))
@@ -230,7 +230,14 @@ def make_sales_post(cfg, master, product, playbook_hint="", dry_run=False):
                 f"{master['usage_caveat']}. 자세한 구성은 링크에서 확인하세요.\n"
                 f"{product['link']}"
             )
-        return {"text": text, "char_count": len(text), "self_check": {}}
+        disclosure = "#ad" if product.get("country") == "US" else "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."
+        return {"text": text, "char_count": len(text), "self_check": {},
+                "friction_id": product.get("friction_id"), "stage": "verdict",
+                "market": product.get("country", "KR"),
+                "source_pointers": product.get("source_pointers") or [],
+                "mechanism": product.get("mechanism"), "failure_mode": product.get("failure_mode"),
+                "skip_if": product.get("skip_if"), "attributable_route": product.get("link"),
+                "disclosure": disclosure}
     country = product.get("country", "KR")
     if _authoritative_mode(cfg):
         return execution_contract.request_authoritative_generation(
@@ -310,6 +317,11 @@ def make_sales_post(cfg, master, product, playbook_hint="", dry_run=False):
     critic_model = cfg["openrouter"].get("critic_model", cfg["openrouter"]["model"])
     winner.update({
         "product_id": product.get("product_key"),
+        "friction_id": product.get("friction_id"), "stage": "verdict", "market": country,
+        "source_pointers": product.get("source_pointers") or [],
+        "mechanism": product.get("mechanism"), "failure_mode": product.get("failure_mode"),
+        "skip_if": product.get("skip_if"), "attributable_route": product.get("link"),
+        "disclosure": "#ad" if country == "US" else "쿠팡 파트너스 수수료 고지",
         "formfactor_id": product.get("formfactor_id"),
         "ux_grade": product.get("ux_grade"),
         "critic_status": critic_status,
@@ -324,7 +336,7 @@ def make_sales_post(cfg, master, product, playbook_hint="", dry_run=False):
 # ── 가치글 (V1) ─────────────────────────────────────────────────────────────
 
 def make_value_post(cfg, kind, episode=None, topic=None, recent=None, dry_run=False, country="KR",
-                    angle_override=None, candidates=None, input_ids=None):
+                    angle_override=None, candidates=None, input_ids=None, stage="discovery"):
     """가치글 생성 — 서로 다른 앵글로 후보 N개를 만들어 블라인드 비평으로 고른다.
 
     2026-08-29 이전에는 앵글 하나를 무작위로 뽑아 단일 호출로 끝냈다. 발행의 74%가
@@ -341,18 +353,23 @@ def make_value_post(cfg, kind, episode=None, topic=None, recent=None, dry_run=Fa
     source_pointers = list(input_ids or [])
     friction_id = next((item.split(":", 1)[1] for item in source_pointers
                         if str(item).startswith("friction:")), None)
-    if not friction_id and source_pointers:
-        friction_id = str(source_pointers[0]).split(":", 1)[-1]
-    friction_id = friction_id or "unresolved-friction"
+    if not friction_id:
+        raise ValueError("validated friction input required")
+    if stage not in {"discovery", "bridge"}:
+        raise ValueError("non-commercial generator supports discovery or bridge only")
 
     if dry_run:
         selected_angle = angle_override if angle_override else random.choice(angles)
         if country == "US":
-            text = f"[Angle: {selected_angle}] Bedtime cleanup takes twelve minutes because every bin opens from the top."
+            text = ("Bedtime cleanup takes twelve minutes because every bin opens from the top."
+                    if stage == "discovery" else
+                    "A front-opening bin removes the empty-and-restack step while the bins stay stacked.")
         else:
-            text = f"[{selected_angle} 앵글] 장난감 정리만 12분. 위로 여는 수납함이 매번 일을 두 번 만듭니다."
+            text = ("장난감 정리만 12분. 위로 여는 수납함이 매번 일을 두 번 만듭니다."
+                    if stage == "discovery" else
+                    "앞으로 여는 구조면 통을 쌓아둔 채 꺼냅니다. 비우고 다시 쌓는 동작이 사라집니다.")
         return {"text": text, "kind": "info", "angle_used": selected_angle,
-                "friction_id": friction_id, "stage": "discovery", "market": country,
+                "friction_id": friction_id, "stage": stage, "market": country,
                 "source_pointers": source_pointers,
                 "self_check": {"링크_제품_없음": True, "각색_없음": True, "480자_이내": True, "신파_없음": True}}
 
@@ -417,7 +434,7 @@ def make_value_post(cfg, kind, episode=None, topic=None, recent=None, dry_run=Fa
     drafts = []
     for index, angle in enumerate(pool, 1):
         payload = {"kind": kind, "country": country, "language_requirement": lang,
-                   "angle": angle, "topic": topic,
+                   "angle": angle, "topic": topic, "stage": stage,
                    "evidence_atoms": atom_claims,
                    "evidence_contract": evidence_contract,
                    "viral_speech_seeds": style_seeds,
@@ -430,7 +447,7 @@ def make_value_post(cfg, kind, episode=None, topic=None, recent=None, dry_run=Fa
         if not isinstance(result, dict) or not (result.get("text") or "").strip():
             continue
         drafts.append({**result, "id": f"v{index}", "angle_used": result.get("angle_used", angle),
-                       "friction_id": friction_id, "stage": result.get("stage", "discovery"),
+                       "friction_id": friction_id, "stage": stage,
                        "market": country, "source_pointers": source_pointers})
         log(f"  후보 {index}: 앵글={angle}, {len(result['text'])}자")
 
@@ -507,7 +524,7 @@ def make_value_thread(cfg, topic, parts=3, recent=None, dry_run=False, country="
 
 # ── 댓글 답글 (A5) ──────────────────────────────────────────────────────────
 
-def make_reply(cfg, comment, post_summary, post_type, story_facts, dry_run=False, country="KR",
+def make_reply(cfg, comment, post_summary, post_type, story_facts=None, dry_run=False, country="KR",
                thread_context=None, is_nested=False, input_ids=None):
     """댓글/대댓글 답글 생성.
 
@@ -529,7 +546,7 @@ def make_reply(cfg, comment, post_summary, post_type, story_facts, dry_run=False
             rehearsal=bool((cfg.get("mode") or {}).get("_rehearsal")))
     contract, provenance = _contract(cfg, "comment_reply", country, input_ids=input_ids)
     payload = {"comment": comment, "post_summary": post_summary,
-               "post_type": post_type, "story_bank_facts": story_facts,
+               "post_type": post_type,
                "thread_context": thread_context or [], "is_nested": bool(is_nested),
                "execution_contract": contract}
     return execution_contract._bind_generated_result(

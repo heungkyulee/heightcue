@@ -6,6 +6,7 @@
 ## 0. 30초 요약
 
 - heightcue = 키 고민 부모 대상 Threads 단일 채널 어필리에이트 (KR 쿠팡 / US 아마존 투트랙).
+- **사업 목적과 전사 KPI:** 쿠팡 파트너스·Amazon Associates의 실제 매출·전환·수수료가 최상위 KPI다. 발행·조회·반응은 선행지표이며, 모든 Bot은 자기 단계의 정상 여부가 아니라 매출 퍼널 전체의 다음 병목과 개선점을 보고한다.
 - **이 레포(`~/heightcue-autopilot`)가 실행 SSOT다.** LiFoli Company OS(`lifoli.co.kr/admin#/heightcue`, Supabase v46)는 별도 트랙이며 서로 섞지 않는다.
 - 실행은 이 맥의 crontab + Aside 루틴. 콘텐츠 생성 모델은 OpenRouter 경유 `google/gemini-3.1-pro-preview` (`-preview` 없는 슬러그는 존재하지 않음).
 - **파이썬은 반드시 `~/heightcue-autopilot/.venv/bin/python3`** — 시스템/샌드박스 python3에는 `requests`가 없어 즉사한다.
@@ -14,7 +15,7 @@
 
 | 파일 | 역할 |
 |---|---|
-| `heightcue-SSOT-v2.md` | **최신 기획서(SSOT).** 철칙 3개(§0), 브랜드/페르소나(§2), 가치글·판매글 2레이어(§3), 파이프라인 A/B/C(§4~6), US 트랙(§7), 자율 운영(§8), 부록 A 표현 가드레일, 부록 B 검사기 기준. v1 기획서(구 버전, 파이프라인 3개짜리 짧은 문서)는 이 문서로 대체됨 — v1이 다시 보이면 참고만 하고 기준으로 삼지 말 것 |
+| `heightcue-SSOT-v2.md` | **최신 기획서(SSOT).** 고정 화자 없이 검증된 생활 마찰 → 메커니즘 → 저관여 제품 판정으로 운영한다. 과거 persona 문서는 archive일 뿐 활성 입력이 아니다. |
 | `LAUNCH-STATUS.md` | **현재 가동 상태 대시보드.** 계정/토큰/발행 게이트/남은 인간 단계. "지금 뭐가 켜져 있지?"는 여기 |
 | `README-autopilot.md` | 셋업 가이드 (venv, config.json, crontab, 리허설→golive 절차) |
 | `README.md` | 공개 사이트용 리드미 (기획 문서 아님) |
@@ -37,11 +38,12 @@
 
 | 파일 | 역할 |
 |---|---|
-| `heightcue-gemini-skills.md` | **콘텐츠 생성 스킬 프롬프트** (v2.2 합법 어그로 · 컨텍스트 분리). SKILL A2(마스터 조사 노트), A3-KR/A3-US(쓰레드 변환), A4(검수 의견), A5(댓글 분류), V1(가치글). `common.load_skill()`이 `context/`(compliance·persona·voice-kr/us) + 스킬 본문을 합성해 system 메시지로 주입 — 공통 규칙(금지 목록·페르소나·말투)은 `context/`에서, 스킬별 규칙은 이 파일에서 수정 |
-| `context/` | **공통 프롬프트 컨텍스트** (v2.2 신설). `compliance.md`(합법 어그로 제1원칙·절대 금지 1~10·고지 불변 문구), `persona.md`(코어 3요소·하이브리드 각색), `voice-kr.md`/`voice-us.md`(말투·AI냄새 박멸·바이럴 문장). 가드레일 완화 금지·강화만 가능 (SSOT 부록 A 동기화) |
-| `autopilot/generate.py` | LLM 호출 계층 (OpenRouter, JSON 모드, dry_run 지원, 언어 게이트) |
-| `story-bank.md` | 운영자 실화 에피소드 저장소 (하이브리드 모드: 코어 3요소 고정, 세부 각색 허용, 제품 체험담 각색 금지). 자가개선이 읽기만 가능 |
+| `heightcue-gemini-skills.md` | 활성 생성 프롬프트. discovery / bridge / verdict가 검증된 `friction_id`를 공유하며 비상업 단계는 링크·상품 결합을 금지한다. |
+| `context/` | 공통 컴플라이언스·편집·KR/US 보이스 컨텍스트. `persona.md` 파일명은 호환용이며 내용은 persona-free 편집 계약이다. |
+| `autopilot/generate.py` | 검증된 friction 입력 기반 3단계 생성과 블라인드 토너먼트. 비평가는 본문과 hard stage fields만 본다. |
+| `story-bank.md` | **역사 아카이브 전용. 활성 생성·댓글·실행 계약에서 읽지 않는다.** |
 | `autopilot/post_check.py` | 포스트 검사기 v3 (바이럴 포맷 점수 + 리스크 메모, 반려는 500자 초과뿐). 회귀: `post_check.py test_posts.json --test` (기준선 39/39) |
+| `autopilot/viral_intelligence.py` | **바이럴 토너먼트의 결정적 계층.** 훅/판매글/가치글 비평 프롬프트와 승자 선발. **비평은 반드시 블라인드** — 앵글 라벨·self_check·생성 근거를 넘기면 비평가가 '의도'를 보고 점수를 줘 토너먼트가 무의미해진다(`build_*_critic_payload`가 본문만 통과시킴). 가치글은 비평 실패 시 첫 후보로 폴백하되 `tournament_fallback` 플래그를 남긴다(조용히 죽으면 토너먼트가 멈춘 걸 아무도 모른다). **2026-08-29 사고: 토너먼트가 판매글에만 배선돼 있었고, 발행 31건 전부 `viral_score`가 `None`이라 무엇이 통했는지 귀속 불가였다. 승자 산출물은 반드시 발행 meta까지 실을 것** |
 | `autopilot/test_posts.json` | 검사기 회귀 테스트셋 |
 
 ### 3-1. 증거 원장 (가치글 입력 공급 — 2026-08-28 신설)
@@ -94,9 +96,10 @@ D3 운영자 서사·사회적 시선(10%). D2·D3가 도달을 만들고 D0가 
 | 파일 | 역할 |
 |---|---|
 | `autopilot/publish.py` | Threads 공식 API 발행 (컨테이너→publish, link_attachment/reply_to_id A/B, 토큰 주 1회 갱신). `fetch_conversation()`=대댓글 포함 조회, `has_delete_scope()`/`DeletePermissionError`=삭제 권한 판정 |
-| `autopilot/reauth.py` | **OAuth 재인증** — 토큰에 새 스코프를 반영한다. Meta 앱에 권한을 추가해도 **기존 토큰은 발급 시점 스코프로 고정**되고 `refresh_access_token`으로는 늘지 않으므로, 새 권한을 쓰려면 이 스크립트로 재발급해야 한다. `THREADS_APP_ID`(=Threads 앱 ID `27621028630913037`, Meta 앱 ID `2080790246144682`와 다름)와 `THREADS_APP_SECRET`을 환경변수로 전달. Meta는 localhost에도 HTTPS를 요구하고 콜백 URL 3개(callback/deauthorize/delete)를 모두 채워야 저장되므로 자체서명 인증서로 `https://localhost:8787`을 띄운다 |
-| `autopilot/run.py` | **오케스트레이터.** `daily`/`post`/`comments`/`weekly`/`rehearsal`/`status`/`golive`/`dryrun`/`context` 명령. 진입점은 항상 이 파일 |
-| `crontab.txt` | 스케줄 원본 (09:30 daily / 12:30·16:00·19:30 post / 14:00 comments / 일 21:00 weekly). 등록: `crontab ~/heightcue-autopilot/crontab.txt` |
+| `autopilot/reauth.py` | **OAuth 재인증** — 토큰에 새 스코프를 반영한다. Meta 앱에 권한을 추가해도 **기존 토큰은 발급 시점 스코프로 고정**되고 `refresh_access_token`으로는 늘지 않으므로, 새 권한을 쓰려면 이 스크립트로 재발급해야 한다. `THREADS_APP_ID`(=Threads 앱 ID `27621028630913037`, Meta 앱 ID `2080790246144682`와 다름)와 `THREADS_APP_SECRET`을 환경변수로 전달. Meta는 localhost에도 HTTPS를 요구하고 콜백 URL 3개(callback/deauthorize/delete)를 모두 채워야 저장되므로 자체서명 인증서로 `https://localhost:8787`을 띄운다. **함정(2026-08-28 실사고):** ① 시크릿을 macOS 클립보드로 나르지 말 것 — 병렬 세션이 덮어써서 엉뚱한 값이 들어갔다. 파일(`chmod 600`, 사용 즉시 삭제)로 전달한다. ② 콜백 서버에 헬스체크(curl 등)를 날리지 말 것 — `/callback` 외 경로는 204로 무시하게 해뒀지만 과거 `handle_request`가 요청 1개만 처리해 인증서 경고 화면에 소진된 전례가 있다. ③ US 재인증 시 계정 전환을 반드시 확인 — KR 계정으로 승인하면 us_access_token에 KR 토큰이 박힌다. 검증: `/me`의 id가 config의 user_id와 일치하는지 대조 |
+| `autopilot/run.py` | **오케스트레이터.** `daily`/`post`/`comments`/`weekly`/`rehearsal`/`status`/`golive`/`dryrun`/`context`와 `video enqueue/process/status/rehearsal` 명령. 영상 `process`는 원장 claim → 근거 결속 스토리보드 → 실물 Ken-Burns/생성 첫 프레임 → 고정 MiniMax H3 Max 모션 컷 → 클린 마스터+자막본+SRT → 양쪽 QA → `ready_to_publish`까지 실행하며 **발행은 하지 않는다.** 진입점은 항상 이 파일 |
+| `autopilot/health.py` | **운영 상태 점검 — "지금 잘 돌아가나?"에 사실로 답한다.** `../.venv/bin/python health.py` (이상 시 exit 1, `--json` 지원). 발행 게이트·최근 발행·댓글 크론 생존·crontab 등록·cron PATH의 외부 CLI·최근 24h 에러·증거 재고를 한 번에 본다. **조용한 실패를 잡으라고 만든 것** — 2026-08-29에 `mode.publish=false`로 하루치 18건이 preview로만 쌓이고 harvest가 매일 죽던 것이 로그 속에 묻혀 있었다. 이상하다 싶으면 로그를 뒤지기 전에 이것부터 실행할 것 |
+| `crontab.txt` | 스케줄 원본 (08:30 harvest / 09:30 daily / 12:30·16:00·19:30 post / **3분마다 comments** / 일 21:00 weekly / 04:15 로그 로테이션). **파일만 고치면 아무 일도 안 일어난다 — 반드시 `crontab ~/heightcue-autopilot/crontab.txt`로 등록하고 `crontab -l`로 확인할 것.** 2026-08-28에 crontab이 통째로 비어 있어 답글이 안 달린 사고가 있었다(코드는 정상이었음). 3분 주기를 떠받치는 장치 4가지 — 하나라도 없으면 3분 주기는 성립하지 않는다: ① `state/comments.lock` 파일 락(중복 실행 차단) ② `comments.select_posts()` 나이별 계층(6h=매회 / 6~48h=15분 / 48h~7d=3시간 / 7d+=하루 1회 — 매회 전 글을 조회하면 호출 폭증) ③ 무소득 실행·락 스킵은 로그를 남기지 않음(3분마다 쌓이면 cron.log 폭주) ④ `state/gone_posts.json` 묘비(삭제된 글은 영구 400이라 재조회 금지). 실측: 발행 30건 기준 하루 5,184회(한도 48,000의 10.8%), 1회 약 5초 |
 | `autopilot/config.json` | 실제 설정 (mode/cadence/openrouter/threads/coupang/amazon 키). git 미추적. 예시는 `config.example.json` |
 
 ## 5. 파이프라인 C — 분석·자가개선·댓글
@@ -105,7 +108,7 @@ D3 운영자 서사·사회적 시선(10%). D2·D3가 도달을 만들고 D0가 
 |---|---|
 | `autopilot/analytics.py` | 지표 수집 (Threads Insights + URL별 클릭, **폼팩터/ux_grade 태그 포함**) → `state/metrics.jsonl`. 주간 요약에 `by_ux_grade`(proven vs novel 성과 비교) |
 | `autopilot/improve.py` | 주간 자가개선 — **`state/playbook.md` 갱신 경로로만.** 스킬/SSOT/스토리뱅크 자동 수정 금지. 추가로 `sourcing.update_ux_stats()` 호출(폼팩터 성과 반영·저성과 은퇴·발굴 정체 경보) + 주간 리포트에 북극성·UX 발굴 감사 섹션 |
-| `autopilot/comments.py` | 댓글·**대댓글** 분류·자동 답글 (의료=소아과 권유 고정, 분쟁=보류) → `state/holdbox.jsonl`. **불변 규칙 2가지:** ① 답글은 반드시 **댓글 id**(`reply_to=cid`)에 단다 — 원글 id를 넘기면 답글이 아니라 원글에 최상위 댓글이 하나 더 달리고 질문자에게 알림도 안 간다(2026-08-28 실사고). ② 대댓글은 `build_thread_context()`로 부모 대화 체인을 A5에 주입한다 — "그럼 몇 개월이요?"는 단독으로 의미가 안 서므로 맥락 없이 답하면 헛소리가 나간다. 부모 체인 복원 실패 시 `context_missing`으로 보류(추측 금지). 자문자답·기응답 댓글은 스레드 자체를 증거로 스킵. 회귀: `test_comments.py` (8건) |
+| `autopilot/comments.py` | 댓글·**대댓글** 분류·자동 답글 (의료=소아과 권유 고정, 분쟁=보류) → `state/holdbox.jsonl`. **불변 규칙 2가지:** ① 답글은 반드시 **댓글 id**(`reply_to=cid`)에 단다 — 원글 id를 넘기면 답글이 아니라 원글에 최상위 댓글이 하나 더 달리고 질문자에게 알림도 안 간다(2026-08-28 실사고). ② 대댓글은 `build_thread_context()`로 부모 대화 체인을 A5에 주입한다 — "그럼 몇 개월이요?"는 단독으로 의미가 안 서므로 맥락 없이 답하면 헛소리가 나간다. 부모 체인 복원 실패 시 `context_missing`으로 보류(추측 금지). 자문자답·기응답 댓글은 스레드 자체를 증거로 스킵. **3분 주기 운영 장치:** `select_posts()` 나이별 계층 조회, `gone_posts.json` 묘비(삭제 글 재조회 금지), 무소득 실행 무로그. 회귀: `test_comments.py` (11건) |
 | `reply-outreach.md` | 답글 파고들기 플레이북 (콜드스타트: 인플루언서 글에 링크 없는 답글 10~15/일) |
 | `autopilot/state/playbook.md` | 자가개선 산출물 (생성 시 스타일 힌트로 주입) |
 | `autopilot/state/weekly_report.md` | 주간 리포트 (운영자 주 10~15분 확인 지점) |
@@ -123,11 +126,13 @@ D3 운영자 서사·사회적 시선(10%). D2·D3가 도달을 만들고 D0가 
 
 ```bash
 cd ~/heightcue-autopilot/autopilot
+../.venv/bin/python health.py              # 운영 상태 점검 (조용한 실패 탐지, 이상 시 exit 1)
+../.venv/bin/python test_health.py         # 상태 점검 자체의 회귀 6/6
 ../.venv/bin/python validate.py            # 자격증명·모델 슬러그 실호출 검증 (실패 시 exit 1)
 ../.venv/bin/python test_ops.py            # 운영 안전장치 테스트
 ../.venv/bin/python test_queue.py          # 브라우저 큐 E2E
 ../.venv/bin/python post_check.py test_posts.json --test   # 포맷 회귀 39/39
-../.venv/bin/python test_comments.py       # 댓글·대댓글 응대 회귀 8/8
+../.venv/bin/python test_comments.py       # 댓글·대댓글 응대 회귀 11/11
 ```
 
 ## 8. 레거시 — 기준으로 삼지 말 것
@@ -197,4 +202,3 @@ python3 ~/.hermes/scripts/check_rename_integrity.py   # 0=정상, 1=끊긴 참�
 `price_provenance`는 dict, `review_provenance`·`official_provenance`는 list of dict를
 기대하며, 어긋나면 크래시 대신 `*_invalid` 보류 사유로 처리한다. 새 provenance 필드를
 추가할 때도 같은 방어를 넣는다.
-
