@@ -35,6 +35,15 @@ def price_band(price_info, explicit=None):
     return next(label for ceiling, label in USD_PRICE_BANDS if amount < ceiling)
 
 
+def normalize_product(row):
+    """Return a Company OS product with one authoritative price-band rule."""
+    normalized = dict(row)
+    normalized["price_band"] = price_band(
+        normalized.get("price_info"), normalized.get("price_band")
+    )
+    return normalized
+
+
 def _load_credentials(path=ENV_PATH):
     url = os.environ.get("COMPANYOS_SUPABASE_URL") or os.environ.get("SUPABASE_URL")
     key = os.environ.get("COMPANYOS_SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_SERVICE_KEY")
@@ -97,7 +106,7 @@ def get_product(product_key, transport=None):
         row = row[0] if row else None
     if not isinstance(row, dict) or row.get("product_key") != product_key:
         raise CompanyOSError("approved Company OS product input unavailable")
-    return row
+    return normalize_product(row)
 
 
 def claim_us_product(cfg, owner=DEFAULT_OWNER, transport=None):
@@ -116,6 +125,7 @@ def claim_us_product(cfg, owner=DEFAULT_OWNER, transport=None):
     missing = [key for key in required if not row.get(key)]
     if missing:
         raise CompanyOSError("Company OS claim contract missing: " + ", ".join(missing))
+    row = normalize_product(row)
     price_info = row.get("price_info") or {}
     return {
         "product_key": row["product_key"], "country": "US",
@@ -132,7 +142,7 @@ def claim_us_product(cfg, owner=DEFAULT_OWNER, transport=None):
         "is_certified_health_food": bool(row.get("is_certified_health_food", False)),
         "approved_claims": row.get("approved_claims") or [],
         "price_info": price_info,
-        "price_band": price_band(price_info, row.get("price_band")),
+        "price_band": row["price_band"],
         "review_count": row.get("review_count"),
         "review_rating": row.get("review_rating"),
         "review_quotes": row.get("review_quotes") or [],
