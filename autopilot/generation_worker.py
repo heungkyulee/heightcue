@@ -147,6 +147,28 @@ def validate_candidates(raw):
     return candidates
 
 
+def invoke_writer_candidates(fixture, cfg, task, model, prompt, payload):
+    """Retry one schema-invalid tournament response without relaxing validation."""
+    repair = (
+        "\n\nSCHEMA REPAIR (FINAL): Your previous response was invalid. Return only "
+        '{"candidates":[{"id":"a","text":"..."},{"id":"b","text":"..."}]}. '
+        "The candidates array must contain at least two objects with unique, non-empty IDs "
+        "and non-empty finished text. Do not return a direct text object or explanatory prose."
+    )
+    last_error = None
+    for attempt in range(2):
+        raw = invoke(fixture, cfg, "writer", task, model,
+                     prompt if attempt == 0 else prompt + repair, payload)
+        try:
+            validate_candidates(raw)
+            return raw
+        except RuntimeError as exc:
+            last_error = exc
+    if last_error is None:
+        raise RuntimeError("writer candidate validation failed")
+    raise last_error
+
+
 def select_candidate(candidates, critic):
     scores = critic.get("scores") if isinstance(critic, dict) else None
     if not isinstance(scores, list) or len(scores) != len(candidates): raise RuntimeError("invalid critic response")
@@ -195,7 +217,12 @@ def run(capability):
             user_payload = {"task":task, "country":request["country"], "stage": stage,
                             "resolved_payload":resolved}
             writer_model = cfg["openrouter"]["model"]
-            raw = invoke(fixture, cfg, "writer", task, writer_model, prompt.decode("utf-8"), user_payload)
+            writer_prompt = prompt.decode("utf-8")
+            if task in TOURNAMENT_TASKS:
+                raw = invoke_writer_candidates(
+                    fixture, cfg, task, writer_model, writer_prompt, user_payload)
+            else:
+                raw = invoke(fixture, cfg, "writer", task, writer_model, writer_prompt, user_payload)
             critic_status, critic_model = "not_run", None
             if task in TOURNAMENT_TASKS:
                 candidates = validate_candidates(raw)

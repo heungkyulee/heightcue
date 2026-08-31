@@ -145,6 +145,42 @@ class AuthoritativeBoundaryTest(unittest.TestCase):
         self.assertIn("No teacher wrap-up", generation_ssot.TASK_DIRECTIVES["value_post"])
         self.assertIn("No teacher wrap-up", generation_ssot.TASK_DIRECTIVES["value_thread"])
 
+    def test_value_writer_directive_requires_explicit_multi_candidate_schema(self):
+        import generation_ssot
+        directive = generation_ssot.TASK_DIRECTIVES["value_post"]
+        self.assertIn('{"candidates":[{"id":"a","text":"..."},{"id":"b","text":"..."}]}', directive)
+        self.assertIn("at least two", directive)
+        self.assertIn("unique IDs", directive)
+
+    def test_value_writer_directive_prevents_critic_disqualifying_fabrication(self):
+        import generation_ssot
+        directive = generation_ssot.TASK_DIRECTIVES["value_post"]
+        for boundary in ("numbers", "prevalence", "first-person", "family history"):
+            with self.subTest(boundary=boundary):
+                self.assertIn(boundary, directive)
+
+    def test_writer_retries_semantically_invalid_candidate_bundle_with_repair_prompt(self):
+        from unittest.mock import patch
+        responses = iter([
+            {"text": "A single direct draft"},
+            {"candidates": [{"id": "a", "text": "Draft A"},
+                            {"id": "b", "text": "Draft B"}]},
+        ])
+        calls = []
+
+        def fake_invoke(fixture, cfg, phase, task, model, prompt, payload):
+            calls.append((prompt, payload))
+            return next(responses)
+
+        with patch.object(gw, "invoke", side_effect=fake_invoke):
+            raw = gw.invoke_writer_candidates(
+                None, {}, "value_post", "model", "base prompt", {"resolved_payload": []})
+
+        self.assertEqual(len(raw["candidates"]), 2)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("previous response was invalid", calls[1][0].lower())
+        self.assertNotIn("A single direct draft", calls[1][0])
+
     def test_rehearsal_product_fixture_is_trusted_only_when_rehearsal_mode_is_on(self):
         config_path=self.root/'autopilot/config.json'
         cfg=json.loads(config_path.read_text()); cfg['mode']={'_rehearsal': True}; config_path.write_text(json.dumps(cfg))
