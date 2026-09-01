@@ -28,6 +28,10 @@ _COMMERCIAL = re.compile(
     r"#ad|제휴|파트너스|amazon|coupang|구매하세요|사세요|buy\s+this|shop\s+now)",
     re.IGNORECASE,
 )
+_UNTRUSTED_SOURCE = re.compile(
+    r"(?:사주|시주|원국|운세|타로|점성술|궁합|astrology|horoscope|zodiac|birth\s*chart|psychic)",
+    re.IGNORECASE,
+)
 _SELF = {"heightcue", "heightcue_us"}
 
 
@@ -65,6 +69,8 @@ def validate_candidate(row: dict) -> dict:
     reply_text = str(row.get("reply_text", ""))
     if _MEDICAL.search(source_text) or _MEDICAL.search(reply_text):
         reasons.append("medical_or_personal_health_context")
+    if _UNTRUSTED_SOURCE.search(source_text):
+        reasons.append("unsupported_occult_claim_context")
     if _COMMERCIAL.search(reply_text):
         reasons.append("commercial_connection")
     if any(row.get(field) for field in ("product_key", "offer_id", "affiliate_url", "brand")):

@@ -38,6 +38,10 @@ def price_band(price_info, explicit=None):
 def normalize_product(row):
     """Return a Company OS product with one authoritative price-band rule."""
     normalized = dict(row)
+    if not isinstance(normalized.get("price_info"), dict) and isinstance(normalized.get("price_observation"), dict):
+        normalized["price_info"] = dict(normalized["price_observation"])
+    if not normalized.get("link") and normalized.get("affiliate_url"):
+        normalized["link"] = normalized["affiliate_url"]
     normalized["price_band"] = price_band(
         normalized.get("price_info"), normalized.get("price_band")
     )

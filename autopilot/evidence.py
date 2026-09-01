@@ -16,8 +16,10 @@
 서로 다르게 렌더링할 뿐이며, 채널이 늘어도 수집기는 바뀌지 않는다.
 """
 import hashlib
+import ipaddress
 import re
 import time
+from urllib.parse import urlparse
 
 from common import append_jsonl, is_real_publication, log, read_json, read_jsonl, state_path, write_json
 
@@ -45,6 +47,8 @@ SECONDARY_SOURCE_TYPES = {"news", "viral_post", "blog", "book"}
 ALL_SOURCE_TYPES = PRIMARY_SOURCE_TYPES | SECONDARY_SOURCE_TYPES
 
 CONFIDENCE_LEVELS = {"strong", "moderate", "weak"}
+
+PLACEHOLDER_MARKERS = ("example", "placeholder", "changeme", "dummy", "test-only")
 
 # 인과 단정 패턴 — 상관을 인과로 파는 순간 우리는 TruHeight가 된다.
 # 한국어 활용형 주의: 크다→큽니다/컸다, 자라다→자랍니다. 어간만 잡으면 다 샌다.
@@ -90,6 +94,50 @@ def _atoms_path(cfg):
     return state_path(cfg, "insight_atoms.json")
 
 
+def source_locator_reasons(source):
+    """Return deterministic locator defects without trusting network availability."""
+    reasons = []
+    url = str(source.get("url") or "").strip()
+    doi = str(source.get("doi") or "").strip()
+    locator_blob = f"{url} {doi}".lower()
+    if any(marker in locator_blob for marker in PLACEHOLDER_MARKERS):
+        reasons.append("source_placeholder")
+
+    if doi and not re.fullmatch(r"10\.\d{4,9}/\S+", doi, re.IGNORECASE):
+        reasons.append("source_doi_invalid")
+
+    if url:
+        parsed = urlparse(url)
+        if parsed.scheme.lower() != "https":
+            reasons.append("source_https_required")
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if not host:
+            reasons.append("source_host_missing")
+        else:
+            forbidden = host == "localhost" or host.endswith((".localhost", ".invalid", ".test"))
+            try:
+                forbidden = forbidden or ipaddress.ip_address(host).is_private
+            except ValueError:
+                pass
+            if forbidden:
+                reasons.append("source_host_forbidden")
+        if parsed.username or parsed.password:
+            reasons.append("source_credentials_forbidden")
+        if host == "pubmed.ncbi.nlm.nih.gov" and not re.fullmatch(r"/\d+/?", parsed.path):
+            reasons.append("source_locator_invalid")
+        if host == "pmc.ncbi.nlm.nih.gov" and not re.match(r"^/articles/PMC\d+/?", parsed.path, re.I):
+            reasons.append("source_locator_invalid")
+
+    return sorted(set(reasons))
+
+
+def _sources_are_eligible(sources):
+    return bool(sources) and all(
+        isinstance(source, dict) and not source_locator_reasons(source)
+        for source in sources
+    )
+
+
 # ── claim_gate ──────────────────────────────────────────────────────────────
 
 def claim_gate(record, known_hashes=None):
@@ -127,6 +175,7 @@ def claim_gate(record, known_hashes=None):
                 reasons.append(f"source_type_invalid:{stype}")
             if not src.get("url") and not src.get("doi"):
                 reasons.append("source_locator_missing")
+            reasons.extend(source_locator_reasons(src))
             types.add(stype)
         if not (types & PRIMARY_SOURCE_TYPES):
             reasons.append("primary_source_required")
@@ -194,6 +243,41 @@ def save_atoms(cfg, store):
     store["updated_at"] = _now()
     write_json(_atoms_path(cfg), store)
     return store
+
+
+def quarantine_invalid_atoms(cfg):
+    """Remove invalid legacy atoms from active supply and retain an audit copy."""
+    store = atom_store(cfg)
+    active, invalid = [], []
+    for atom in store["atoms"]:
+        source_reasons = []
+        for source in atom.get("sources") or []:
+            if not isinstance(source, dict):
+                source_reasons.append("source_malformed")
+            else:
+                source_reasons.extend(source_locator_reasons(source))
+        if not atom.get("sources"):
+            source_reasons.append("sources_missing")
+        if source_reasons:
+            invalid.append((atom, sorted(set(source_reasons))))
+        else:
+            active.append(atom)
+
+    if invalid:
+        quarantine_path = state_path(cfg, "quarantined_atoms.jsonl")
+        already = {row.get("atom_id") for row in read_jsonl(quarantine_path)}
+        for atom, reasons in invalid:
+            if atom.get("atom_id") not in already:
+                append_jsonl(quarantine_path, {
+                    "atom_id": atom.get("atom_id"),
+                    "source_evidence_id": atom.get("source_evidence_id"),
+                    "reasons": reasons,
+                    "atom": atom,
+                    "quarantined_at": _now(),
+                })
+        store["atoms"] = active
+        save_atoms(cfg, store)
+    return {"quarantined": len(invalid), "active": len(active)}
 
 
 def promote_pending(cfg):
@@ -275,7 +359,8 @@ def pick_atom(cfg, country="KR", channel="threads", topic=None, max_reuse=1):
     ckey = channel_key(channel, country)
 
     pool = [a for a in atoms
-            if len(a.get("used_in", {}).get(ckey, [])) < max_reuse
+            if _sources_are_eligible(a.get("sources") or [])
+            and len(a.get("used_in", {}).get(ckey, [])) < max_reuse
             and (topic is None or a.get("topic") == topic)]
     if not pool:
         return None

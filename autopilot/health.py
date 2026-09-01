@@ -67,7 +67,7 @@ def check_comments_alive(cfg):
     return OK, f"댓글 크론 정상 ({age:.0f}분 전 실행)"
 
 
-def check_outreach_alive(cfg, rows=None, now=None):
+def check_outreach_alive(cfg, rows=None, now=None, probes=None):
     settings = cfg.get("outreach") or {}
     if not settings.get("enabled") or not settings.get("publish"):
         return WARN, "외부 답글 발행이 비활성"
@@ -99,16 +99,40 @@ def check_outreach_alive(cfg, rows=None, now=None):
     if stale:
         return FAIL, "외부 답글 미확인 예약 90분 초과: " + ",".join(stale)
 
+    probe_rows = (read_jsonl(state_path(cfg, "outreach_probe.jsonl"))
+                  if probes is None else list(probes))
+    latest_probe = {}
+    for probe in probe_rows:
+        market = str(probe.get("market") or "").upper()
+        stamp = parsed(probe.get("observed_at"))
+        if market and stamp is not None and (market not in latest_probe or
+                                             stamp > latest_probe[market][0]):
+            latest_probe[market] = (stamp, probe)
+
     missing = []
+    zero_observed = []
     markets = tuple(settings.get("markets") or ("KR", "US"))
     for market in markets:
         stamps = [parsed(row.get("verified_at")) for row in latest.values()
                   if row.get("market") == market and row.get("status") == "verified"]
         valid = [stamp for stamp in stamps if stamp is not None]
-        if not valid or (current - max(valid)).total_seconds() > 12 * 3600:
-            missing.append(market)
+        if valid and (current - max(valid)).total_seconds() <= 12 * 3600:
+            continue
+        probe = latest_probe.get(market)
+        if probe and (current - probe[0]).total_seconds() <= 12 * 3600:
+            detail = probe[1]
+            try:
+                source_count = int(detail.get("source_count", -1))
+            except (TypeError, ValueError):
+                source_count = -1
+            if detail.get("status") == "ok" and source_count == 0:
+                zero_observed.append(market)
+                continue
+        missing.append(market)
     if missing:
         return FAIL, "최근 12시간 검증 답글 없음: " + ",".join(missing)
+    if zero_observed:
+        return WARN, "최근 12시간 조회 성공·적격 원천 0건 (외부 답글 0건 관찰): " + ",".join(zero_observed)
     return OK, "외부 답글 최근 검증 및 예약 상태 정상: " + ",".join(markets)
 
 
@@ -118,10 +142,10 @@ def check_cron_registered():
         out = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=10).stdout
     except Exception as e:
         return WARN, f"crontab 조회 실패: {e}"
-    lines = [l for l in out.splitlines() if "heightcue" in l and not l.strip().startswith("#")]
+    lines = [line for line in out.splitlines() if "heightcue" in line and not line.strip().startswith("#")]
     if not lines:
         return FAIL, "crontab에 heightcue 작업이 없다 — `crontab ~/heightcue-autopilot/crontab.txt` 필요"
-    if not any("PATH=" in l for l in out.splitlines()):
+    if not any("PATH=" in line for line in out.splitlines()):
         return WARN, "crontab에 PATH 설정 없음 — aside 등 외부 CLI가 실패할 수 있다"
     return OK, f"crontab {len(lines)}개 등록"
 
@@ -132,8 +156,8 @@ def check_external_tools():
         out = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=10).stdout
     except Exception:
         return WARN, "crontab 조회 실패"
-    path = next((l.split("=", 1)[1].strip() for l in out.splitlines()
-                 if l.startswith("PATH=")), "/usr/bin:/bin")
+    path = next((line.split("=", 1)[1].strip() for line in out.splitlines()
+                 if line.startswith("PATH=")), "/usr/bin:/bin")
     missing = [t for t in ("aside",)
                if subprocess.run(["env", "-i", f"PATH={path}", "sh", "-c", f"command -v {t}"],
                                  capture_output=True).returncode != 0]
@@ -178,6 +202,16 @@ def check_recent_errors(cfg):
         if any(ts_value(e.get("ts") or e.get("harvested_at")) > last_by_where["harvest"] for e in ev):
             recovered.append("harvest")
 
+    revenue = read_json(state_path(cfg, "revenue.json"), {})
+    markets = revenue.get("markets", {}) if isinstance(revenue, dict) else {}
+    for market in ("KR", "US"):
+        key = f"revenue_readback_{market.lower()}"
+        row = markets.get(market, {}) if isinstance(markets, dict) else {}
+        observed_at = ts_value(row.get("dashboard_readback_timestamp")) if isinstance(row, dict) else 0.0
+        if (key in last_by_where and row.get("measurement_status") == "measured"
+                and observed_at > last_by_where[key]):
+            recovered.append(key)
+
     previews = read_jsonl(state_path(cfg, "preview.jsonl"))
     success_times = {}
     for row in previews:
@@ -213,6 +247,13 @@ def check_recent_errors(cfg):
         if (legacy_post_key in last_by_where
                 and success_times.get(key, 0.0) > last_by_where[legacy_post_key]):
             recovered.append(legacy_post_key)
+    # A verified publication is also a successful recovery for the matching
+    # value slot.  Publication workers do not necessarily append a preview
+    # row, so relying on success_times alone leaves post_us_value permanently
+    # unresolved after a real, read-back-verified publish.
+    if ("post_us_value" in last_by_where
+            and publication_times.get("us_value", 0.0) > last_by_where["post_us_value"]):
+        recovered.append("post_us_value")
     if ("post_us_sales" in last_by_where
             and publication_times.get("us_sales", 0.0) > last_by_where["post_us_sales"]):
         recovered.append("post_us_sales")
@@ -261,7 +302,14 @@ def check_companyos_workflow(cfg, probe=None):
     if not probe.get("ok") or failed:
         return FAIL, "상품 인계 불변식 실패: " + ", ".join(failed or ["unknown"])
     summary = ", ".join(f"{key}={value}" for key, value in sorted(counts.items())) or "상품 0"
-    return OK, f"Company OS 상품 원장 정상 ({summary})"
+    claimable = probe.get("claimable_now")
+    if not isinstance(claimable, int) or isinstance(claimable, bool):
+        return WARN, f"Company OS 상품 원장 정상 ({summary}); claimable_now 미보고 — health RPC 배포 확인 필요"
+    if claimable <= 0:
+        by_market = probe.get("claimable_by_market") or {}
+        market_summary = ", ".join(f"{key}={value}" for key, value in sorted(by_market.items())) or "시장별 0"
+        return WARN, f"Company OS 상품 원장 정상 ({summary}); 즉시 claim 가능 0 ({market_summary})"
+    return OK, f"Company OS 상품 원장 정상 ({summary}); 즉시 claim 가능 {claimable}"
 
 
 _ACTIVE_CONTRACT_PATHS = (

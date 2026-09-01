@@ -51,8 +51,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import video_contracts as vc
 import video_queue as vq
-from video_contracts import (STATE_DEAD_LETTER, STATE_GENERATING,
-                             STATE_PUBLISHED, STATE_PUBLISHING, STATE_QUEUED,
+from video_contracts import (STATE_PUBLISHED, STATE_PUBLISHING,
                              STATE_READY_TO_PUBLISH, PublishingHandoff,
                              QAReport, VideoJob, append_event)
 
@@ -65,7 +64,7 @@ from video_contracts import (STATE_DEAD_LETTER, STATE_GENERATING,
 EVIDENCE_FILENAME = "publish_evidence.jsonl"
 
 #: 발행 워커가 요구할 수 있는 리스 기본값. 업로드+발행이 넉넉히 끝나는 시간.
-DEFAULT_PUBLISH_LEASE_SECONDS = 600.0
+DEFAULT_PUBLISH_LEASE_SECONDS = 1200.0
 
 #: 패킷이 반드시 담아야 하는 것. 하나라도 비면 핸드오프를 만들지 않는다.
 REQUIRED_PACKET_FIELDS = (
@@ -272,7 +271,7 @@ def build_packet(*, job: VideoJob, entry: Dict[str, Any], video_path: str,
         "account": account,
         "video_path": video_path,
         "video_sha256": video_sha256,
-        "duration_seconds": manifest.total_duration_seconds(),
+        "duration_seconds": job.storyboard.total_duration_seconds(),
         "aspect_ratio": manifest.aspect_ratio,
         "caption": caption,
         "disclosure": disclosure,
@@ -353,7 +352,7 @@ def promote_to_ready(ledger: vq.VideoLedger, *, job_id: str, worker_id: str,
         market=job.market, state=STATE_READY_TO_PUBLISH,
         content_draft_id=job.storyboard.content_draft_id,
         video_path=absolute, video_sha256=digest,
-        duration_seconds=manifest.total_duration_seconds(),
+        duration_seconds=job.storyboard.total_duration_seconds(),
         aspect_ratio=manifest.aspect_ratio,
         caption=caption, disclosure_included=True,
     ).validate()

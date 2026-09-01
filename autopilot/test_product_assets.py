@@ -755,6 +755,10 @@ class TestOfficialCdnHosts(BaseCase):
         self.assertTrue(any("media-amazon.com" in h
                             for h in pa.OFFICIAL_IMAGE_HOSTS["US"]))
 
+    def test_ddrops_first_party_manufacturer_image_host_is_allowed(self):
+        self.assertTrue(pa.is_official_image_host(
+            "https://vitaminddrops.com/us-en/wp-content/uploads/product.png", "US"))
+
     def test_off_allowlist_image_host_rejected(self):
         """rights_basis 문자열만 맞다고 임의 호스트를 신뢰하지 않는다."""
         evil = "https://scontent.cdninstagram.com/creator/photo.png"

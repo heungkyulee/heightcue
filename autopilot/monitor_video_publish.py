@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import tempfile
 from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -40,6 +41,7 @@ import video_queue as vq  # noqa: E402
 #: 발행할 영상이 없을 때의 출력. 빈 문자열이 아니라 **안정된 표지**를 쓴다 —
 #: 빈 출력은 '모니터가 죽었다'와 구분되지 않는다.
 NO_READY_OUTPUT = "video_publish_ready=0\n"
+SIGNAL_FILENAME = "monitor_publish_signal.txt"
 
 #: sha256 은 동일성 확인용 접두만 찍는다. 전문은 패킷에 있다.
 SHA_PREFIX_LEN = 12
@@ -86,6 +88,47 @@ def emit(ledger: Any) -> None:
     sys.stdout.write(render(ledger))
 
 
+def _signal_path(ledger: Any) -> str:
+    return os.path.join(ledger.root, SIGNAL_FILENAME)
+
+
+def _remember_signal(ledger: Any, value: str) -> None:
+    """Atomically retain the last actionable signal.
+
+    Keeping the previous non-empty signal across ready→empty prevents Hermes
+    monitor mode from waking the agent solely because a successful publish
+    removed the final queue item. A newly ready/recovered job changes the
+    signal (job id or attempt count) and still wakes the agent.
+    """
+    path = _signal_path(ledger)
+    fd, tmp = tempfile.mkstemp(prefix=".monitor-signal-", dir=ledger.root,
+                               text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(value)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def actionable_signal(ledger: Any) -> str:
+    """Recover expired leases and emit only a signal that merits a wake."""
+    ledger.recover_stale()
+    current = render(ledger)
+    if current != NO_READY_OUTPUT:
+        _remember_signal(ledger, current)
+        return current
+    try:
+        with open(_signal_path(ledger), encoding="utf-8") as fh:
+            previous = fh.read()
+    except FileNotFoundError:
+        previous = NO_READY_OUTPUT
+    return previous if previous else NO_READY_OUTPUT
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="monitor_video_publish.py",
@@ -100,7 +143,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # 진단은 stderr 로만 보낸다(해시 대상이 아니다).
     try:
         ledger = vq.VideoLedger(args.root)
-        sys.stdout.write(render(ledger))
+        sys.stdout.write(actionable_signal(ledger))
     except Exception as exc:                       # noqa: BLE001 — 의도적 광폭
         sys.stdout.write(NO_READY_OUTPUT)
         print("monitor_video_publish: %s: %s" % (type(exc).__name__, exc),

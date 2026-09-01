@@ -195,7 +195,11 @@ def select_candidate(candidates, critic):
         if not row["disqualified"]:
             normalized.append((float(row["score"]), row["id"]))
     if seen != candidate_ids: raise RuntimeError("critic ids must exactly match candidates")
-    if not normalized: raise RuntimeError("all candidates disqualified by grounded critic")
+    if not normalized:
+        reasons = "; ".join(
+            f"{row['id']}: {row['reason']}" for row in sorted(scores, key=lambda item: item["id"])
+        )
+        raise RuntimeError(f"all candidates disqualified by grounded critic: {reasons}")
     winner_id = sorted(normalized, key=lambda item: (-item[0], item[1]))[0][1]
     return {"text": next(item["text"] for item in candidates if item["id"] == winner_id)}
 

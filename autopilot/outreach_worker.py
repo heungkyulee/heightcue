@@ -7,6 +7,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import sys
+from pathlib import Path
 
 from common import load_config, state_path
 import journey_policy
@@ -17,6 +18,18 @@ import outreach_reply
 
 class OutreachWorkerError(RuntimeError):
     pass
+
+
+def _record_probe(path, market, queries, status, source_count=0, now="", error=None):
+    """Persist read-only discovery provenance, including a genuine empty result."""
+    record = {"observed_at": now, "market": market, "queries": list(queries),
+              "query_count": len(queries), "source_count": source_count, "status": status}
+    if error:
+        record["error"] = error
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
 
 
 def run_once(
@@ -40,6 +53,7 @@ def run_once(
 
     result = {"verified": 0, "held": 0, "records": []}
     markets = tuple(settings.get("markets") or ("KR", "US"))
+    probe_path = Path(ledger_path).with_name("outreach_probe.jsonl")
     for market in markets:
         if market not in journey_policy.OUTREACH_QUERY_PACKS:
             result["held"] += 1
@@ -52,9 +66,13 @@ def run_once(
         try:
             sources = discover_fn(market, [row["query"] for row in selected], source_limit)
         except Exception as exc:
+            _record_probe(probe_path, market, [row["query"] for row in selected], "error",
+                          now=now, error=f"{type(exc).__name__}: {exc}")
             result["held"] += query_count
             result["records"].append({"market": market, "status": "held", "reason": f"discovery:{type(exc).__name__}"})
             continue
+        _record_probe(probe_path, market, [row["query"] for row in selected], "ok",
+                      source_count=len(sources), now=now)
         for source in sources:
             try:
                 query = source.get("discovery_query")

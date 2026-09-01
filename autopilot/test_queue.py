@@ -37,7 +37,7 @@ RESULT_TEMPLATE = {
                            "original_location": "상품평 > 베스트순 > review-1"}],
     "official_provenance": [{"quote": "고밀도 폼", "source_url": "https://www.coupang.com/vp/products/123",
                              "original_location": "상품 상세 > 제품 사양"}],
-    "link": "https://link.coupang.com/TEST", "sub_id": "hc-test",
+    "link": "https://link.coupang.com/TEST", "sub_id": "hc-test", "sub_id_applied": True,
     "candidate_pool": [{"name": f"후보-{i}", "archetype": kind} for i, kind in enumerate(
         ["branded_anchor", "bestseller", "budget", "ux_novel", "alternate_formfactor"], 1)],
     "compared_candidates": [{"name": "후보-1"}, {"name": "후보-4"}, {"name": "후보-5"}],

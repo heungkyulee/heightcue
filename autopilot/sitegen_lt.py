@@ -117,6 +117,82 @@ def render_product(product, master):
             + body + _foot(fine_extra))
 
 
+def render_product_us(product, master):
+    """US approved-product landing using the existing journey design system."""
+    required = {
+        "product_name": product.get("product_name"),
+        "product_key": product.get("product_key"),
+        "link": product.get("link"),
+        "tracking_key": product.get("tracking_key"),
+        "sub_id": product.get("sub_id"),
+        "mechanism": master.get("mechanism"),
+        "failure_mode": master.get("failure_mode"),
+    }
+    missing = [key for key, value in required.items() if not value]
+    skip_if = [str(item).strip() for item in (master.get("skip_if") or []) if str(item).strip()]
+    if not skip_if:
+        missing.append("skip_if")
+    if missing:
+        raise ValueError("US landing contract missing: " + ", ".join(missing))
+
+    name = esc(display_name(product["product_name"]))
+    key = esc(product["product_key"])
+    link = esc(product["link"])
+    tracking_key = esc(product["tracking_key"])
+    sub_id = esc(product["sub_id"])
+    slug_ = esc(product.get("_slug") or product["product_key"])
+    canonical = f"{SITE_BASE}/us/p/{slug_}.html"
+
+    sources = []
+    for row in product.get("official_sources") or []:
+        if isinstance(row, dict) and row.get("url"):
+            sources.append((str(row["url"]), str(row.get("title") or row["url"])))
+    for row in product.get("spec_facts") or []:
+        if isinstance(row, dict) and row.get("source_url"):
+            sources.append((str(row["source_url"]), str(row["source_url"])))
+    unique_sources = []
+    seen = set()
+    for url, title in sources:
+        if url.startswith("https://") and url not in seen:
+            seen.add(url)
+            unique_sources.append((url, title))
+    if not unique_sources:
+        raise ValueError("US landing contract missing: official_sources")
+    source_html = "".join(
+        f'<li><a href="{esc(url)}" rel="noopener noreferrer">{esc(title)}</a></li>'
+        for url, title in unique_sources
+    )
+
+    category = str(product.get("category", "")).lower()
+    health_product = bool(product.get("is_food")) or any(
+        token in category
+        for token in ("nutrition", "supplement", "health", "topical", "personal_care")
+    )
+    if health_product:
+        scope_copy = "This verdict covers the product format and routine—not sleep, growth, or medical outcomes."
+        fine_copy = "Price and availability can change. Check the retailer listing before purchase. Topical use only; follow the current label and consult a pediatrician when concerns persist."
+    else:
+        scope_copy = "This verdict covers product format and fit for the cited repeated-parenting friction—not guaranteed outcomes."
+        fine_copy = "Price and availability can change. Check the retailer listing before purchase."
+
+    return f'''<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{name} | HeightCue</title><meta name="description" content="A source-bound verdict on product format and repeated parenting friction.">
+<link rel="canonical" href="{canonical}"><link rel="stylesheet" href="/journey.css?v=1">
+<script defer src="/analytics.js"></script></head><body>
+<header class="top"><a class="wordmark" href="/us/">HeightCue</a><nav><a href="/us/">Home</a><a href="/kr/">한국어</a></nav></header>
+<main><section class="hero compact"><p class="kicker">VERDICT RECORD · #ad</p><h1>{name}</h1><p class="lede">{esc(scope_copy)}</p></section>
+<section class="verdict detail"><dl><div><dt>Mechanism</dt><dd>{esc(master["mechanism"])}</dd></div><div><dt>Observed failure mode</dt><dd>{esc(master["failure_mode"])}</dd></div><div><dt>Skip if</dt><dd>{esc(skip_if[0])}</dd></div></dl>
+<p class="affiliate">As an Amazon Associate I earn from qualifying purchases.</p>
+<a class="button" data-track="{tracking_key}" data-market="US" data-product-key="{key}" data-sub-id="{sub_id}" href="{link}" target="_blank" rel="sponsored nofollow noopener noreferrer">Check current listing</a>
+<h2>Evidence sources</h2><ul class="sources">{source_html}</ul>
+<p class="fine">{esc(fine_copy)}</p>
+<div class="actions"><a class="button secondary" href="/us/">All categories</a></div></section></main>
+<footer><a href="/us/#categories">All categories</a><a href="/measurement/">Height measurement education</a><a href="/disclosure.html">Disclosures</a></footer>
+</body></html>'''
+
+
 def render_hub(catalog):
     """kr 허브(바이오 링크 목적지) — 최근 제품 버튼 스택."""
     canonical = f"{SITE_BASE}/kr/"

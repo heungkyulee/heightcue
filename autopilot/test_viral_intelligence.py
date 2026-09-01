@@ -152,6 +152,16 @@ def test_malformed_friction_provenance_is_held_instead_of_crashing():
     assert "friction_source_pointers_invalid" in reasons
 
 
+def test_declared_sub_id_without_applied_link_is_held():
+    reasons = sourcing.audit_readiness_reasons({
+        "country": "KR",
+        "link": "https://link.coupang.com/a/example",
+        "sub_id": "hc-20260901-nutrition-direct",
+        "sub_id_applied": False,
+    })
+    assert "sub_id_not_applied" in reasons
+
+
 def test_malformed_price_provenance_is_held_instead_of_crashing():
     # 워커가 dict 대신 list/str을 제출해도 크래시 대신 보류 사유로 처리한다.
     for bad in ([{"regular_price": "1원"}], "24,000원", 24000):

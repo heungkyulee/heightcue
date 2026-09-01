@@ -291,6 +291,9 @@ def audit_readiness_reasons(result):
         reasons.append("collected_at_missing")
     if not result.get("sub_id"):
         reasons.append("sub_id_missing")
+    link = str(result.get("link") or "")
+    if result.get("country") == "KR" and "link.coupang.com" in link and result.get("sub_id_applied") is not True:
+        reasons.append("sub_id_not_applied")
 
     if not result.get("friction_id"):
         reasons.append("friction_id_missing")

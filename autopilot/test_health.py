@@ -102,8 +102,27 @@ def test_errors_recovered_vs_chronic():
     print("ok: 복구/만성 에러 구분")
 
 
+def test_revenue_readback_error_recovers_after_newer_measured_snapshot():
+    tmp = tempfile.mkdtemp()
+    now = datetime.now()
+    _write(tmp, "errors.jsonl", [{
+        "where": "revenue_readback_kr",
+        "error": "RuntimeError: Aside KR read-back exit=1",
+        "ts": (now - timedelta(hours=1)).isoformat(),
+    }])
+    with open(os.path.join(tmp, "revenue.json"), "w", encoding="utf-8") as stream:
+        json.dump({"markets": {"KR": {
+            "measurement_status": "measured",
+            "dashboard_readback_timestamp": (now - timedelta(minutes=5)).isoformat(),
+        }}}, stream)
+    status, message = health.check_recent_errors(_cfg(tmp))
+    assert status == health.OK, (status, message)
+    assert "revenue_readback_kr" in message
+
+
 def test_generation_errors_recover_after_matching_preview():
-    tmp=tempfile.mkdtemp(); now=datetime.now()
+    tmp = tempfile.mkdtemp()
+    now = datetime.now()
     _write(tmp,'errors.jsonl',[
         {'where':'kr_value','error':'critic','ts':(now-timedelta(hours=2)).isoformat()},
         {'where':'us_value','error':'critic','ts':(now-timedelta(hours=2)).isoformat()},
@@ -150,11 +169,20 @@ def test_companyos_workflow_break_is_fail():
     s, msg = health.check_companyos_workflow({}, probe=broken)
     assert s == health.FAIL, (s, msg)
     assert "approvals_current" in msg, msg
-    healthy = {"ok": True, "counts": {"sourced": 4},
+    healthy = {"ok": True, "counts": {"sourced": 4}, "claimable_now": 1,
                "checks": {"all_us_products_tracked": True, "approvals_current": True}}
     s, _ = health.check_companyos_workflow({}, probe=healthy)
     assert s == health.OK
-    print("ok: Company OS 상품 인계 단절 탐지")
+    unavailable = {"ok": True, "counts": {"approved": 1, "published": 1}, "claimable_now": 0,
+                   "claimable_by_market": {},
+                   "checks": {"all_us_products_tracked": True, "approvals_current": True}}
+    s, msg = health.check_companyos_workflow({}, probe=unavailable)
+    assert s == health.WARN, (s, msg)
+    assert "즉시 claim 가능 0" in msg
+    missing = {"ok": True, "counts": {"approved": 1},
+               "checks": {"all_us_products_tracked": True, "approvals_current": True}}
+    assert health.check_companyos_workflow({}, probe=missing)[0] == health.WARN
+    print("ok: Company OS 상품 인계 단절·실행 재고 탐지")
 
 
 def test_active_contract_drift_fails_on_retired_persona_measurement_commerce_and_legacy_cadence():
@@ -207,6 +235,19 @@ def test_outreach_health_recovers_market_from_the_reserved_transition_for_legacy
     ]
     status, message = health.check_outreach_alive(cfg, rows=rows, now=now)
     assert status == health.OK, message
+
+
+def test_outreach_health_distinguishes_observed_zero_from_connector_failure():
+    cfg = {"outreach": {"enabled": True, "publish": True, "markets": ["KR"]}}
+    now = datetime.fromisoformat("2026-08-31T12:00:00+00:00")
+    probe = {"market": "KR", "status": "ok", "source_count": 0,
+             "queries": ["sleep"], "observed_at": "2026-08-31T11:30:00Z"}
+    old = [{"market": "KR", "status": "verified", "verified_at": "2026-08-30T10:00:00Z"}]
+    status, message = health.check_outreach_alive(cfg, rows=old, probes=[probe], now=now)
+    assert status == health.WARN and "조회 성공" in message, message
+    status, message = health.check_outreach_alive(cfg, rows=old,
+        probes=[{**probe, "status": "error", "error": "AsideAdapterError"}], now=now)
+    assert status == health.FAIL and "KR" in message, message
 
 
 def test_all_checks_have_distinct_names():

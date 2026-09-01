@@ -1,0 +1,33 @@
+# Progress
+
+- SSOT, launch status, AGENTS, latest QA reports, recent sessions, Git state를 확인했다.
+- live health, full pytest, changed-file ruff, validate, video rehearsal, actual crontab diff, bot cron inventory, Kanban DB, state ledgers를 검증했다.
+- Aside CLI로 root/KR/US 공개 사이트를 실제 렌더링하고 모든 링크 응답을 점검했다.
+- 핵심 블로커를 매출 귀속, 유통, 근거 무결성, 로그 보안, 릴리스 상태, 조직 상태 정확성으로 분류했다.
+- 분석 완료. 구현·계정 변경·발행은 수행하지 않았다.
+- P0 보안: `common.py`의 모든 로그를 중앙 redaction하고 JSON/JSONL 상태파일을 0600으로 생성하도록 회귀 테스트(`test_security.py`)를 RED→GREEN으로 구현했다.
+- 실제 crontab의 모든 명령에 `umask 077`을 적용하고, state 파일 권한을 0600/디렉터리를 0700으로 보정했다.
+- 기존 state 로그에서 비밀값을 정화했다. 구성 토큰 잔여 파일 검사 결과 0건이었다.
+- P0 근거: placeholder/비HTTPS/loopback/private locator를 fail-closed 차단하고 `pick_atom`도 매 선택 때 source integrity를 재검증하도록 TDD 구현했다.
+- 기존 무효 insight atom 2건을 `quarantined_atoms.jsonl`로 이동하고 active atom을 21건으로 정리했다.
+- 오류: repo root에서 `../.venv/bin/python3`를 사용해 한 번 실패했다. 올바른 `.venv/bin/python3`로 재실행해 정화·격리를 완료했다.
+- Kanban 원인 증거: `t_d2d9c448`은 worker summary가 실발행 hold임을 명시했지만 범용 worker가 `result_len=0`인 정상 종료를 무조건 `completed`로 기록하여 done이 됐다. acceptance-aware terminalization이 없다.
+- Kanban 정정: false-done 카드 `t_d2d9c448`에 acceptance correction을 남기고 archive했다. 대체 goal-mode 체인 `t_d3329d66 → t_84483cf5 → t_d0640341 → t_90875898`을 생성했다.
+- Coupang Open API 검색·deeplink가 모두 HTTP 401임을 실제 호출로 재현했다. Partners UI는 로그인됐으나 My Info가 사람의 2FA를 요구해 `t_d3329d66`을 `needs_input` blocked로 고정했다.
+- 2026-09-01 12:05 KST Coupang Partners read-back: 당일/당월 클릭 15, 구매 0, 수익 0원. `revenue.json`과 attribution artifact에 반영했다.
+- `company_work.py`에 revenue-critical task type의 `--goal` 강제를 TDD(2 RED → 2 GREEN)로 추가했다.
+- fleet task policy의 content.publish/evidence_review/Coupang·Amazon sourcing/affiliate.strategy에 `goal_mode_required`와 completion evidence 필드를 선언했다.
+- Revenue 자동화: `revenue_readback.py`를 TDD로 추가하고 `heightcue-work.sh revenue-kr/revenue-us`, crontab 08:50/11:15에 연결. Aside Browser 재시작 후 live KR·US read-back 모두 성공. KR MTD 15/0/₩0, US MTD 0/0/$0.
+- Revenue→attribution sync: 같은 실측값이 `attribution_experiment_t_90875898.json`에 자동 투영되며 stale 수치 overwrite는 fail-closed.
+- Outreach root cause/fix: `discover()` 인자 순서 mismatch(`int`를 runner로 호출)를 재현 테스트로 수정. 실제 reply `DcuumgJk4Nw` exact read-back을 ledger에 verified로 기록했다.
+- Outreach quality: 사주/점술/astrology/birth-chart 맥락을 source 단계와 publish 전 gate에서 차단. 관련 테스트 포함 outreach 14 passed.
+- Health recovery: revenue의 최신 measured timestamp를 error recovery 증거로 인식하도록 TDD 보강. 현재 `health.py --json`은 overall=ok, 모든 check ok.
+- KR friction 탐색: 영양제/장난감 정리 검색 5종을 Aside REPL로 실제 검사했으나 적격 noncommercial complaint 0. affiliate 광고·훈육 조언·의료글은 제외했고 D3를 억지로 연결하지 않았다.
+- US sales preview probe: Company OS는 approved=1을 보고하지만 `hc_claim_active_product`는 None을 반환하여 생성 소재는 없었다. health count와 실제 claimable의 구분이 추가로 필요하다.
+- Coupang 2FA 완료: 사용자가 제공한 최신 OTP로 휴대폰 인증을 통과했고 My Info 화면까지 read-back했다.
+- 최종 승인 증빙 복구: Threads 등록 채널에 실제 KR 판매글(파트너스 고지 + 상품 카드) 스크린샷을 업로드했고 Coupang의 `내 정보가 성공적으로 변경되었습니다` 확인을 받았다.
+- 후속 read-back: Partners API의 `생성` 버튼은 여전히 disabled. 2FA 블로커는 해소됐지만 최종 승인 심사/API 키 발급은 외부 게이트로 남는다. 승인 전에는 고유 Open API 키를 생성했다고 보고하지 않는다.
+- False approval 교정: 원본 nutrition 소싱 row의 `sub_id_applied=false`를 후속 evidence packet이 고유 subId 완비로 잘못 승격한 경로를 발견했다. `audit_readiness_reasons()`에 KR Coupang 링크의 실제 적용 관측 계약을 RED→GREEN으로 추가했다.
+- Source row, candidate, evidence packet, attribution artifact를 `sub_id_not_applied` hold로 동기화했다. 회귀 5 passed, queue E2E PASS, live row `is_audit_approved=False` read-back.
+- Kanban `t_d3329d66`은 blocked 유지. 최신 댓글에 2FA resolved, 증빙 저장, API 최종 승인 capability blocker, unique subId acceptance 미충족을 read-back했다.
+- 다음 단계: 외부 승인 대기와 분리하여 friction·상품 후보·유통 자동화 및 전체 테스트를 검증한다.

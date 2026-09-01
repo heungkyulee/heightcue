@@ -152,6 +152,17 @@ class AuthoritativeBoundaryTest(unittest.TestCase):
         self.assertIn("at least two", directive)
         self.assertIn("unique IDs", directive)
 
+    def test_sales_writer_directive_uses_resolved_product_skip_if_not_ddrops_literal(self):
+        import generation_ssot
+        directive = generation_ssot.TASK_DIRECTIVES["sales_post"]
+        self.assertIn("exact skip_if", directive)
+        self.assertNotIn("fractionated coconut oil", directive)
+        self.assertNotIn("Ddrops", directive)
+        self.assertIn("first line", directive)
+        self.assertIn("70 characters", directive)
+        self.assertIn("ends exactly with #ad", directive)
+        self.assertIn("Do not use numbered lists", directive)
+
     def test_value_writer_directive_prevents_critic_disqualifying_fabrication(self):
         import generation_ssot
         directive = generation_ssot.TASK_DIRECTIVES["value_post"]
@@ -252,8 +263,9 @@ class AuthoritativeBoundaryTest(unittest.TestCase):
             {"id": "a", "score": 90, "disqualified": True, "reason": "unsupported"},
             {"id": "b", "score": 80, "disqualified": True, "reason": "unsupported"},
         ]}
-        with self.assertRaisesRegex(RuntimeError, "all candidates disqualified"):
+        with self.assertRaisesRegex(RuntimeError, "a: unsupported; b: unsupported") as caught:
             gw.select_candidate(candidates, critic)
+        self.assertNotIn("also fake", str(caught.exception))
 
     def test_all_task_result_schemas_and_task_specific_prompt_digests(self):
         state = self.root/"autopilot/state"

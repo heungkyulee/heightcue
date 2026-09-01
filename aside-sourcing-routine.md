@@ -6,7 +6,7 @@
 > - **UX 폼팩터 발굴 패스 (매 실행 1회)**: 쿠팡 카테고리 상위 ~40개를 훑어 `autopilot/state/ux_discovery.json`에 없는 새 폼팩터를 실물 근거(리뷰 300+ 상품)와 함께 candidate로 최대 2건 등록. 자가감사 5문(실물 근거/중복/하드락/효능관점 금지/가격대) 통과 못 하면 등록 금지. 발굴 0건이면 0건으로 기록
 > - **수익 동기화 (주 1회)**: 파트너스 리포트에서 이번 달 수수료를 읽어 `autopilot/state/revenue.json`에 기록 (읽기 전용, 수치 창작 금지)
 > - **이중 레인**: demand 요청은 검증된 수요 provenance가 필수다. discovery 요청은 수요를 창작하지 않고 `friction_solved`와 실제 폼팩터 근거로 능동 탐색한다.
-> - Aside는 로그인 페이지에서 후보·근거를 수집하는 실행 계층이다. 최종 승자 판단은 `openrouter/google/gemini-3.7-flash`로 실행되는 `kong-coupang`이 블라인드 비교한다.
+> - Aside는 로그인 페이지에서 후보·근거를 수집하는 실행 계층이다. 최종 승자 판단은 `openrouter/google/gemini-3.7-flash`로 실행되는 `minjae-coupang`이 블라인드 비교한다.
 
 (Aside의 반복 루틴으로 등록하세요. 권장 주기: 30분~1시간. 이 브라우저에는 쿠팡 파트너스가 로그인되어 있어야 합니다.)
 
@@ -99,9 +99,9 @@
 ```
 
 * `candidate_pool` 5개, `compared_candidates` 3개, `rejected_candidates` 2개를 채우지 못하면 `done`으로 제출하지 않는다.
-* Aside의 `winner_reasons`는 제안값이며 `judgment_status: pending`으로 제출한다. Gemini 3.7 Flash의 `kong-coupang`이 최종 검토해 `judgment_status: approved`, `judged_by: openrouter/google/gemini-3.7-flash`로 바꾸기 전에는 발행 큐가 소비하지 않는다.
+* Aside의 `winner_reasons`는 제안값이며 `judgment_status: pending`으로 제출한다. Gemini 3.7 Flash의 `minjae-coupang`이 최종 검토해 `judgment_status: approved`, `judged_by: openrouter/google/gemini-3.7-flash`로 바꾸기 전에는 발행 큐가 소비하지 않는다.
 * `winner_reasons`에는 **"기존 형태(알약/일반매트/일반의자/일반줄넘기) 대비 이 제품의 폼팩터가 부모의 어떤 귀찮음을 해결하는지(UX 혁신점)" 1문장을 반드시 포함**한다. UX 혁신점이 없는 뻔한 제품이 승자가 됐다면 그 이유를 적는다. 이 문장은 카피라이팅 훅의 재료로 쓰므로 행동/수고 관점으로 쓴다(신체 효능 관점 금지).
-* `audit_status`는 워커가 승인하지 않는다. 항상 `pending`으로 제출하고 @mungchi-proof 감사 후에만 `approved`로 바뀐다. `product_url`·수집시각·리뷰 식별자/원문 위치·일반가/변동가 분리·공식 근거·subId 중 하나라도 빠지면 발행 큐는 소비하지 않는다.
+* `audit_status`는 워커가 승인하지 않는다. 항상 `pending`으로 제출하고 @haneul-proof 감사 후에만 `approved`로 바뀐다. `product_url`·수집시각·리뷰 식별자/원문 위치·일반가/변동가 분리·공식 근거·subId 중 하나라도 빠지면 발행 큐는 소비하지 않는다.
 
 6. requests.json에서 해당 요청의 `"status"`를 `"filled"`로 바꾼다.
 7. 조건에 맞는 상품을 못 찾거나 링크 생성이 안 되면, failed.json에 `{"request_id": "...", "reason": "..."}` 를 추가하고 요청 status를 `"failed"`로 바꾼다.

@@ -29,6 +29,8 @@ def test_gate_accepts_specific_noncommercial_help_and_rejects_unsafe_outreach():
         "profile_bait": candidate(reply_text="프로필 링크에서 확인하세요."),
         "caregiver_shaming": candidate(reply_text="부모들이 게을러서 계속 이렇게 삽니다."),
         "medical": candidate(source_text="아이 검사 수치와 복용량을 봐주세요."),
+        "occult_claim_kr": candidate(source_text="시주와 사주 원국이 아이 수면 리듬을 정해요."),
+        "occult_claim_us": candidate(market="US", source_text="A birth chart and zodiac sign determine sleep."),
         "self_reply": candidate(source_author="heightcue"),
         "missing_provenance": candidate(source_post_url="", source_post_id=""),
     }

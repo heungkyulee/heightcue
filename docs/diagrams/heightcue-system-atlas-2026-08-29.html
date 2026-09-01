@@ -1,0 +1,1070 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="description" content="HeightCue 텍스트·영상·증거·발행·분석·수익·Hermes Bot Mode·LiFoli Company OS 전체 구조 아틀라스"/>
+<title>HeightCue 전체 시스템 아틀라스 · 2026-08-29</title>
+<style>
+:root { --paper:#f7f5f1; --paper-2:#efe9dd; --ink:#102a43; --muted:#53687a; --soft:#7b877f; --accent:#0e8074; --accent-tint:#e3efec; --link:#2e5aa8; --coral:#ff966f; --rust:#b85450; --rule:rgba(16,42,67,.15); }
+* { box-sizing:border-box; }
+html { scroll-behavior:smooth; }
+body { margin:0; background:var(--paper); color:var(--ink); font-family:'Geist','Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic',system-ui,sans-serif; line-height:1.55; }
+a { color:var(--link); }
+code,.mono { font-family:'Geist Mono','Noto Sans Mono CJK KR',ui-monospace,SFMono-Regular,monospace; }
+code { font-size:.88em; background:rgba(16,42,67,.05); padding:.08rem .28rem; border-radius:2px; overflow-wrap:anywhere; }
+main { width:min(1500px,100%); margin:0 auto; padding:32px 40px 80px; }
+header.hero { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(300px,.65fr); gap:40px; padding:32px 0 40px; border-bottom:1px solid var(--rule); }
+.eyebrow { margin:0 0 8px; color:var(--accent); font:600 11px/1.2 'Geist Mono',monospace; letter-spacing:.16em; text-transform:uppercase; }
+h1,h2,h3 { margin:0; color:var(--ink); }
+h1 { font-family:'Instrument Serif','Iowan Old Style',Georgia,serif; font-size:clamp(42px,5vw,72px); font-weight:400; line-height:.98; letter-spacing:-.025em; }
+h2 { font-family:'Instrument Serif','Iowan Old Style',Georgia,serif; font-size:clamp(30px,3.4vw,48px); font-weight:400; line-height:1.05; }
+h3 { font-size:18px; line-height:1.25; }
+.lede { max-width:780px; font-size:18px; color:var(--muted); margin:20px 0 0; }
+.hero-meta { border-left:3px solid var(--accent); background:var(--accent-tint); padding:20px 24px; align-self:end; }
+.hero-meta dl { display:grid; grid-template-columns:112px 1fr; gap:8px 12px; margin:0; font-size:13px; }
+.hero-meta dt { color:var(--soft); font-family:'Geist Mono',monospace; }
+.hero-meta dd { margin:0; font-weight:600; }
+nav.toc { display:flex; gap:8px; flex-wrap:wrap; padding:20px 0; border-bottom:1px solid var(--rule); position:sticky; top:0; z-index:20; background:rgba(247,245,241,.96); backdrop-filter:blur(8px); }
+nav.toc a { text-decoration:none; border:1px solid var(--rule); padding:6px 10px; border-radius:4px; color:var(--muted); font-size:12px; }
+nav.toc a:hover { border-color:var(--accent); color:var(--accent); }
+section { padding:64px 0 8px; scroll-margin-top:70px; }
+.section-head { display:grid; grid-template-columns:160px minmax(0,1fr); gap:24px; align-items:start; margin-bottom:24px; }
+.section-no { color:var(--accent); font:600 12px/1.3 'Geist Mono',monospace; letter-spacing:.12em; }
+.section-intro { max-width:980px; color:var(--muted); margin:10px 0 0; }
+.diagram-frame { overflow-x:auto; border:1px solid var(--rule); background:var(--paper); border-radius:8px; padding:16px; margin:20px 0 24px; }
+.diagram-svg { display:block; width:100%; min-width:960px; height:auto; }
+.svg-eyebrow,.svg-tag,.svg-arrow-label,.svg-legend { font-family:'Geist Mono','Noto Sans Mono CJK KR',monospace; text-anchor:middle; letter-spacing:.08em; }
+.svg-eyebrow { font-size:10px; fill:#53687a; text-anchor:start; }
+.svg-tag { font-size:8px; font-weight:600; }
+.svg-name { font-family:'Geist','Apple SD Gothic Neo','Noto Sans KR',sans-serif; font-size:14px; font-weight:600; text-anchor:middle; }
+.svg-sub { font-family:'Geist Mono','Noto Sans Mono CJK KR',monospace; font-size:10px; fill:#53687a; text-anchor:middle; }
+.svg-arrow-label { font-size:9px; fill:#53687a; }
+.svg-legend { font-size:9px; fill:#53687a; text-anchor:start; }
+.grid { display:grid; gap:16px; }
+.grid.two { grid-template-columns:1.1fr .9fr; }
+.grid.three { grid-template-columns:1.15fr 1fr .85fr; }
+.card { border:1px solid var(--rule); border-radius:6px; background:#fff; padding:20px; }
+.card.accent { border-color:rgba(14,128,116,.45); background:var(--accent-tint); }
+.card.risk { border-color:rgba(184,84,80,.45); background:rgba(184,84,80,.05); }
+.card.coral { border-color:rgba(255,150,111,.55); background:rgba(255,150,111,.09); }
+.card p:last-child,.card ul:last-child { margin-bottom:0; }
+.metric-row { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin:20px 0; }
+.metric { border-top:3px solid var(--ink); padding:12px 4px 0; }
+.metric.accent { border-color:var(--accent); }
+.metric.risk { border-color:var(--rust); }
+.metric .value { display:block; font:400 32px/1 'Instrument Serif',Georgia,serif; }
+.metric .label { color:var(--muted); font-size:12px; }
+.badge { display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border:1px solid var(--rule); border-radius:3px; font:600 10px/1.4 'Geist Mono',monospace; text-transform:uppercase; letter-spacing:.06em; }
+.badge.declared { border-color:#8c6d3f; color:#6d532f; background:rgba(140,109,63,.07); }
+.badge.enforced { border-color:var(--accent); color:var(--accent); background:var(--accent-tint); }
+.badge.observed { border-color:var(--link); color:var(--link); background:rgba(46,90,168,.06); }
+.badge.gap { border-style:dashed; color:var(--muted); }
+.badge.conflict { border-color:var(--rust); color:var(--rust); background:rgba(184,84,80,.05); }
+table { width:100%; border-collapse:collapse; margin:16px 0 28px; font-size:13px; }
+th,td { padding:11px 12px; border-bottom:1px solid var(--rule); text-align:left; vertical-align:top; }
+th { color:var(--muted); font:600 10px/1.4 'Geist Mono',monospace; letter-spacing:.09em; text-transform:uppercase; }
+tbody tr:hover { background:rgba(16,42,67,.025); }
+.status-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; background:var(--soft); }
+.status-dot.ok { background:var(--accent); }
+.status-dot.warn { background:var(--coral); }
+.status-dot.bad { background:var(--rust); }
+.callout { border-left:3px solid var(--coral); padding:12px 16px; background:rgba(255,150,111,.08); color:var(--muted); margin:16px 0; }
+.callout strong { color:var(--ink); }
+.source-list { columns:2; column-gap:32px; font-size:12px; }
+.source-list li { break-inside:avoid; margin:0 0 7px; }
+footer { margin-top:72px; padding-top:20px; border-top:1px solid var(--rule); color:var(--soft); font:11px/1.5 'Geist Mono',monospace; }
+@media (max-width:900px) { main { padding:20px 16px 56px; } header.hero,.grid.two,.grid.three,.section-head { grid-template-columns:1fr; } .hero-meta { border-left:0; border-top:3px solid var(--accent); } .metric-row { grid-template-columns:repeat(2,1fr); } .source-list { columns:1; } nav.toc { position:static; } }
+@media print { nav.toc { display:none; } section { break-inside:avoid; } main { max-width:none; padding:20px; } .diagram-frame { overflow:visible; } }
+</style>
+</head>
+<body><main>
+<header class="hero">
+  <div><p class="eyebrow">HEIGHTCUE · SYSTEM ATLAS · 2026-08-29 18:50 KST</p><h1>HeightCue 전체 시스템 아틀라스</h1><p class="lede">단순한 박스 연결도가 아니라, <strong>무엇이 선언됐고, 무엇이 코드로 강제되며, 무엇이 실제로 관측됐고, 어디가 아직 비어 있는지</strong>를 한 문서에서 분리해 읽도록 만든 실행·수익·조직·영상 지도입니다.</p></div>
+  <aside class="hero-meta"><dl><dt>북극성</dt><dd>실제 제휴 주문·수수료·순수익</dd><dt>라이브 경로</dt><dd>Threads KR / US 텍스트</dd><dt>영상 경로</dt><dd>큐 존재 · process 미배선 / OFF</dd><dt>Company OS</dt><dd>US 공개 클릭만 직결</dd><dt>실행 기반</dt><dd>macOS · Python · Hermes · Aside</dd><dt>상태 기준</dt><dd>코드 + 로컬 원장 + live health</dd><dt>비밀정보</dt><dd>[REDACTED] · 문서에 미포함</dd></dl></aside>
+</header>
+<nav class="toc" aria-label="Atlas sections"><a href="#legend">읽는 법</a><a href="#context">전체 경계</a><a href="#text">텍스트</a><a href="#trust">증거·검수</a><a href="#stores">데이터</a><a href="#video">영상</a><a href="#agents">봇·운영</a><a href="#lifoli">Company OS</a><a href="#economics">수익 루프</a><a href="#truth">현재 진실</a><a href="#sources">근거</a></nav>
+
+<section id="legend"><div class="section-head"><div class="section-no">00 / READ ME</div><div><h2>같은 사실처럼 보이면 안 되는 다섯 상태</h2><p class="section-intro">이 아틀라스의 핵심은 구조보다 <em>증거 수준</em>입니다. 문서의 희망, 코드의 강제, 런타임의 실제 관측을 한 색으로 섞지 않습니다.</p></div></div>
+<div class="grid three">
+ <div class="card"><span class="badge declared">Declared</span><h3>선언</h3><p>SSOT·AGENTS·운영 문서가 요구하는 목표와 규칙. 코드가 아직 강제하지 않을 수 있습니다.</p></div>
+ <div class="card accent"><span class="badge enforced">Enforced</span><h3>강제</h3><p>실행 경계·검증기·상태 머신·락·멱등키처럼 우회하면 실패하는 코드 계약입니다.</p></div>
+ <div class="card"><span class="badge observed">Observed</span><h3>관측</h3><p>2026-08-29 18:50 KST의 health, status, JSONL, process, crontab에서 실제 확인한 값입니다.</p></div>
+ <div class="card"><span class="badge gap">Unverified</span><h3>미검증·미배선</h3><p>코드나 문서 조각은 있으나 end-to-end 실행이 입증되지 않은 경계입니다.</p></div>
+ <div class="card risk"><span class="badge conflict">Conflict</span><h3>모순·위험</h3><p>문서끼리, 선언과 코드, 스케줄러끼리 어긋나거나 보안·중복 실행 위험이 있는 곳입니다.</p></div>
+ <div class="card coral"><p class="eyebrow">경제적 기준</p><h3>게시량과 조회수는 중간 신호</h3><p>의사결정의 최종 기준은 클릭, 주문, 수수료, 비용을 합친 실제 제휴 순수익입니다.</p></div>
+</div></section>
+
+<section id="context"><div class="section-head"><div class="section-no">01 / CONTEXT</div><div><h2>전체 시스템과 책임 경계</h2><p class="section-intro">HeightCue는 하나의 거대한 앱이 아니라, 파일 기반 Autopilot 실행 plane을 중심으로 외부 수요·상품·AI·Threads와 연결되고, 영상 sidecar와 LiFoli control plane이 별도 경계에 놓인 시스템입니다.</p></div></div><div class="diagram-frame"><svg class="diagram-svg" viewBox="0 0 1280 640" role="img" aria-labelledby="ctx-title ctx-desc">
+      <title id="ctx-title">HeightCue 전체 시스템 경계</title>
+      <desc id="ctx-desc">수요와 상품 신호가 증거 원장, 생성·검수, Threads 발행, 로컬 분석과 수익 학습으로 흐른다. 영상은 미배선 sidecar이고 Company OS에는 공개 US 클릭 RPC만 직접 연결된다.</desc>
+      <defs>
+      <marker id="ctx-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#53687a"/></marker>
+      <marker id="ctx-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#0e8074"/></marker>
+      <marker id="ctx-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
+      <marker id="ctx-coral" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#ff966f"/></marker>
+      <marker id="ctx-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0,8 3,0 6" fill="none" stroke="#53687a" stroke-width="1.2"/></marker>
+    </defs>
+      <rect width="1280" height="640" fill="#f7f5f1"/>
+      <rect x="24" y="52" width="228" height="500" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.18)" stroke-width="1" stroke-dasharray="4,4"/>
+    <rect x="36" y="46" width="84" height="16" rx="2" fill="#f7f5f1"/>
+    <text x="44" y="57" class="svg-eyebrow">수요·소재 입력</text><rect x="284" y="52" width="672" height="500" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.18)" stroke-width="1"/>
+    <rect x="296" y="46" width="172" height="16" rx="2" fill="#f7f5f1"/>
+    <text x="304" y="57" class="svg-eyebrow">HEIGHTCUE AUTOPILOT</text><rect x="988" y="52" width="268" height="500" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.18)" stroke-width="1" stroke-dasharray="4,4"/>
+    <rect x="1000" y="46" width="84" height="16" rx="2" fill="#f7f5f1"/>
+    <text x="1008" y="57" class="svg-eyebrow">외부 채널·성과</text><path d="M 216,140 H 316" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#ctx-arrow)"/><rect x="231.5" y="110" width="69" height="16" rx="2" fill="#f7f5f1"/><text x="266" y="121" class="svg-arrow-label">SIGNALS</text><path d="M 216,260 H 316" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#ctx-arrow)"/><rect x="228.0" y="230" width="76" height="16" rx="2" fill="#f7f5f1"/><text x="266" y="241" class="svg-arrow-label">PRODUCTS</text><path d="M 484,140 H 548" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#ctx-arrow)"/><path d="M 716,140 H 724 Q 732,140 732,148 V 252 Q 732,260 740,260 H 748" fill="none" stroke="#0e8074" stroke-width="1.6" marker-end="url(#ctx-accent)"/><rect x="744.0" y="192" width="76" height="16" rx="2" fill="#f7f5f1"/><text x="782.0" y="203" class="svg-arrow-label">EVIDENCE</text><path d="M 916,260 H 1020" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#ctx-link)"/><rect x="926.5" y="230" width="83" height="16" rx="2" fill="#f7f5f1"/><text x="968" y="241" class="svg-arrow-label">GRAPH API</text><path d="M 1228,260 H 1240 V 500 H 1228" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#ctx-link)"/><rect x="1136" y="304" width="88" height="16" fill="#f7f5f1"/><text x="1180" y="315" class="svg-arrow-label" fill="#2e5aa8">US CLICK RPC</text><path d="M 1124,420 H 980 Q 972,420 972,412 V 416 Q 972,408 964,408 H 884" fill="none" stroke="#2e5aa8" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#ctx-link)"/><rect x="984.0" y="420" width="69" height="16" rx="2" fill="#f7f5f1"/><text x="1018.5" y="431" class="svg-arrow-label">METRICS</text><path d="M 760,444 H 740 Q 732,444 732,452 V 492 Q 732,500 724,500 H 572" fill="none" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#ctx-arrow)"/><rect x="744.0" y="460" width="76" height="16" rx="2" fill="#f7f5f1"/><text x="782.0" y="471" class="svg-arrow-label">LEARNING</text><path d="M 440,444 H 448 Q 440,444 440,452 V 492 Q 440,500 432,500 H 440" fill="none" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#ctx-arrow)"/><path d="M 672,500 V 456" fill="none" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#ctx-arrow)"/><g class="svg-node">
+      <rect x="56" y="100" width="160" height="80" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.30)" stroke-width="1.2"/>
+      <rect x="64" y="106" width="51" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.30)" stroke-opacity=".42"/>
+      <text x="89.5" y="116" class="svg-tag" fill="rgba(16,42,67,.30)">INPUT</text>
+      <text x="136.0" y="136" class="svg-name" fill="#102a43">Trend · Search</text>
+      <text x="136.0" y="154" class="svg-sub">Aside harvest</text>
+    </g><g class="svg-node">
+      <rect x="56" y="220" width="160" height="80" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.30)" stroke-width="1.2"/>
+      <rect x="64" y="226" width="51" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.30)" stroke-opacity=".42"/>
+      <text x="89.5" y="236" class="svg-tag" fill="rgba(16,42,67,.30)">INPUT</text>
+      <text x="136.0" y="256" class="svg-name" fill="#102a43">KR / US catalog</text>
+      <text x="136.0" y="274" class="svg-sub">Coupang · Amazon</text>
+    </g><g class="svg-node">
+      <rect x="56" y="340" width="160" height="80" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="64" y="346" width="51" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="89.5" y="356" class="svg-tag" fill="#53687a">INPUT</text>
+      <text x="136.0" y="376" class="svg-name" fill="#102a43">Story · UX bank</text>
+      <text x="136.0" y="394" class="svg-sub">episodes · patterns</text>
+    </g><g class="svg-node">
+      <rect x="316" y="100" width="168" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="324" y="106" width="44" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="346.0" y="116" class="svg-tag" fill="#102a43">CODE</text>
+      <text x="400.0" y="136" class="svg-name" fill="#102a43">Source + Audit</text>
+      <text x="400.0" y="154" class="svg-sub">KR queue · bypass gaps</text>
+    </g><g class="svg-node">
+      <rect x="548" y="100" width="168" height="80" rx="8" fill="#e3efec" stroke="#0e8074" stroke-width="1.2"/>
+      <rect x="556" y="106" width="44" height="14" rx="2" fill="transparent" stroke="#0e8074" stroke-opacity=".42"/>
+      <text x="578.0" y="116" class="svg-tag" fill="#0e8074">SSOT</text>
+      <text x="632.0" y="136" class="svg-name" fill="#102a43">Evidence Ledger</text>
+      <text x="632.0" y="154" class="svg-sub">claim atoms · source hash</text>
+    </g><g class="svg-node">
+      <rect x="748" y="220" width="168" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="756" y="226" width="51" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="781.5" y="236" class="svg-tag" fill="#102a43">MODEL</text>
+      <text x="832.0" y="256" class="svg-name" fill="#102a43">Generate + Select</text>
+      <text x="832.0" y="274" class="svg-sub">Gemini tournament</text>
+    </g><g class="svg-node">
+      <rect x="748" y="340" width="168" height="80" rx="8" fill="rgba(184,84,80,.07)" stroke="#b85450" stroke-width="1.2"/>
+      <rect x="756" y="346" width="44" height="14" rx="2" fill="transparent" stroke="#b85450" stroke-opacity=".42"/>
+      <text x="778.0" y="356" class="svg-tag" fill="#b85450">GATE</text>
+      <text x="832.0" y="376" class="svg-name" fill="#102a43">Policy Gates</text>
+      <text x="832.0" y="394" class="svg-sub">post_check · attestation</text>
+    </g><g class="svg-node">
+      <rect x="548" y="460" width="168" height="80" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="556" y="466" width="51" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="581.5" y="476" class="svg-tag" fill="#53687a">STORE</text>
+      <text x="632.0" y="496" class="svg-name" fill="#102a43">State Ledgers</text>
+      <text x="632.0" y="514" class="svg-sub">JSON / JSONL files</text>
+    </g><g class="svg-node">
+      <rect x="316" y="340" width="168" height="80" rx="8" fill="rgba(16,42,67,.018)" stroke="rgba(16,42,67,.24)" stroke-width="1.2" stroke-dasharray="5,4"/>
+      <rect x="324" y="346" width="51" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.24)" stroke-opacity=".42"/>
+      <text x="349.5" y="356" class="svg-tag" fill="rgba(16,42,67,.24)">VIDEO</text>
+      <text x="400.0" y="376" class="svg-name" fill="#53687a">Video Sidecar</text>
+      <text x="400.0" y="394" class="svg-sub">queue · process unwired/OFF</text>
+    </g><g class="svg-node">
+      <rect x="1020" y="220" width="208" height="80" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.30)" stroke-width="1.2"/>
+      <rect x="1028" y="226" width="65" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.30)" stroke-opacity=".42"/>
+      <text x="1060.5" y="236" class="svg-tag" fill="rgba(16,42,67,.30)">CHANNEL</text>
+      <text x="1124.0" y="256" class="svg-name" fill="#102a43">Threads + public site</text>
+      <text x="1124.0" y="274" class="svg-sub">KR/US · US click RPC</text>
+    </g><g class="svg-node">
+      <rect x="1020" y="340" width="208" height="80" rx="8" fill="rgba(255,150,111,.12)" stroke="#ff966f" stroke-width="1.2"/>
+      <rect x="1028" y="346" width="65" height="14" rx="2" fill="transparent" stroke="#ff966f" stroke-opacity=".42"/>
+      <text x="1060.5" y="356" class="svg-tag" fill="#ff966f">OUTCOME</text>
+      <text x="1124.0" y="376" class="svg-name" fill="#102a43">Local analytics + revenue</text>
+      <text x="1124.0" y="394" class="svg-sub">views → clicks → orders</text>
+    </g><g class="svg-node">
+      <rect x="1020" y="460" width="208" height="80" rx="8" fill="rgba(16,42,67,.018)" stroke="rgba(16,42,67,.24)" stroke-width="1.2" stroke-dasharray="5,4"/>
+      <rect x="1028" y="466" width="36" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.24)" stroke-opacity=".42"/>
+      <text x="1046.0" y="476" class="svg-tag" fill="rgba(16,42,67,.24)">OS</text>
+      <text x="1124.0" y="496" class="svg-name" fill="#53687a">LiFoli Company OS</text>
+      <text x="1124.0" y="514" class="svg-sub">control plane · click ingress only</text>
+    </g><line x1="32" y1="580" x2="1248" y2="580" stroke="rgba(16,42,67,.15)"/><text x="32" y="600" class="svg-eyebrow">LEGEND</text><line x1="132" y1="596" x2="164" y2="596" stroke="#53687a" stroke-width="1.4"/><text x="172" y="600" class="svg-legend">실행 경로</text><line x1="300" y1="596" x2="332" y2="596" stroke="#2e5aa8" stroke-width="1.4"/><text x="340" y="600" class="svg-legend">외부 API</text><rect x="468" y="588" width="20" height="16" rx="2" fill="#e3efec" stroke="#0e8074"/><text x="508" y="600" class="svg-legend">핵심 SSOT</text><line x1="636" y1="596" x2="668" y2="596" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4"/><text x="676" y="600" class="svg-legend">비활성·미연결</text><rect x="804" y="588" width="20" height="16" rx="2" fill="rgba(184,84,80,.07)" stroke="#b85450"/><text x="844" y="600" class="svg-legend">위험·성과</text>
+    </svg></div>
+<div class="grid three"><div class="card"><p class="eyebrow">TEXT PLANE</p><h3>현재 실운영 축</h3><p>KR/US 제품 소싱 → 증거 → 텍스트 생성 → 검수 → Threads → 댓글 → 분석/수익.</p></div><div class="card"><p class="eyebrow">VIDEO SIDECAR</p><h3>계약·큐 구현, 종단 미배선</h3><p>원장 3건이 <code>queued</code>이고 두 enable 플래그가 OFF입니다. <code>video process</code>도 아직 오케스트레이터 미배선으로 종료됩니다.</p></div><div class="card"><p class="eyebrow">COMPANY OS</p><h3>분리된 control plane + 클릭 ingress</h3><p>공개 사이트의 US Amazon 링크 클릭만 Supabase RPC로 직결됩니다. 로컬 발행·insights·revenue 원장은 동기화되지 않습니다.</p></div></div></section>
+
+<section id="text"><div class="section-head"><div class="section-no">02 / TEXT</div><div><h2>수요 → 증거 → 발행 → 수익 텍스트 루프</h2><p class="section-intro"><code>run.py</code>가 단일 CLI 오케스트레이터입니다. 일일 실행은 분석·소싱·콘텐츠 생성, 시간대 실행은 유형/시장별 게시, 댓글 워커는 별도 3분 cadence로 움직입니다.</p></div></div><div class="diagram-frame"><svg class="diagram-svg" viewBox="0 0 1280 556" role="img" aria-labelledby="textflow-title textflow-desc">
+      <title id="textflow-title">텍스트 콘텐츠 수익 루프</title>
+      <desc id="textflow-desc">수요 신호에서 상품 소싱, 증거 원장, 생성·블라인드 선발, 정책 검수, Threads 발행과 댓글, 분석·매출을 거쳐 다시 개선되는 라이브 텍스트 경로.</desc>
+      <defs>
+      <marker id="textflow-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#53687a"/></marker>
+      <marker id="textflow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#0e8074"/></marker>
+      <marker id="textflow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
+      <marker id="textflow-coral" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#ff966f"/></marker>
+      <marker id="textflow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0,8 3,0 6" fill="none" stroke="#53687a" stroke-width="1.2"/></marker>
+    </defs>
+      <rect width="1280" height="556" fill="#f7f5f1"/>
+      <rect x="24" y="48" width="1232" height="432" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.18)" stroke-width="1"/>
+    <rect x="36" y="42" width="172" height="16" rx="2" fill="#f7f5f1"/>
+    <text x="44" y="53" class="svg-eyebrow">텍스트 제휴 콘텐츠 — 라이브 경로</text><path d="M 176,144 H 208" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#textflow-arrow)"/><path d="M 328,144 H 360" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#textflow-arrow)"/><path d="M 480,144 H 512" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#textflow-arrow)"/><path d="M 632,144 H 664" fill="none" stroke="#0e8074" stroke-width="1.6" marker-end="url(#textflow-accent)"/><path d="M 784,144 H 816" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#textflow-arrow)"/><path d="M 936,144 H 968" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#textflow-arrow)"/><path d="M 1088,144 H 1120" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#textflow-arrow)"/><path d="M 1180,184 H 1188 Q 1180,184 1180,192 V 328 Q 1180,336 1172,336 H 1180" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#textflow-link)"/><rect x="1192.0" y="252" width="69" height="16" rx="2" fill="#f7f5f1"/><text x="1226.5" y="263" class="svg-arrow-label">PUBLISH</text><path d="M 1120,376 H 1088" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#textflow-link)"/><path d="M 968,376 H 936" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#textflow-link)"/><path d="M 816,376 H 784" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#textflow-arrow)"/><path d="M 664,376 H 632" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#textflow-arrow)"/><path d="M 512,376 H 480" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#textflow-arrow)"/><path d="M 360,376 H 328" fill="none" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#textflow-arrow)"/><path d="M 208,376 H 176" fill="none" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#textflow-arrow)"/><g class="svg-node">
+      <rect x="56" y="104" width="120" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="64" y="110" width="36" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="82.0" y="120" class="svg-tag" fill="#102a43">1</text>
+      <text x="116.0" y="140" class="svg-name" fill="#102a43">Demand</text>
+      <text x="116.0" y="158" class="svg-sub">trends · UX</text>
+    </g><g class="svg-node">
+      <rect x="208" y="104" width="120" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="216" y="110" width="36" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="234.0" y="120" class="svg-tag" fill="#102a43">2</text>
+      <text x="268.0" y="140" class="svg-name" fill="#102a43">Source</text>
+      <text x="268.0" y="158" class="svg-sub">KR/US products</text>
+    </g><g class="svg-node">
+      <rect x="360" y="104" width="120" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="368" y="110" width="36" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="386.0" y="120" class="svg-tag" fill="#102a43">3</text>
+      <text x="420.0" y="140" class="svg-name" fill="#102a43">Audit</text>
+      <text x="420.0" y="158" class="svg-sub">KR queue only</text>
+    </g><g class="svg-node">
+      <rect x="512" y="104" width="120" height="80" rx="8" fill="#e3efec" stroke="#0e8074" stroke-width="1.2"/>
+      <rect x="520" y="110" width="36" height="14" rx="2" fill="transparent" stroke="#0e8074" stroke-opacity=".42"/>
+      <text x="538.0" y="120" class="svg-tag" fill="#0e8074">4</text>
+      <text x="572.0" y="140" class="svg-name" fill="#102a43">Evidence</text>
+      <text x="572.0" y="158" class="svg-sub">atoms · claims</text>
+    </g><g class="svg-node">
+      <rect x="664" y="104" width="120" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="672" y="110" width="36" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="690.0" y="120" class="svg-tag" fill="#102a43">5</text>
+      <text x="724.0" y="140" class="svg-name" fill="#102a43">Generate</text>
+      <text x="724.0" y="158" class="svg-sub">8 candidates</text>
+    </g><g class="svg-node">
+      <rect x="816" y="104" width="120" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="824" y="110" width="36" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="842.0" y="120" class="svg-tag" fill="#102a43">6</text>
+      <text x="876.0" y="140" class="svg-name" fill="#102a43">Tournament</text>
+      <text x="876.0" y="158" class="svg-sub">blind ranking</text>
+    </g><g class="svg-node">
+      <rect x="968" y="104" width="120" height="80" rx="8" fill="rgba(184,84,80,.07)" stroke="#b85450" stroke-width="1.2"/>
+      <rect x="976" y="110" width="36" height="14" rx="2" fill="transparent" stroke="#b85450" stroke-opacity=".42"/>
+      <text x="994.0" y="120" class="svg-tag" fill="#b85450">7</text>
+      <text x="1028.0" y="140" class="svg-name" fill="#102a43">Post-check</text>
+      <text x="1028.0" y="158" class="svg-sub">hard blocks</text>
+    </g><g class="svg-node">
+      <rect x="1120" y="104" width="120" height="80" rx="8" fill="rgba(184,84,80,.07)" stroke="#b85450" stroke-width="1.2"/>
+      <rect x="1128" y="110" width="36" height="14" rx="2" fill="transparent" stroke="#b85450" stroke-opacity=".42"/>
+      <text x="1146.0" y="120" class="svg-tag" fill="#b85450">8</text>
+      <text x="1180.0" y="140" class="svg-name" fill="#102a43">Publish boundary</text>
+      <text x="1180.0" y="158" class="svg-sub">Threads Graph</text>
+    </g><g class="svg-node">
+      <rect x="56" y="336" width="120" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="64" y="342" width="36" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="82.0" y="352" class="svg-tag" fill="#102a43">16</text>
+      <text x="116.0" y="372" class="svg-name" fill="#102a43">Improve</text>
+      <text x="116.0" y="390" class="svg-sub">prompts · rules</text>
+    </g><g class="svg-node">
+      <rect x="208" y="336" width="120" height="80" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="216" y="342" width="36" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="234.0" y="352" class="svg-tag" fill="#53687a">15</text>
+      <text x="268.0" y="372" class="svg-name" fill="#102a43">Weekly report</text>
+      <text x="268.0" y="390" class="svg-sub">winners · holds</text>
+    </g><g class="svg-node">
+      <rect x="360" y="336" width="120" height="80" rx="8" fill="rgba(255,150,111,.12)" stroke="#ff966f" stroke-width="1.2"/>
+      <rect x="368" y="342" width="36" height="14" rx="2" fill="transparent" stroke="#ff966f" stroke-opacity=".42"/>
+      <text x="386.0" y="352" class="svg-tag" fill="#ff966f">14</text>
+      <text x="420.0" y="372" class="svg-name" fill="#102a43">Revenue</text>
+      <text x="420.0" y="390" class="svg-sub">clicks · orders</text>
+    </g><g class="svg-node">
+      <rect x="512" y="336" width="120" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="520" y="342" width="36" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="538.0" y="352" class="svg-tag" fill="#102a43">13</text>
+      <text x="572.0" y="372" class="svg-name" fill="#102a43">Analytics</text>
+      <text x="572.0" y="390" class="svg-sub">views · replies</text>
+    </g><g class="svg-node">
+      <rect x="664" y="336" width="120" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="672" y="342" width="36" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="690.0" y="352" class="svg-tag" fill="#102a43">12</text>
+      <text x="724.0" y="372" class="svg-name" fill="#102a43">Comments</text>
+      <text x="724.0" y="390" class="svg-sub">3-minute worker</text>
+    </g><g class="svg-node">
+      <rect x="816" y="336" width="120" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="824" y="342" width="36" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="842.0" y="352" class="svg-tag" fill="#102a43">11</text>
+      <text x="876.0" y="372" class="svg-name" fill="#102a43">Thread reply</text>
+      <text x="876.0" y="390" class="svg-sub">disclosure · link</text>
+    </g><g class="svg-node">
+      <rect x="968" y="336" width="120" height="80" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="976" y="342" width="36" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="994.0" y="352" class="svg-tag" fill="#53687a">10</text>
+      <text x="1028.0" y="372" class="svg-name" fill="#102a43">Published ledger</text>
+      <text x="1028.0" y="390" class="svg-sub">media_id · ts</text>
+    </g><g class="svg-node">
+      <rect x="1120" y="336" width="120" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="1128" y="342" width="36" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="1146.0" y="352" class="svg-tag" fill="#102a43">9</text>
+      <text x="1180.0" y="372" class="svg-name" fill="#102a43">Threads</text>
+      <text x="1180.0" y="390" class="svg-sub">KR / US</text>
+    </g><line x1="32" y1="496" x2="1248" y2="496" stroke="rgba(16,42,67,.15)"/><text x="32" y="516" class="svg-eyebrow">LEGEND</text><line x1="132" y1="512" x2="164" y2="512" stroke="#53687a" stroke-width="1.4"/><text x="172" y="516" class="svg-legend">순차 처리</text><rect x="300" y="504" width="20" height="16" rx="2" fill="#e3efec" stroke="#0e8074"/><text x="340" y="516" class="svg-legend">핵심 증거</text><line x1="468" y1="512" x2="500" y2="512" stroke="#2e5aa8" stroke-width="1.4"/><text x="508" y="516" class="svg-legend">Graph / 성과</text><line x1="636" y1="512" x2="668" y2="512" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4"/><text x="676" y="516" class="svg-legend">학습 반환</text><rect x="804" y="504" width="20" height="16" rx="2" fill="rgba(184,84,80,.07)" stroke="#b85450"/><text x="844" y="516" class="svg-legend">검수 경계</text>
+    </svg></div>
+<table><thead><tr><th>단계</th><th>핵심 모듈</th><th>입력 → 출력</th><th>실패 의미</th></tr></thead><tbody>
+<tr><td>Demand / harvest</td><td><code>harvest.py</code>, <code>viral_intelligence.py</code></td><td>Aside 검색·UX 후보 → evidence/viral/UX stores</td><td><code>demand_signals.json</code>과 그 producer는 현재 없어 명시적 수요 큐가 비어 있음</td></tr>
+<tr><td>Product source</td><td><code>sourcing.py</code></td><td>Coupang/Amazon 후보 → 링크 모드·상품 메타</td><td>KR Aside queue만 <code>is_audit_approved()</code>로 fail closed. <code>manual_products.json</code>·Coupang Open API fallback과 US registry는 같은 감사 계약을 우회</td></tr>
+<tr><td>Evidence</td><td><code>evidence.py</code></td><td>검증 주장/출처 → claim atom + SHA-256</td><td>가치글의 관측 수치·주장은 근거 없이 쓰면 안 됨</td></tr>
+<tr><td>Generate / select</td><td><code>generate.py</code></td><td>상품+증거+voice → 8개 후보 → blind winner</td><td>실패 시 저품질 fallback 발행 대신 후보 없음/보류</td></tr>
+<tr><td>Check</td><td><code>post_check.py</code></td><td>당선 초안 → PASS 또는 hard fail / risk notes</td><td>hard fail은 publish boundary에서 재검증되어 차단</td></tr>
+<tr><td>Publish / thread</td><td><code>publish.py</code>, <code>run.py</code></td><td>초안 → preview 또는 Threads media_id + JSONL</td><td>컨테이너/발행/존재 확인 실패 시 성공으로 간주 금지</td></tr>
+<tr><td>Engage</td><td><code>comments.py</code></td><td>게시물/댓글 → idempotent replies + ledger</td><td>실패는 다음 3분 실행에서 재처리 가능</td></tr>
+<tr><td>Learn</td><td><code>analytics.py</code>, <code>improve.py</code></td><td>성과+<code>revenue.json</code> → weekly report / playbook</td><td>게시물별 주문·수수료 자동 귀속이 닫히지 않아 조회수·클릭 대리 지표에 편향</td></tr>
+</tbody></table>
+<div class="callout"><strong>실행 증명:</strong> 생성기는 provider/model, 입력·출력 digest, prompt/hash를 provenance로 남기고 publish boundary가 같은 프로세스의 seal을 확인합니다. 다만 seal 키가 프로세스 로컬이어서 사후 독립 검증 가능한 장기 서명은 아닙니다.</div>
+<div class="callout"><strong>핵심 공백:</strong> 신호 수집 조각은 있으나 명시적 demand signal 생성 원장이 없고, 실제 주문·수수료를 publication/sub-ID에 자동 귀속하는 종단 데이터 경로도 확인되지 않았습니다.</div></section>
+
+<section id="trust"><div class="section-head"><div class="section-no">03 / TRUST</div><div><h2>증거, 실행 증명, 정책 게이트</h2><p class="section-intro">“좋은 글”이 아니라 “근거가 있고, 실제 지정 모델로 만들었으며, 규정을 통과한 글”만 발행 경계에 도달해야 합니다.</p></div></div><div class="diagram-frame"><svg class="diagram-svg" viewBox="0 0 1280 480" role="img" aria-labelledby="layers-title layers-desc">
+      <title id="layers-title">증거·컴플라이언스 강제 계층</title>
+      <desc id="layers-desc">소스 출처에서 증거 원자와 생성 증명을 거쳐 게시물 검수와 최종 발행 경계까지 신뢰가 누적되는 다섯 계층.</desc>
+      <defs>
+      <marker id="layers-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#53687a"/></marker>
+      <marker id="layers-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#0e8074"/></marker>
+      <marker id="layers-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
+      <marker id="layers-coral" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#ff966f"/></marker>
+      <marker id="layers-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0,8 3,0 6" fill="none" stroke="#53687a" stroke-width="1.2"/></marker>
+    </defs>
+      <rect width="1280" height="480" fill="#f7f5f1"/>
+      <rect x="164" y="56" width="960" height="68" fill="rgba(184,84,80,.07)" stroke="#b85450"/><text x="188" y="84" class="svg-tag" fill="#b85450" style="text-anchor:start">L5</text><text x="276" y="86" class="svg-name" style="text-anchor:start">PUBLISH BOUNDARY</text><text x="1096" y="86" class="svg-sub" style="text-anchor:end">실발행 직전 실행 증명·정책·링크를 재검증</text><rect x="164" y="124" width="960" height="68" fill="#ffffff" stroke="#102a43"/><text x="188" y="152" class="svg-tag" fill="#102a43" style="text-anchor:start">L4</text><text x="276" y="154" class="svg-name" style="text-anchor:start">POST CHECK</text><text x="1096" y="154" class="svg-sub" style="text-anchor:end">고지 · 금칙표현 · 사실성 · 형식 · 인과 게이트</text><rect x="164" y="192" width="960" height="68" fill="#e3efec" stroke="#0e8074"/><text x="188" y="220" class="svg-tag" fill="#0e8074" style="text-anchor:start">L3</text><text x="276" y="222" class="svg-name" style="text-anchor:start">GENERATION ATTESTATION</text><text x="1096" y="222" class="svg-sub" style="text-anchor:end">모델·프롬프트·입력·출력 digest + process seal</text><rect x="164" y="260" width="960" height="68" fill="#ffffff" stroke="#102a43"/><text x="188" y="288" class="svg-tag" fill="#102a43" style="text-anchor:start">L2</text><text x="276" y="290" class="svg-name" style="text-anchor:start">EVIDENCE ATOMS</text><text x="1096" y="290" class="svg-sub" style="text-anchor:end">claim / source_url / retrieved_at / source_sha256 / used_count</text><rect x="164" y="328" width="960" height="68" fill="rgba(16,42,67,.05)" stroke="#53687a"/><text x="188" y="356" class="svg-tag" fill="#53687a" style="text-anchor:start">L1</text><text x="276" y="358" class="svg-name" style="text-anchor:start">SOURCE PROVENANCE</text><text x="1096" y="358" class="svg-sub" style="text-anchor:end">Aside queue audit · manual/API/US fallback gaps</text><path d="M 124,380 V 80" stroke="#0e8074" stroke-width="1.6" marker-end="url(#layers-accent)"/><text x="104" y="240" class="svg-arrow-label" transform="rotate(-90 104 240)">TRUST RISES</text><line x1="32" y1="420" x2="1248" y2="420" stroke="rgba(16,42,67,.15)"/><text x="32" y="440" class="svg-eyebrow">LEGEND</text><line x1="132" y1="436" x2="164" y2="436" stroke="#53687a" stroke-width="1.4"/><text x="172" y="440" class="svg-legend">문서·입력</text><rect x="300" y="428" width="20" height="16" rx="2" fill="#e3efec" stroke="#0e8074"/><text x="340" y="440" class="svg-legend">코드 강제</text><rect x="468" y="428" width="20" height="16" rx="2" fill="rgba(184,84,80,.07)" stroke="#b85450"/><text x="508" y="440" class="svg-legend">발행 차단점</text>
+    </svg></div><div class="diagram-frame"><svg class="diagram-svg" viewBox="0 0 1160 600" role="img" aria-labelledby="genseq-title genseq-desc">
+      <title id="genseq-title">생성·블라인드 토너먼트·실행 증명 시퀀스</title>
+      <desc id="genseq-desc">오케스트레이터가 생성기를 호출하고 OpenRouter에서 후보 여덟 개와 블라인드 선발을 받은 뒤 프로세스 증명을 봉인하고 검수와 발행 경계로 전달하는 호출 순서.</desc>
+      <defs>
+      <marker id="genseq-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#53687a"/></marker>
+      <marker id="genseq-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#0e8074"/></marker>
+      <marker id="genseq-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
+      <marker id="genseq-coral" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#ff966f"/></marker>
+      <marker id="genseq-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0,8 3,0 6" fill="none" stroke="#53687a" stroke-width="1.2"/></marker>
+    </defs>
+      <rect width="1160" height="600" fill="#f7f5f1"/>
+      <g class="svg-node">
+      <rect x="28" y="40" width="144" height="56" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="36" y="46" width="51" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="61.5" y="56" class="svg-tag" fill="#102a43">ACTOR</text>
+      <text x="100.0" y="76" class="svg-name" fill="#102a43">run.py</text>
+
+    </g><line x1="100" y1="96" x2="100" y2="568" stroke="rgba(16,42,67,.22)" stroke-dasharray="3,3"/><g class="svg-node">
+      <rect x="268" y="40" width="144" height="56" rx="8" fill="#e3efec" stroke="#0e8074" stroke-width="1.2"/>
+      <rect x="276" y="46" width="51" height="14" rx="2" fill="transparent" stroke="#0e8074" stroke-opacity=".42"/>
+      <text x="301.5" y="56" class="svg-tag" fill="#0e8074">ACTOR</text>
+      <text x="340.0" y="76" class="svg-name" fill="#102a43">generate.py</text>
+
+    </g><line x1="340" y1="96" x2="340" y2="568" stroke="rgba(16,42,67,.22)" stroke-dasharray="3,3"/><g class="svg-node">
+      <rect x="508" y="40" width="144" height="56" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="516" y="46" width="51" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="541.5" y="56" class="svg-tag" fill="#102a43">ACTOR</text>
+      <text x="580.0" y="76" class="svg-name" fill="#102a43">OpenRouter</text>
+
+    </g><line x1="580" y1="96" x2="580" y2="568" stroke="rgba(16,42,67,.22)" stroke-dasharray="3,3"/><g class="svg-node">
+      <rect x="748" y="40" width="144" height="56" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="756" y="46" width="51" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="781.5" y="56" class="svg-tag" fill="#102a43">ACTOR</text>
+      <text x="820.0" y="76" class="svg-name" fill="#102a43">post_check</text>
+
+    </g><line x1="820" y1="96" x2="820" y2="568" stroke="rgba(16,42,67,.22)" stroke-dasharray="3,3"/><g class="svg-node">
+      <rect x="988" y="40" width="144" height="56" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="996" y="46" width="51" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="1021.5" y="56" class="svg-tag" fill="#102a43">ACTOR</text>
+      <text x="1060.0" y="76" class="svg-name" fill="#102a43">publish.py</text>
+
+    </g><line x1="1060" y1="96" x2="1060" y2="568" stroke="rgba(16,42,67,.22)" stroke-dasharray="3,3"/><path d="M 100,132 H 340" stroke="#53687a" stroke-width="1.2" fill="none" marker-end="url(#genseq-arrow)"/><rect x="114.0" y="110" width="212" height="14" fill="#f7f5f1"/><text x="220.0" y="120" class="svg-arrow-label">generate_post(product,evidence)</text><path d="M 340,176 H 580" stroke="#2e5aa8" stroke-width="1.2" fill="none" marker-end="url(#genseq-link)"/><rect x="366.0" y="154" width="188" height="14" fill="#f7f5f1"/><text x="460.0" y="164" class="svg-arrow-label">8 calls: 4× story + 4× value</text><path d="M 580,220 H 340" stroke="#2e5aa8" stroke-width="1.2" fill="none" stroke-dasharray="5,4" marker-end="url(#genseq-link)"/><rect x="360.0" y="198" width="200" height="14" fill="#f7f5f1"/><text x="460.0" y="208" class="svg-arrow-label">candidates + provider metadata</text><path d="M 340,264 H 580" stroke="#2e5aa8" stroke-width="1.2" fill="none" marker-end="url(#genseq-link)"/><rect x="381.0" y="242" width="158" height="14" fill="#f7f5f1"/><text x="460.0" y="252" class="svg-arrow-label">1 blind tournament call</text><path d="M 580,308 H 340" stroke="#2e5aa8" stroke-width="1.2" fill="none" stroke-dasharray="5,4" marker-end="url(#genseq-link)"/><rect x="402.0" y="286" width="116" height="14" fill="#f7f5f1"/><text x="460.0" y="296" class="svg-arrow-label">winner + ranking</text><path d="M 340,352 H 340" stroke="#0e8074" stroke-width="1.6" fill="none" marker-end="url(#genseq-accent)"/><rect x="237.0" y="330" width="206" height="14" fill="#f7f5f1"/><text x="340.0" y="340" class="svg-arrow-label">seal model/input/output digests</text><path d="M 340,396 H 820" stroke="#0e8074" stroke-width="1.6" fill="none" marker-end="url(#genseq-accent)"/><rect x="513.0" y="374" width="134" height="14" fill="#f7f5f1"/><text x="580.0" y="384" class="svg-arrow-label">winner + provenance</text><path d="M 820,440 H 340" stroke="#53687a" stroke-width="1.2" fill="none" stroke-dasharray="5,4" marker-end="url(#genseq-arrow)"/><rect x="498.0" y="418" width="164" height="14" fill="#f7f5f1"/><text x="580.0" y="428" class="svg-arrow-label">PASS / hard-fail reasons</text><path d="M 340,484 H 100" stroke="#53687a" stroke-width="1.2" fill="none" stroke-dasharray="5,4" marker-end="url(#genseq-arrow)"/><rect x="123.0" y="462" width="194" height="14" fill="#f7f5f1"/><text x="220.0" y="472" class="svg-arrow-label">draft + report + evidence IDs</text><path d="M 100,528 H 1060" stroke="#53687a" stroke-width="1.2" fill="none" marker-end="url(#genseq-arrow)"/><rect x="474.0" y="506" width="212" height="14" fill="#f7f5f1"/><text x="580.0" y="516" class="svg-arrow-label">publish(dry_run? exact boundary)</text>
+    </svg></div>
+<table><thead><tr><th>통제</th><th>상태</th><th>실제 강제 위치</th><th>남는 공백</th></tr></thead><tbody>
+<tr><td>증거 원자 provenance</td><td><span class="badge enforced">Enforced</span></td><td><code>evidence.py</code> schema · URL scheme · SHA-256 · used_count</td><td>원 출처 품질 자체는 사람이/수집기가 판단</td></tr>
+<tr><td>상품 소싱 provenance</td><td><span class="badge enforced">Partial</span> <span class="badge conflict">Bypass</span></td><td>KR Aside queue의 audit owner·price/review/official provenance</td><td>manual/Open API fallback과 US registry에는 동등한 audit gate가 없음</td></tr>
+<tr><td>지정 생성 모델</td><td><span class="badge enforced">Enforced</span></td><td><code>execution_contract.py</code> + generation provenance</td><td>프로세스 종료 후 HMAC 재검증 불가</td></tr>
+<tr><td>표현·고지·형식</td><td><span class="badge enforced">Enforced</span></td><td><code>post_check.py</code>와 publish preflight의 이중 경계</td><td>모든 의미적 오해를 정규식으로 잡을 수는 없음</td></tr>
+<tr><td>관측하지 않은 수치 금지</td><td><span class="badge declared">Declared</span> <span class="badge enforced">Partial</span></td><td>evidence 사용 규칙 + causal gate</td><td>자유 서술 전체에 대한 완전한 사실 검증은 미검증</td></tr>
+<tr><td>광고·제휴 고지</td><td><span class="badge enforced">Enforced</span> <span class="badge conflict">Drift</span></td><td>본문/댓글/영상 overlay 계약</td><td>KR site arm은 <code>run.py</code>가 랜딩 고지를 전제하지만 <code>post_check.py</code>는 판매글 둘째 줄의 exact 고지를 요구; 영상 픽셀 검증도 제한적</td></tr>
+<tr><td>사람 승인</td><td><span class="badge declared">Conditional</span></td><td>flagged/hold와 weekly review</td><td><code>auto_publish_clean=true</code>인 clean 텍스트는 무인 발행</td></tr>
+</tbody></table></section>
+
+<section id="publish"><div class="section-head"><div class="section-no">04 / PUBLISH</div><div><h2>Threads 발행·댓글의 정확한 호출 순서</h2><p class="section-intro">성공은 HTTP 200이나 파일 존재가 아닙니다. 실발행에서는 컨테이너 생성, publish, media_id 회수, 존재 확인, 원장 기록이 모두 필요합니다.</p></div></div><div class="diagram-frame"><svg class="diagram-svg" viewBox="0 0 1160 624" role="img" aria-labelledby="pubseq-title pubseq-desc">
+      <title id="pubseq-title">Threads 텍스트 발행·댓글 시퀀스</title>
+      <desc id="pubseq-desc">최종 경계 검사를 통과한 초안이 dry-run이면 preview로, 실발행이면 Threads 컨테이너 생성과 publish, 존재 검증, 원장 기록 및 댓글 워커로 이어지는 순서.</desc>
+      <defs>
+      <marker id="pubseq-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#53687a"/></marker>
+      <marker id="pubseq-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#0e8074"/></marker>
+      <marker id="pubseq-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
+      <marker id="pubseq-coral" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#ff966f"/></marker>
+      <marker id="pubseq-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0,8 3,0 6" fill="none" stroke="#53687a" stroke-width="1.2"/></marker>
+    </defs>
+      <rect width="1160" height="624" fill="#f7f5f1"/>
+      <g class="svg-node">
+      <rect x="28" y="40" width="144" height="56" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="36" y="46" width="51" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="61.5" y="56" class="svg-tag" fill="#102a43">ACTOR</text>
+      <text x="100.0" y="76" class="svg-name" fill="#102a43">run.py</text>
+
+    </g><line x1="100" y1="96" x2="100" y2="584" stroke="rgba(16,42,67,.22)" stroke-dasharray="3,3"/><g class="svg-node">
+      <rect x="268" y="40" width="144" height="56" rx="8" fill="#e3efec" stroke="#0e8074" stroke-width="1.2"/>
+      <rect x="276" y="46" width="51" height="14" rx="2" fill="transparent" stroke="#0e8074" stroke-opacity=".42"/>
+      <text x="301.5" y="56" class="svg-tag" fill="#0e8074">ACTOR</text>
+      <text x="340.0" y="76" class="svg-name" fill="#102a43">publish.py</text>
+
+    </g><line x1="340" y1="96" x2="340" y2="584" stroke="rgba(16,42,67,.22)" stroke-dasharray="3,3"/><g class="svg-node">
+      <rect x="508" y="40" width="144" height="56" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.30)" stroke-width="1.2"/>
+      <rect x="516" y="46" width="51" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.30)" stroke-opacity=".42"/>
+      <text x="541.5" y="56" class="svg-tag" fill="rgba(16,42,67,.30)">ACTOR</text>
+      <text x="580.0" y="76" class="svg-name" fill="#102a43">Threads Graph</text>
+
+    </g><line x1="580" y1="96" x2="580" y2="584" stroke="rgba(16,42,67,.22)" stroke-dasharray="3,3"/><g class="svg-node">
+      <rect x="748" y="40" width="144" height="56" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="756" y="46" width="51" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="781.5" y="56" class="svg-tag" fill="#102a43">ACTOR</text>
+      <text x="820.0" y="76" class="svg-name" fill="#102a43">comments.py</text>
+
+    </g><line x1="820" y1="96" x2="820" y2="584" stroke="rgba(16,42,67,.22)" stroke-dasharray="3,3"/><g class="svg-node">
+      <rect x="988" y="40" width="144" height="56" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="996" y="46" width="51" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="1021.5" y="56" class="svg-tag" fill="#102a43">ACTOR</text>
+      <text x="1060.0" y="76" class="svg-name" fill="#102a43">state ledgers</text>
+
+    </g><line x1="1060" y1="96" x2="1060" y2="584" stroke="rgba(16,42,67,.22)" stroke-dasharray="3,3"/><path d="M 100,132 H 340" stroke="#53687a" stroke-width="1.2" fill="none" marker-end="url(#pubseq-arrow)"/><rect x="96.0" y="110" width="248" height="14" fill="#f7f5f1"/><text x="220.0" y="120" class="svg-arrow-label">preflight: attestation + policy + link</text><path d="M 340,176 H 1060" stroke="#53687a" stroke-width="1.2" fill="none" stroke-dasharray="5,4" marker-end="url(#pubseq-arrow)"/><rect x="621.0" y="154" width="158" height="14" fill="#f7f5f1"/><text x="700.0" y="164" class="svg-arrow-label">dry-run → preview.jsonl</text><path d="M 340,220 H 580" stroke="#2e5aa8" stroke-width="1.2" fill="none" marker-end="url(#pubseq-link)"/><rect x="372.0" y="198" width="176" height="14" fill="#f7f5f1"/><text x="460.0" y="208" class="svg-arrow-label">POST /media: text or video</text><path d="M 580,264 H 340" stroke="#2e5aa8" stroke-width="1.2" fill="none" stroke-dasharray="5,4" marker-end="url(#pubseq-link)"/><rect x="417.0" y="242" width="86" height="14" fill="#f7f5f1"/><text x="460.0" y="252" class="svg-arrow-label">creation_id</text><path d="M 340,308 H 580" stroke="#2e5aa8" stroke-width="1.2" fill="none" marker-end="url(#pubseq-link)"/><rect x="393.0" y="286" width="134" height="14" fill="#f7f5f1"/><text x="460.0" y="296" class="svg-arrow-label">POST /media_publish</text><path d="M 580,352 H 340" stroke="#0e8074" stroke-width="1.6" fill="none" stroke-dasharray="5,4" marker-end="url(#pubseq-accent)"/><rect x="418.0" y="330" width="84" height="14" fill="#f7f5f1"/><text x="460.0" y="340" class="svg-arrow-label">media_id</text><path d="M 340,396 H 580" stroke="#2e5aa8" stroke-width="1.2" fill="none" marker-end="url(#pubseq-link)"/><rect x="393.0" y="374" width="134" height="14" fill="#f7f5f1"/><text x="460.0" y="384" class="svg-arrow-label">GET media existence</text><path d="M 340,440 H 1060" stroke="#53687a" stroke-width="1.2" fill="none" marker-end="url(#pubseq-arrow)"/><rect x="624.0" y="418" width="152" height="14" fill="#f7f5f1"/><text x="700.0" y="428" class="svg-arrow-label">append published.jsonl</text><path d="M 100,484 H 820" stroke="#53687a" stroke-width="1.2" fill="none" stroke-dasharray="5,4" marker-end="url(#pubseq-arrow)"/><rect x="393.0" y="462" width="134" height="14" fill="#f7f5f1"/><text x="460.0" y="472" class="svg-arrow-label">thread/comment task</text><path d="M 820,528 H 580" stroke="#2e5aa8" stroke-width="1.2" fill="none" marker-end="url(#pubseq-link)"/><rect x="615.0" y="506" width="170" height="14" fill="#f7f5f1"/><text x="700.0" y="516" class="svg-arrow-label">reply + disclosure + link</text><path d="M 820,572 H 1060" stroke="#53687a" stroke-width="1.2" fill="none" marker-end="url(#pubseq-arrow)"/><rect x="861.0" y="550" width="158" height="14" fill="#f7f5f1"/><text x="940.0" y="560" class="svg-arrow-label">commented/replies JSONL</text>
+    </svg></div>
+<div class="grid two"><div class="card"><h3>Dry run</h3><p><code>mode.dry_run=true</code>이거나 <code>publish=false</code>면 <code>preview.jsonl</code>에만 기록합니다. media_id 없는 리허설은 실제 게시물이 아닙니다.</p></div><div class="card accent"><h3>Live publish</h3><p>실행 attestation과 정책을 다시 확인한 뒤 Threads Graph API를 호출하고, 반환 media_id와 공개 존재 여부를 성공 기준으로 삼습니다.</p></div></div></section>
+
+<section id="stores"><div class="section-head"><div class="section-no">05 / DATA</div><div><h2>파일 원장과 상태 데이터</h2><p class="section-intro">주요 operational SSOT는 데이터베이스가 아니라 <code>autopilot/state/</code> 아래의 JSON·JSONL 파일입니다. 각 파일의 “존재”가 아니라 필드와 상태 전이가 진실입니다.</p></div></div><div class="diagram-frame"><svg class="diagram-svg" viewBox="0 0 1280 600" role="img" aria-labelledby="stores-title stores-desc">
+      <title id="stores-title">파일 기반 상태·증거 원장 지도</title>
+      <desc id="stores-desc">입력과 지식, 실행과 발행, 성과와 영상으로 나뉜 HeightCue의 JSON 및 JSONL 파일 원장과 주요 의존 관계.</desc>
+      <defs>
+      <marker id="stores-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#53687a"/></marker>
+      <marker id="stores-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#0e8074"/></marker>
+      <marker id="stores-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
+      <marker id="stores-coral" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#ff966f"/></marker>
+      <marker id="stores-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0,8 3,0 6" fill="none" stroke="#53687a" stroke-width="1.2"/></marker>
+    </defs>
+      <rect width="1280" height="600" fill="#f7f5f1"/>
+      <rect x="24" y="48" width="376" height="472" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.18)" stroke-width="1"/>
+    <rect x="36" y="42" width="72" height="16" rx="2" fill="#f7f5f1"/>
+    <text x="44" y="53" class="svg-eyebrow">입력·지식</text><rect x="452" y="48" width="376" height="472" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.18)" stroke-width="1"/>
+    <rect x="464" y="42" width="72" height="16" rx="2" fill="#f7f5f1"/>
+    <text x="472" y="53" class="svg-eyebrow">실행·발행</text><rect x="880" y="48" width="376" height="472" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.18)" stroke-width="1"/>
+    <rect x="892" y="42" width="72" height="16" rx="2" fill="#f7f5f1"/>
+    <text x="900" y="53" class="svg-eyebrow">성과·영상</text><path d="M 176,148 H 484" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#stores-arrow)"/><path d="M 176,260 H 484" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#stores-arrow)"/><path d="M 604,188 H 912" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#stores-arrow)"/><path d="M 604,300 H 912" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#stores-arrow)"/><path d="M 1092,332 H 860 Q 852,332 852,340 V 404 Q 852,412 844,412 H 604" fill="none" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#stores-arrow)"/><rect x="864.0" y="364" width="62" height="16" rx="2" fill="#f7f5f1"/><text x="895.0" y="375" class="svg-arrow-label">WEEKLY</text><g class="svg-node">
+      <rect x="56" y="104" width="312" height="76" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="64" y="110" width="44" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="86.0" y="120" class="svg-tag" fill="#53687a">FILE</text>
+      <text x="212.0" y="138" class="svg-name" fill="#102a43">sourcing_queue.json</text>
+      <text x="212.0" y="156" class="svg-sub">audit status + provenance</text>
+    </g><g class="svg-node">
+      <rect x="56" y="204" width="312" height="76" rx="8" fill="#e3efec" stroke="#0e8074" stroke-width="1.2"/>
+      <rect x="64" y="210" width="44" height="14" rx="2" fill="transparent" stroke="#0e8074" stroke-opacity=".42"/>
+      <text x="86.0" y="220" class="svg-tag" fill="#0e8074">FILE</text>
+      <text x="212.0" y="238" class="svg-name" fill="#102a43">evidence_atoms.jsonl</text>
+      <text x="212.0" y="256" class="svg-sub">claims + hashes</text>
+    </g><g class="svg-node">
+      <rect x="56" y="304" width="312" height="76" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="64" y="310" width="44" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="86.0" y="320" class="svg-tag" fill="#53687a">FILE</text>
+      <text x="212.0" y="338" class="svg-name" fill="#102a43">story_bank.json</text>
+      <text x="212.0" y="356" class="svg-sub">episodes + usage</text>
+    </g><g class="svg-node">
+      <rect x="56" y="404" width="312" height="76" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="64" y="410" width="44" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="86.0" y="420" class="svg-tag" fill="#53687a">FILE</text>
+      <text x="212.0" y="438" class="svg-name" fill="#102a43">viral_ux.json</text>
+      <text x="212.0" y="456" class="svg-sub">proven / novel patterns</text>
+    </g><g class="svg-node">
+      <rect x="484" y="104" width="312" height="76" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="492" y="110" width="44" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="514.0" y="120" class="svg-tag" fill="#53687a">FILE</text>
+      <text x="640.0" y="138" class="svg-name" fill="#102a43">preview.jsonl</text>
+      <text x="640.0" y="156" class="svg-sub">dry-run artifacts</text>
+    </g><g class="svg-node">
+      <rect x="484" y="204" width="312" height="76" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="492" y="210" width="44" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="514.0" y="220" class="svg-tag" fill="#53687a">FILE</text>
+      <text x="640.0" y="238" class="svg-name" fill="#102a43">published.jsonl</text>
+      <text x="640.0" y="256" class="svg-sub">media_id + body + meta</text>
+    </g><g class="svg-node">
+      <rect x="484" y="304" width="312" height="76" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="492" y="310" width="44" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="514.0" y="320" class="svg-tag" fill="#53687a">FILE</text>
+      <text x="640.0" y="338" class="svg-name" fill="#102a43">holds.jsonl</text>
+      <text x="640.0" y="356" class="svg-sub">flagged / held</text>
+    </g><g class="svg-node">
+      <rect x="484" y="404" width="312" height="76" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="492" y="410" width="44" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="514.0" y="420" class="svg-tag" fill="#53687a">FILE</text>
+      <text x="640.0" y="438" class="svg-name" fill="#102a43">comments*.jsonl</text>
+      <text x="640.0" y="456" class="svg-sub">comment/reply idempotency</text>
+    </g><g class="svg-node">
+      <rect x="912" y="104" width="312" height="76" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="920" y="110" width="44" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="942.0" y="120" class="svg-tag" fill="#53687a">FILE</text>
+      <text x="1068.0" y="138" class="svg-name" fill="#102a43">analytics.jsonl</text>
+      <text x="1068.0" y="156" class="svg-sub">views + interactions</text>
+    </g><g class="svg-node">
+      <rect x="912" y="204" width="312" height="76" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="920" y="210" width="44" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="942.0" y="220" class="svg-tag" fill="#53687a">FILE</text>
+      <text x="1068.0" y="238" class="svg-name" fill="#102a43">revenue.jsonl</text>
+      <text x="1068.0" y="256" class="svg-sub">click/order/commission</text>
+    </g><g class="svg-node">
+      <rect x="912" y="304" width="312" height="76" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="920" y="310" width="44" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="942.0" y="320" class="svg-tag" fill="#53687a">FILE</text>
+      <text x="1068.0" y="338" class="svg-name" fill="#102a43">weekly_reports/</text>
+      <text x="1068.0" y="356" class="svg-sub">winners + prompt updates</text>
+    </g><g class="svg-node">
+      <rect x="912" y="404" width="312" height="76" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="920" y="410" width="44" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="942.0" y="420" class="svg-tag" fill="#53687a">FILE</text>
+      <text x="1068.0" y="438" class="svg-name" fill="#102a43">state/video/</text>
+      <text x="1068.0" y="456" class="svg-sub">ledger + events + artifacts</text>
+    </g><line x1="32" y1="540" x2="1248" y2="540" stroke="rgba(16,42,67,.15)"/><text x="32" y="560" class="svg-eyebrow">LEGEND</text><line x1="132" y1="556" x2="164" y2="556" stroke="#53687a" stroke-width="1.4"/><text x="172" y="560" class="svg-legend">파일/원장</text><rect x="300" y="548" width="20" height="16" rx="2" fill="#e3efec" stroke="#0e8074"/><text x="340" y="560" class="svg-legend">핵심 증거 SSOT</text><line x1="468" y1="556" x2="500" y2="556" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4"/><text x="508" y="560" class="svg-legend">주간 학습</text>
+    </svg></div>
+<div class="callout"><strong>동시성 경계:</strong> 영상 원장은 atomic replace + lock + lease를 명시적으로 구현합니다. 텍스트 JSONL의 모든 writer가 같은 수준의 파일 락·dedupe를 공유하는지는 파일별로 다르므로, 스케줄 중복은 단순한 운영 잡음이 아니라 실제 중복 게시 위험입니다.</div></section>
+
+<section id="video"><div class="section-head"><div class="section-no">06 / VIDEO</div><div><h2>I2V UGC: 실제 상품 → 네이티브 대사 → 3개 산출물</h2><p class="section-intro">영상은 별도 원장·예산·리스·QA를 가진 sidecar입니다. 개별 구성요소와 실험 산출물은 존재하지만, 현행 <code>run.py video process</code>는 <strong>종단 오케스트레이터 미배선</strong>으로 종료하므로 아래 경로 전체가 자동 실행된다고 읽으면 안 됩니다.</p></div></div><div class="diagram-frame"><svg class="diagram-svg" viewBox="0 0 1280 620" role="img" aria-labelledby="video-title video-desc">
+      <title id="video-title">I2V UGC 영상 생성·검수·발행 경로</title>
+      <desc id="video-desc">실제 상품 이미지와 계보에서 스토리보드, Codex 첫 프레임, FAL과 MiniMax H3 Max, OpenMontage와 Remotion 조립, QA, 발행 및 존재 검증으로 이어지는 영상 경로.</desc>
+      <defs>
+      <marker id="video-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#53687a"/></marker>
+      <marker id="video-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#0e8074"/></marker>
+      <marker id="video-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
+      <marker id="video-coral" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#ff966f"/></marker>
+      <marker id="video-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0,8 3,0 6" fill="none" stroke="#53687a" stroke-width="1.2"/></marker>
+    </defs>
+      <rect width="1280" height="620" fill="#f7f5f1"/>
+      <rect x="24" y="48" width="304" height="492" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.18)" stroke-width="1"/>
+    <rect x="36" y="42" width="72" height="16" rx="2" fill="#f7f5f1"/>
+    <text x="44" y="53" class="svg-eyebrow">소재·계약</text><rect x="360" y="48" width="568" height="492" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.18)" stroke-width="1"/>
+    <rect x="372" y="42" width="72" height="16" rx="2" fill="#f7f5f1"/>
+    <text x="380" y="53" class="svg-eyebrow">생성·조립</text><rect x="960" y="48" width="296" height="492" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.18)" stroke-width="1"/>
+    <rect x="972" y="42" width="72" height="16" rx="2" fill="#f7f5f1"/>
+    <text x="980" y="53" class="svg-eyebrow">검수·발행</text><path d="M 176,144 H 392" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#video-arrow)"/><path d="M 568,144 H 616" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#video-link)"/><path d="M 792,144 H 992" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#video-link)"/><path d="M 1080,184 H 1088 Q 1080,184 1080,192 V 252 Q 1080,260 1072,260 H 1080" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#video-arrow)"/><path d="M 992,300 H 880" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#video-arrow)"/><path d="M 704,300 H 568" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#video-arrow)"/><path d="M 392,300 H 328" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#video-arrow)"/><path d="M 176,340 H 184 Q 176,340 176,348 V 408 Q 176,416 168,416 H 176" fill="none" stroke="#0e8074" stroke-width="1.6" marker-end="url(#video-accent)"/><rect x="188.0" y="372" width="69" height="16" rx="2" fill="#f7f5f1"/><text x="222.5" y="383" class="svg-arrow-label">QA PASS</text><path d="M 264,456 H 392" fill="none" stroke="#0e8074" stroke-width="1.6" marker-end="url(#video-accent)"/><path d="M 568,456 H 616" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#video-link)"/><path d="M 792,456 H 992" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#video-link)"/><g class="svg-node">
+      <rect x="56" y="104" width="240" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="64" y="110" width="51" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="89.5" y="120" class="svg-tag" fill="#102a43">INPUT</text>
+      <text x="176.0" y="140" class="svg-name" fill="#102a43">Real product assets</text>
+      <text x="176.0" y="158" class="svg-sub">source URL · sha256 · market</text>
+    </g><g class="svg-node">
+      <rect x="392" y="104" width="176" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="400" y="110" width="72" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="436.0" y="120" class="svg-tag" fill="#102a43">CONTRACT</text>
+      <text x="480.0" y="140" class="svg-name" fill="#102a43">Storyboard</text>
+      <text x="480.0" y="158" class="svg-sub">3 cuts × 5s · spoken line</text>
+    </g><g class="svg-node">
+      <rect x="616" y="104" width="176" height="80" rx="8" fill="#e3efec" stroke="#0e8074" stroke-width="1.2"/>
+      <rect x="624" y="110" width="51" height="14" rx="2" fill="transparent" stroke="#0e8074" stroke-opacity=".42"/>
+      <text x="649.5" y="120" class="svg-tag" fill="#0e8074">IMAGE</text>
+      <text x="704.0" y="140" class="svg-name" fill="#102a43">First frame</text>
+      <text x="704.0" y="158" class="svg-sub">Codex · gpt-image-2</text>
+    </g><g class="svg-node">
+      <rect x="992" y="104" width="176" height="80" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.30)" stroke-width="1.2"/>
+      <rect x="1000" y="110" width="51" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.30)" stroke-opacity=".42"/>
+      <text x="1025.5" y="120" class="svg-tag" fill="rgba(16,42,67,.30)">CLOUD</text>
+      <text x="1080.0" y="140" class="svg-name" fill="#102a43">FAL storage</text>
+      <text x="1080.0" y="158" class="svg-sub">signed upload → public URL</text>
+    </g><g class="svg-node">
+      <rect x="992" y="260" width="176" height="80" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.30)" stroke-width="1.2"/>
+      <rect x="1000" y="266" width="37" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.30)" stroke-opacity=".42"/>
+      <text x="1018.5" y="276" class="svg-tag" fill="rgba(16,42,67,.30)">I2V</text>
+      <text x="1080.0" y="296" class="svg-name" fill="#102a43">MiniMax H3 Max</text>
+      <text x="1080.0" y="314" class="svg-sub">768P · native audio/dialogue</text>
+    </g><g class="svg-node">
+      <rect x="704" y="260" width="176" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="712" y="266" width="51" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="737.5" y="276" class="svg-tag" fill="#102a43">MEDIA</text>
+      <text x="792.0" y="296" class="svg-name" fill="#102a43">OpenMontage</text>
+      <text x="792.0" y="314" class="svg-sub">staging · transcript probe</text>
+    </g><g class="svg-node">
+      <rect x="392" y="260" width="176" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="400" y="266" width="58" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="429.0" y="276" class="svg-tag" fill="#102a43">RENDER</text>
+      <text x="480.0" y="296" class="svg-name" fill="#102a43">Remotion compose</text>
+      <text x="480.0" y="314" class="svg-sub">clean + subtitle/CTA + SRT</text>
+    </g><g class="svg-node">
+      <rect x="56" y="260" width="240" height="80" rx="8" fill="rgba(184,84,80,.07)" stroke="#b85450" stroke-width="1.2"/>
+      <rect x="64" y="266" width="44" height="14" rx="2" fill="transparent" stroke="#b85450" stroke-opacity=".42"/>
+      <text x="86.0" y="276" class="svg-tag" fill="#b85450">GATE</text>
+      <text x="176.0" y="296" class="svg-name" fill="#102a43">QA + fidelity</text>
+      <text x="176.0" y="314" class="svg-sub">decode · duration · speech · overlays</text>
+    </g><g class="svg-node">
+      <rect x="56" y="416" width="208" height="80" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="64" y="422" width="58" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="93.0" y="432" class="svg-tag" fill="#53687a">PACKET</text>
+      <text x="160.0" y="452" class="svg-name" fill="#102a43">Handoff packet</text>
+      <text x="160.0" y="470" class="svg-sub">caption · media path · qa report</text>
+    </g><g class="svg-node">
+      <rect x="392" y="416" width="176" height="80" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="400" y="422" width="51" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="425.5" y="432" class="svg-tag" fill="#53687a">STATE</text>
+      <text x="480.0" y="452" class="svg-name" fill="#102a43">Video ledger</text>
+      <text x="480.0" y="470" class="svg-sub">ready_to_publish</text>
+    </g><g class="svg-node">
+      <rect x="616" y="416" width="176" height="80" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.30)" stroke-width="1.2"/>
+      <rect x="624" y="422" width="65" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.30)" stroke-opacity=".42"/>
+      <text x="656.5" y="432" class="svg-tag" fill="rgba(16,42,67,.30)">CHANNEL</text>
+      <text x="704.0" y="452" class="svg-name" fill="#102a43">Threads publish</text>
+      <text x="704.0" y="470" class="svg-sub">container → publish</text>
+    </g><g class="svg-node">
+      <rect x="992" y="416" width="176" height="80" rx="8" fill="rgba(255,150,111,.12)" stroke="#ff966f" stroke-width="1.2"/>
+      <rect x="1000" y="422" width="58" height="14" rx="2" fill="transparent" stroke="#ff966f" stroke-opacity=".42"/>
+      <text x="1029.0" y="432" class="svg-tag" fill="#ff966f">VERIFY</text>
+      <text x="1080.0" y="452" class="svg-name" fill="#102a43">Existence monitor</text>
+      <text x="1080.0" y="470" class="svg-sub">GET media · reconcile</text>
+    </g><line x1="32" y1="560" x2="1248" y2="560" stroke="rgba(16,42,67,.15)"/><text x="32" y="580" class="svg-eyebrow">LEGEND</text><line x1="132" y1="576" x2="164" y2="576" stroke="#53687a" stroke-width="1.4"/><text x="172" y="580" class="svg-legend">로컬 계약</text><line x1="300" y1="576" x2="332" y2="576" stroke="#2e5aa8" stroke-width="1.4"/><text x="340" y="580" class="svg-legend">구독·외부 API</text><rect x="468" y="568" width="20" height="16" rx="2" fill="rgba(184,84,80,.07)" stroke="#b85450"/><text x="508" y="580" class="svg-legend">충실도·품질 게이트</text><rect x="636" y="568" width="20" height="16" rx="2" fill="#e3efec" stroke="#0e8074"/><text x="676" y="580" class="svg-legend">핵심 이미지 단계</text>
+    </svg></div>
+<div class="grid three"><div class="card accent"><h3>산출물 1 · Clean master</h3><p>네이티브 음성 + 전 구간 광고 고지. 자막/CTA를 굽지 않은 후보정 기준본.</p></div><div class="card"><h3>산출물 2 · Published master</h3><p>고지 + 자막 + CTA. 자막·CTA는 상품을 가리지 않도록 안전영역을 지켜야 합니다.</p></div><div class="card"><h3>산출물 3 · SRT sidecar</h3><p>대사 타이밍을 외부 자막 파일로 보존. 한국어는 <code>keep-all</code>과 balanced wrapping 규칙.</p></div></div>
+<table><thead><tr><th>영상 불변 조건</th><th>강제/검수 지점</th><th>현재 상태</th></tr></thead><tbody>
+<tr><td>실제 상품 이미지와 출처 hash</td><td><code>product_assets.py</code>, <code>product_fidelity.py</code></td><td>주 원장 3건에 공식 이미지 URL·SHA·rights evidence 존재; 모두 queued/attempts 0</td></tr>
+<tr><td>첫 프레임은 Hermes openai-codex / gpt-image-2</td><td><code>codex_image_bridge.py</code></td><td>경로 고정 · OAuth 구독 사용</td></tr>
+<tr><td>H3 Max 768P · 5초/컷 · 네이티브 오디오/대사</td><td><code>video_generate.py</code>, storyboard contract</td><td>실험 spend ledger는 실제 비용을 기록하고 H.264/AAC 768×1344 · 5.184초 컷 1개를 디코딩 확인; production 설정은 OFF</td></tr>
+<tr><td>고지 전 구간 · 22px/500 · scrim .32</td><td>Remotion composition + QA</td><td>선언/렌더 계약 · 픽셀 검증은 제한적</td></tr>
+<tr><td>음성 존재·전사 품질</td><td>OpenMontage venv + faster-whisper base probe</td><td>import/실행 probe 존재 · 한국어 의미 정확도는 사람 QA 필요</td></tr>
+<tr><td>종단 worker</td><td><code>run.py video process</code></td><td><span class="badge gap">BLOCKED</span> 현재 “미배선” 메시지와 exit 5; claim→generate→compose→QA 자동 전이 없음</td></tr>
+<tr><td>시장 gate</td><td><code>VIDEO_DEFAULTS["markets"]</code></td><td><span class="badge conflict">Mismatch</span> config에 video 섹션이 없어 기본 <code>["KR"]</code>; 주 원장 3건은 모두 US라 설정을 그대로 쓰면 대상 밖</td></tr>
+<tr><td>회귀 검증</td><td><code>test_fal_upload.py</code></td><td><span class="badge conflict">31 pass · 1 fail</span> 폐기된 <code>motion_prompt</code> 인자를 테스트가 계속 전달하는 계약 drift</td></tr>
+<tr><td>완전 디코딩·실재 Threads media</td><td>ffprobe/decoder + publish monitor</td><td>경로 존재 · end-to-end 실발행 0</td></tr>
+</tbody></table>
+<div class="diagram-frame"><svg class="diagram-svg" viewBox="0 0 1280 516" role="img" aria-labelledby="vstate-title vstate-desc">
+      <title id="vstate-title">영상 잡 원장 핵심 상태 흐름</title>
+      <desc id="vstate-desc">실제 8개 ledger 상태의 정상 경로와 QA 실패·재시도 경로를 보여 주며 모든 허용 전이는 바로 아래 행렬에 명시한다.</desc>
+      <defs>
+      <marker id="vstate-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#53687a"/></marker>
+      <marker id="vstate-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#0e8074"/></marker>
+      <marker id="vstate-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
+      <marker id="vstate-coral" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#ff966f"/></marker>
+      <marker id="vstate-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0,8 3,0 6" fill="none" stroke="#53687a" stroke-width="1.2"/></marker>
+    </defs>
+      <rect width="1280" height="516" fill="#f7f5f1"/>
+      <path d="M 80,160 H 120" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#vstate-arrow)"/><rect x="65.5" y="130" width="69" height="16" rx="2" fill="#f7f5f1"/><text x="100" y="141" class="svg-arrow-label">ENQUEUE</text><path d="M 280,160 H 352" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#vstate-arrow)"/><rect x="288.5" y="130" width="55" height="16" rx="2" fill="#f7f5f1"/><text x="316" y="141" class="svg-arrow-label">CLAIM</text><path d="M 512,160 H 584" fill="none" stroke="#0e8074" stroke-width="1.6" marker-end="url(#vstate-accent)"/><rect x="513.5" y="130" width="69" height="16" rx="2" fill="#f7f5f1"/><text x="548" y="141" class="svg-arrow-label">QA PASS</text><path d="M 744,160 H 816" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#vstate-link)"/><rect x="752.5" y="130" width="55" height="16" rx="2" fill="#f7f5f1"/><text x="780" y="141" class="svg-arrow-label">CLAIM</text><path d="M 976,160 H 1048" fill="none" stroke="#0e8074" stroke-width="1.6" marker-end="url(#vstate-accent)"/><rect x="981.0" y="130" width="62" height="16" rx="2" fill="#f7f5f1"/><text x="1012" y="141" class="svg-arrow-label">VERIFY</text><path d="M 432,200 V 332" fill="none" stroke="#b85450" stroke-width="1.2" marker-end="url(#vstate-coral)"/><rect x="448" y="248" width="64" height="14" fill="#f7f5f1"/><text x="480" y="259" class="svg-arrow-label" fill="#b85450">QA FAIL</text><path d="M 664,200 V 332" fill="none" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#vstate-arrow)"/><path d="M 896,200 H 788 Q 780,200 780,208 V 344 Q 780,352 772,352 H 744" fill="none" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#vstate-arrow)"/><path d="M 352,392 H 312 Q 304,392 304,384 V 240 Q 304,232 296,232 H 184 Q 176,232 176,224 V 200" fill="none" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#vstate-arrow)"/><path d="M 640,332 V 308 Q 640,300 632,300 H 328 Q 320,300 320,292 V 188 Q 320,180 312,180 H 280" fill="none" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#vstate-arrow)"/><path d="M 744,372 H 816" fill="none" stroke="#b85450" stroke-width="1.6" marker-end="url(#vstate-coral)"/><rect x="728.0" y="342" width="104" height="16" rx="2" fill="#f7f5f1"/><text x="780" y="353" class="svg-arrow-label">ATTEMPTS ≥ 3</text><circle cx="64" cy="160" r="7" fill="#102a43"/><g class="svg-node">
+      <rect x="120" y="120" width="160" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="128" y="126" width="51" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="153.5" y="136" class="svg-tag" fill="#102a43">STATE</text>
+      <text x="200.0" y="156" class="svg-name" fill="#102a43">queued</text>
+      <text x="200.0" y="174" class="svg-sub">no lease</text>
+    </g><g class="svg-node">
+      <rect x="352" y="120" width="160" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="360" y="126" width="51" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="385.5" y="136" class="svg-tag" fill="#102a43">STATE</text>
+      <text x="432.0" y="156" class="svg-name" fill="#102a43">generating</text>
+      <text x="432.0" y="174" class="svg-sub">lease owner</text>
+    </g><g class="svg-node">
+      <rect x="584" y="120" width="160" height="80" rx="8" fill="#e3efec" stroke="#0e8074" stroke-width="1.2"/>
+      <rect x="592" y="126" width="51" height="14" rx="2" fill="transparent" stroke="#0e8074" stroke-opacity=".42"/>
+      <text x="617.5" y="136" class="svg-tag" fill="#0e8074">STATE</text>
+      <text x="664.0" y="156" class="svg-name" fill="#102a43">ready_to_publish</text>
+      <text x="664.0" y="174" class="svg-sub">packet + QA</text>
+    </g><g class="svg-node">
+      <rect x="816" y="120" width="160" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="824" y="126" width="51" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="849.5" y="136" class="svg-tag" fill="#102a43">STATE</text>
+      <text x="896.0" y="156" class="svg-name" fill="#102a43">publishing</text>
+      <text x="896.0" y="174" class="svg-sub">lease owner</text>
+    </g><g class="svg-node">
+      <rect x="1048" y="120" width="160" height="80" rx="8" fill="#102a43" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="1056" y="126" width="51" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="1081.5" y="136" class="svg-tag" fill="#102a43">STATE</text>
+      <text x="1128.0" y="156" class="svg-name" fill="#f7f5f1">published</text>
+      <text x="1128.0" y="174" class="svg-sub">terminal · media_id</text>
+    </g><g class="svg-node">
+      <rect x="352" y="332" width="160" height="80" rx="8" fill="rgba(184,84,80,.07)" stroke="#b85450" stroke-width="1.2"/>
+      <rect x="360" y="338" width="51" height="14" rx="2" fill="transparent" stroke="#b85450" stroke-opacity=".42"/>
+      <text x="385.5" y="348" class="svg-tag" fill="#b85450">STATE</text>
+      <text x="432.0" y="368" class="svg-name" fill="#102a43">qa_failed</text>
+      <text x="432.0" y="386" class="svg-sub">operator requeue</text>
+    </g><g class="svg-node">
+      <rect x="584" y="332" width="160" height="80" rx="8" fill="rgba(16,42,67,.018)" stroke="rgba(16,42,67,.24)" stroke-width="1.2" stroke-dasharray="5,4"/>
+      <rect x="592" y="338" width="51" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.24)" stroke-opacity=".42"/>
+      <text x="617.5" y="348" class="svg-tag" fill="rgba(16,42,67,.24)">STATE</text>
+      <text x="664.0" y="368" class="svg-name" fill="#53687a">retryable_failed</text>
+      <text x="664.0" y="386" class="svg-sub">attempt tracked</text>
+    </g><g class="svg-node">
+      <rect x="816" y="332" width="160" height="80" rx="8" fill="rgba(184,84,80,.07)" stroke="#b85450" stroke-width="1.2"/>
+      <rect x="824" y="338" width="51" height="14" rx="2" fill="transparent" stroke="#b85450" stroke-opacity=".42"/>
+      <text x="849.5" y="348" class="svg-tag" fill="#b85450">STATE</text>
+      <text x="896.0" y="368" class="svg-name" fill="#102a43">dead_letter</text>
+      <text x="896.0" y="386" class="svg-sub">human required</text>
+    </g><line x1="32" y1="456" x2="1248" y2="456" stroke="rgba(16,42,67,.15)"/><text x="32" y="476" class="svg-eyebrow">LEGEND</text><line x1="132" y1="472" x2="164" y2="472" stroke="#53687a" stroke-width="1.4"/><text x="172" y="476" class="svg-legend">핵심 정상 전이</text><rect x="300" y="464" width="20" height="16" rx="2" fill="#e3efec" stroke="#0e8074"/><text x="340" y="476" class="svg-legend">검증 성공</text><line x1="468" y1="472" x2="500" y2="472" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4"/><text x="508" y="476" class="svg-legend">재시도·회수</text><rect x="636" y="464" width="20" height="16" rx="2" fill="rgba(184,84,80,.07)" stroke="#b85450"/><text x="676" y="476" class="svg-legend">종결 실패</text>
+    </svg></div>
+<h3>코드 정본 전이 행렬</h3>
+<table><thead><tr><th>현재 상태</th><th>허용되는 다음 상태 — 그 외는 모두 <code>StateError</code></th></tr></thead><tbody>
+<tr><td><code>queued</code></td><td><code>generating</code> · <code>retryable_failed</code> · <code>dead_letter</code></td></tr>
+<tr><td><code>generating</code></td><td><code>ready_to_publish</code> · <code>qa_failed</code> · <code>retryable_failed</code> · <code>dead_letter</code></td></tr>
+<tr><td><code>qa_failed</code></td><td><code>queued</code> · <code>dead_letter</code></td></tr>
+<tr><td><code>ready_to_publish</code></td><td><code>publishing</code> · <code>retryable_failed</code> · <code>dead_letter</code></td></tr>
+<tr><td><code>publishing</code></td><td><code>published</code> · <code>retryable_failed</code> · <code>dead_letter</code></td></tr>
+<tr><td><code>retryable_failed</code></td><td><code>queued</code> · <code>dead_letter</code></td></tr>
+<tr><td><code>published</code> · <code>dead_letter</code></td><td>종결 상태 — 다음 전이 없음</td></tr>
+</tbody></table>
+<div class="grid two"><div class="card"><h3>멱등성과 리스</h3><p>시장+상품+소스 hash+스토리보드 fingerprint+파이프라인 버전이 idempotency key입니다. claim은 900초 lease, 최대 3회 시도, stale lease 회수와 dead letter를 가집니다.</p></div><div class="card risk"><h3>계약 ≠ 자동 운영</h3><p>상태 머신·예산·생성·합성·QA·handoff 모듈이 있어도 <code>process</code> dispatcher가 없으면 원장은 움직이지 않습니다. publishing 회수 시에는 외부 존재 reconciliation을 생성 재진입보다 먼저 해야 합니다.</p></div></div></section>
+
+<section id="agents"><div class="section-head"><div class="section-no">07 / ORCHESTRATION</div><div><h2>Hermes Bot Mode, 스케줄러, Aside</h2><p class="section-intro">역할은 프로필로 격리되지만 실제 Python 실행은 같은 HeightCue 저장소와 파일 원장을 공유합니다. Delivery(콘텐츠·발행)와 Engineering(코드·QA)은 분리 원칙이며, 여기에는 HeightCue 운영 프로필만 표시합니다.</p></div></div><div class="diagram-frame"><svg class="diagram-svg" viewBox="0 0 1280 640" role="img" aria-labelledby="org-title org-desc">
+      <title id="org-title">HeightCue Hermes Bot 조직·책임 지도</title>
+      <desc id="org-desc">회사 오케스트레이터 폴리 아래 HeightCue 운영 프로필 아홉 개를 Delivery·Proof와 Research·Revenue로 분리한 조직도. Delivery와 Engineering은 별도 경계다.</desc>
+      <defs>
+      <marker id="org-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#53687a"/></marker>
+      <marker id="org-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#0e8074"/></marker>
+      <marker id="org-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
+      <marker id="org-coral" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#ff966f"/></marker>
+      <marker id="org-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0,8 3,0 6" fill="none" stroke="#53687a" stroke-width="1.2"/></marker>
+    </defs>
+      <rect width="1280" height="640" fill="#f7f5f1"/>
+      <path d="M 640,112 V 152 H 280 V 184 M 640,152 H 1000 V 184" fill="none" stroke="#53687a" stroke-width="1.2"/><path d="M 280,264 V 304 H 88 M 280,304 H 580 M 88,304 V 336 M 252,304 V 336 M 416,304 V 336 M 580,304 V 336" fill="none" stroke="#53687a" stroke-width="1.2"/><path d="M 1000,264 V 304 H 776 M 1000,304 H 1104 M 776,304 V 336 M 940,304 V 336 M 1104,304 V 336" fill="none" stroke="#53687a" stroke-width="1.2"/><path d="M 1160,224 H 1216 V 448 H 824 M 824,448 V 480 M 1104,448 V 480" fill="none" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4"/><g class="svg-node">
+      <rect x="520" y="32" width="240" height="80" rx="8" fill="#e3efec" stroke="#0e8074" stroke-width="1.2"/>
+      <rect x="528" y="38" width="44" height="14" rx="2" fill="transparent" stroke="#0e8074" stroke-opacity=".42"/>
+      <text x="550.0" y="48" class="svg-tag" fill="#0e8074">ROOT</text>
+      <text x="640.0" y="68" class="svg-name" fill="#102a43">폴리 · HeightCue OS</text>
+      <text x="640.0" y="86" class="svg-sub">company orchestrator → repo SSOT</text>
+    </g><g class="svg-node">
+      <rect x="120" y="184" width="320" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="128" y="190" width="37" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="146.5" y="200" class="svg-tag" fill="#102a43">POD</text>
+      <text x="280.0" y="220" class="svg-name" fill="#102a43">Delivery &amp; Proof</text>
+      <text x="280.0" y="238" class="svg-sub">송재현 · 서하늘 · 정나영 · 최유진</text>
+    </g><g class="svg-node">
+      <rect x="840" y="184" width="320" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="848" y="190" width="37" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="866.5" y="200" class="svg-tag" fill="#102a43">POD</text>
+      <text x="1000.0" y="220" class="svg-name" fill="#102a43">Research &amp; Revenue</text>
+      <text x="1000.0" y="238" class="svg-sub">이민재 · 김예린 · 정다은 · 배지훈 · 윤서진</text>
+    </g><g class="svg-node">
+      <rect x="16" y="336" width="144" height="88" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="24" y="342" width="37" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="42.5" y="352" class="svg-tag" fill="#102a43">BOT</text>
+      <text x="88.0" y="376" class="svg-name" fill="#102a43">송재현</text>
+      <text x="88.0" y="394" class="svg-sub">@jaehyun-publisher</text><text x="88.0" y="408" class="svg-sub">publisher · final gate</text>
+    </g><g class="svg-node">
+      <rect x="180" y="336" width="144" height="88" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="188" y="342" width="37" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="206.5" y="352" class="svg-tag" fill="#102a43">BOT</text>
+      <text x="252.0" y="376" class="svg-name" fill="#102a43">서하늘</text>
+      <text x="252.0" y="394" class="svg-sub">@haneul-proof</text><text x="252.0" y="408" class="svg-sub">proof · compliance</text>
+    </g><g class="svg-node">
+      <rect x="344" y="336" width="144" height="88" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="352" y="342" width="37" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="370.5" y="352" class="svg-tag" fill="#102a43">BOT</text>
+      <text x="416.0" y="376" class="svg-name" fill="#102a43">정나영</text>
+      <text x="416.0" y="394" class="svg-sub">@nayoung-threads-kr</text><text x="416.0" y="408" class="svg-sub">KR Threads · PM</text>
+    </g><g class="svg-node">
+      <rect x="508" y="336" width="144" height="88" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="516" y="342" width="37" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="534.5" y="352" class="svg-tag" fill="#102a43">BOT</text>
+      <text x="580.0" y="376" class="svg-name" fill="#102a43">최유진</text>
+      <text x="580.0" y="394" class="svg-sub">@yujin-threads-us</text><text x="580.0" y="408" class="svg-sub">US Threads · PM</text>
+    </g><g class="svg-node">
+      <rect x="704" y="336" width="144" height="88" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="712" y="342" width="37" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="730.5" y="352" class="svg-tag" fill="#102a43">BOT</text>
+      <text x="776.0" y="376" class="svg-name" fill="#102a43">이민재</text>
+      <text x="776.0" y="394" class="svg-sub">@minjae-coupang</text><text x="776.0" y="408" class="svg-sub">Coupang sourcing</text>
+    </g><g class="svg-node">
+      <rect x="868" y="336" width="144" height="88" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="876" y="342" width="37" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="894.5" y="352" class="svg-tag" fill="#102a43">BOT</text>
+      <text x="940.0" y="376" class="svg-name" fill="#102a43">김예린</text>
+      <text x="940.0" y="394" class="svg-sub">@yerin-amazon</text><text x="940.0" y="408" class="svg-sub">Amazon sourcing</text>
+    </g><g class="svg-node">
+      <rect x="1032" y="336" width="144" height="88" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="1040" y="342" width="37" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="1058.5" y="352" class="svg-tag" fill="#102a43">BOT</text>
+      <text x="1104.0" y="376" class="svg-name" fill="#102a43">정다은</text>
+      <text x="1104.0" y="394" class="svg-sub">@daeun-research</text><text x="1104.0" y="408" class="svg-sub">content intelligence</text>
+    </g><g class="svg-node">
+      <rect x="704" y="480" width="240" height="88" rx="8" fill="rgba(255,150,111,.12)" stroke="#ff966f" stroke-width="1.2"/>
+      <rect x="712" y="486" width="37" height="14" rx="2" fill="transparent" stroke="#ff966f" stroke-opacity=".42"/>
+      <text x="730.5" y="496" class="svg-tag" fill="#ff966f">BOT</text>
+      <text x="824.0" y="520" class="svg-name" fill="#102a43">배지훈</text>
+      <text x="824.0" y="538" class="svg-sub">@jihun-affiliate</text><text x="824.0" y="552" class="svg-sub">affiliate ops · weekly ROI</text>
+    </g><g class="svg-node">
+      <rect x="984" y="480" width="240" height="88" rx="8" fill="rgba(255,150,111,.12)" stroke="#ff966f" stroke-width="1.2"/>
+      <rect x="992" y="486" width="37" height="14" rx="2" fill="transparent" stroke="#ff966f" stroke-opacity=".42"/>
+      <text x="1010.5" y="496" class="svg-tag" fill="#ff966f">BOT</text>
+      <text x="1104.0" y="520" class="svg-name" fill="#102a43">윤서진</text>
+      <text x="1104.0" y="538" class="svg-sub">@seojin-brand</text><text x="1104.0" y="552" class="svg-sub">full-funnel · revenue KPI</text>
+    </g><line x1="32" y1="580" x2="1248" y2="580" stroke="rgba(16,42,67,.15)"/><text x="32" y="600" class="svg-eyebrow">LEGEND</text><line x1="132" y1="596" x2="164" y2="596" stroke="#53687a" stroke-width="1.4"/><text x="172" y="600" class="svg-legend">책임 계층</text><line x1="300" y1="596" x2="332" y2="596" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4"/><text x="340" y="600" class="svg-legend">교차 기능 연결</text><rect x="468" y="588" width="20" height="16" rx="2" fill="rgba(184,84,80,.07)" stroke="#b85450"/><text x="508" y="600" class="svg-legend">명시된 수익 책임</text><rect x="636" y="588" width="20" height="16" rx="2" fill="#e3efec" stroke="#0e8074"/><text x="676" y="600" class="svg-legend">회사 오케스트레이터</text>
+    </svg></div><div class="diagram-frame"><svg class="diagram-svg" viewBox="0 0 1280 588" role="img" aria-labelledby="deploy-title deploy-desc">
+      <title id="deploy-title">실행 배치·스케줄러 배치도</title>
+      <desc id="deploy-desc">한 macOS 호스트의 user crontab과 Hermes profile routines가 동일 HeightCue 저장소와 Aside 및 외부 API를 호출하며 파일 원장을 공유하는 실제 배치 구조.</desc>
+      <defs>
+      <marker id="deploy-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#53687a"/></marker>
+      <marker id="deploy-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#0e8074"/></marker>
+      <marker id="deploy-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
+      <marker id="deploy-coral" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#ff966f"/></marker>
+      <marker id="deploy-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0,8 3,0 6" fill="none" stroke="#53687a" stroke-width="1.2"/></marker>
+    </defs>
+      <rect width="1280" height="588" fill="#f7f5f1"/>
+      <rect x="24" y="52" width="376" height="444" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.18)" stroke-width="1" stroke-dasharray="4,4"/>
+    <rect x="36" y="46" width="100" height="16" rx="2" fill="#f7f5f1"/>
+    <text x="44" y="57" class="svg-eyebrow">MACOS HOST</text><rect x="452" y="52" width="376" height="444" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.18)" stroke-width="1" stroke-dasharray="4,4"/>
+    <rect x="464" y="46" width="140" height="16" rx="2" fill="#f7f5f1"/>
+    <text x="472" y="57" class="svg-eyebrow">HERMES PROFILES</text><rect x="880" y="52" width="376" height="444" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.18)" stroke-width="1" stroke-dasharray="4,4"/>
+    <rect x="892" y="46" width="164" height="16" rx="2" fill="#f7f5f1"/>
+    <text x="900" y="57" class="svg-eyebrow">RUNTIME + EXTERNAL</text><path d="M 352,148 H 500" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#deploy-arrow)"/><rect x="398.5" y="118" width="55" height="16" rx="2" fill="#f7f5f1"/><text x="426" y="129" class="svg-arrow-label">SHELL</text><path d="M 352,292 H 500" fill="none" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#deploy-arrow)"/><rect x="391.5" y="262" width="69" height="16" rx="2" fill="#f7f5f1"/><text x="426" y="273" class="svg-arrow-label">ROUTINE</text><path d="M 780,148 H 912" fill="none" stroke="#0e8074" stroke-width="1.6" marker-end="url(#deploy-accent)"/><rect x="808.0" y="118" width="76" height="16" rx="2" fill="#f7f5f1"/><text x="846" y="129" class="svg-arrow-label">COMMANDS</text><path d="M 780,292 H 912" fill="none" stroke="#0e8074" stroke-width="1.6" marker-end="url(#deploy-accent)"/><rect x="804.5" y="262" width="83" height="16" rx="2" fill="#f7f5f1"/><text x="846" y="273" class="svg-arrow-label">SAME REPO</text><path d="M 1088,188 H 1096 Q 1088,188 1088,196 V 348 Q 1088,356 1080,356 H 1088" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#deploy-link)"/><rect x="1100.0" y="248" width="69" height="16" rx="2" fill="#f7f5f1"/><text x="1134.5" y="259" class="svg-arrow-label">API/CLI</text><path d="M 992,396 H 860 Q 852,396 852,404 V 404 Q 852,412 844,412 H 780" fill="none" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#deploy-arrow)"/><rect x="864.0" y="376" width="62" height="16" rx="2" fill="#f7f5f1"/><text x="895.0" y="387" class="svg-arrow-label">STATUS</text><g class="svg-node">
+      <rect x="72" y="108" width="280" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="80" y="114" width="51" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="105.5" y="124" class="svg-tag" fill="#102a43">SCHED</text>
+      <text x="212.0" y="144" class="svg-name" fill="#102a43">User crontab</text>
+      <text x="212.0" y="162" class="svg-sub">9 jobs · PATH includes Aside</text>
+    </g><g class="svg-node">
+      <rect x="72" y="252" width="280" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="80" y="258" width="44" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="102.0" y="268" class="svg-tag" fill="#102a43">PROC</text>
+      <text x="212.0" y="288" class="svg-name" fill="#102a43">Hermes gateway</text>
+      <text x="212.0" y="306" class="svg-sub">default profile active</text>
+    </g><g class="svg-node">
+      <rect x="500" y="108" width="280" height="80" rx="8" fill="rgba(184,84,80,.07)" stroke="#b85450" stroke-width="1.2"/>
+      <rect x="508" y="114" width="44" height="14" rx="2" fill="transparent" stroke="#b85450" stroke-opacity=".42"/>
+      <text x="530.0" y="124" class="svg-tag" fill="#b85450">CRON</text>
+      <text x="640.0" y="144" class="svg-name" fill="#102a43">Script-only routines</text>
+      <text x="640.0" y="162" class="svg-sub">publisher + affiliate profiles</text>
+    </g><g class="svg-node">
+      <rect x="500" y="252" width="280" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="508" y="258" width="44" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="530.0" y="268" class="svg-tag" fill="#102a43">CRON</text>
+      <text x="640.0" y="288" class="svg-name" fill="#102a43">Agent routines</text>
+      <text x="640.0" y="306" class="svg-sub">research · proof · sourcing · PM</text>
+    </g><g class="svg-node">
+      <rect x="912" y="108" width="176" height="80" rx="8" fill="#e3efec" stroke="#0e8074" stroke-width="1.2"/>
+      <rect x="920" y="114" width="44" height="14" rx="2" fill="transparent" stroke="#0e8074" stroke-opacity=".42"/>
+      <text x="942.0" y="124" class="svg-tag" fill="#0e8074">CODE</text>
+      <text x="1000.0" y="144" class="svg-name" fill="#102a43">Autopilot repo</text>
+      <text x="1000.0" y="162" class="svg-sub">run.py · scripts</text>
+    </g><g class="svg-node">
+      <rect x="912" y="252" width="176" height="80" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.30)" stroke-width="1.2"/>
+      <rect x="920" y="258" width="37" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.30)" stroke-opacity=".42"/>
+      <text x="938.5" y="268" class="svg-tag" fill="rgba(16,42,67,.30)">CLI</text>
+      <text x="1000.0" y="288" class="svg-name" fill="#102a43">Aside CLI</text>
+      <text x="1000.0" y="306" class="svg-sub">authenticated browser work</text>
+    </g><g class="svg-node">
+      <rect x="912" y="356" width="176" height="80" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="920" y="362" width="51" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="945.5" y="372" class="svg-tag" fill="#53687a">STORE</text>
+      <text x="1000.0" y="392" class="svg-name" fill="#102a43">JSONL state</text>
+      <text x="1000.0" y="410" class="svg-sub">file locks · ledgers</text>
+    </g><g class="svg-node">
+      <rect x="1108" y="252" width="120" height="80" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.30)" stroke-width="1.2"/>
+      <rect x="1116" y="258" width="37" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.30)" stroke-opacity=".42"/>
+      <text x="1134.5" y="268" class="svg-tag" fill="rgba(16,42,67,.30)">NET</text>
+      <text x="1168.0" y="288" class="svg-name" fill="#102a43">External APIs</text>
+      <text x="1168.0" y="306" class="svg-sub">Threads · AI</text>
+    </g><line x1="32" y1="528" x2="1248" y2="528" stroke="rgba(16,42,67,.15)"/><text x="32" y="548" class="svg-eyebrow">LEGEND</text><line x1="132" y1="544" x2="164" y2="544" stroke="#53687a" stroke-width="1.4"/><text x="172" y="548" class="svg-legend">실행</text><line x1="300" y1="544" x2="332" y2="544" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4"/><text x="340" y="548" class="svg-legend">Hermes routine</text><rect x="468" y="536" width="20" height="16" rx="2" fill="#e3efec" stroke="#0e8074"/><text x="508" y="548" class="svg-legend">같은 런타임 경계</text><rect x="636" y="536" width="20" height="16" rx="2" fill="rgba(184,84,80,.07)" stroke="#b85450"/><text x="676" y="548" class="svg-legend">중복 가능성</text><line x1="804" y1="544" x2="836" y2="544" stroke="#2e5aa8" stroke-width="1.4"/><text x="844" y="548" class="svg-legend">외부 호출</text>
+    </svg></div>
+<table><thead><tr><th>실행군</th><th>대표 cadence</th><th>호출</th><th>관측 상태</th></tr></thead><tbody>
+<tr><td>macOS user crontab</td><td>08:30 harvest · 09:30 daily · 12:30/16:00/19:30 posts · 댓글 3분 · 일 21:00 weekly · health 4시간 · log rotate</td><td>repo venv의 <code>harvest.py</code>, <code>run.py</code>, <code>health.py</code></td><td><span class="badge observed">9 jobs</span> health가 등록 확인</td></tr>
+<tr><td>Publisher script routines</td><td>daily/midday/afternoon/evening/comments</td><td>동일 <code>run.py</code> 명령</td><td><span class="badge conflict">Overlap risk</span> user crontab과 시간·명령 겹침</td></tr>
+<tr><td>Research / sourcing agents</td><td>시간별·일별</td><td>Aside + 코드/파일 감사</td><td>프로필별 enabled routine과 최근 run 기록 존재</td></tr>
+<tr><td>Default Hermes gateway</td><td>상시</td><td>Bot routing · cron · desktop</td><td><span class="badge observed">launchd running</span> <span class="badge conflict">CLI drift</span> profile-local cron list는 동시에 “gateway not running”을 오표시</td></tr>
+<tr><td>사람 에스컬레이션</td><td>예외 시</td><td>검색어 승인 · OAuth scope · 실행 계약 변경 · 공개 중지/비가역 조치</td><td>clean 자동 게시와 분리된 사람 gate</td></tr>
+<tr><td>Browser-dependent work</td><td>필요 시</td><td><code>aside --account u0 exec/repl</code></td><td><span class="badge enforced">Default path</span> health에서 접근 가능</td></tr>
+</tbody></table>
+<div class="callout"><strong>중요:</strong> 프로필이 분리돼도 스크립트가 동일 저장소를 호출하면 스케줄러 중복은 격리되지 않습니다. 라이브 user crontab과 publisher routine의 09:30, 12:30, 16:00, 19:30, 주간 명령은 단일 소유자로 정리하거나 멱등성을 발행 경계까지 증명해야 합니다.</div></section>
+
+<section id="lifoli"><div class="section-head"><div class="section-no">08 / COMPANY OS</div><div><h2>LiFoli는 별도 control plane — 공개 클릭 한 구간만 직접 연결</h2><p class="section-intro">Company OS는 HeightCue의 프로젝트·에이전트·KPI·수익성 모델과 관리 화면을 제공합니다. 직접 확인된 런타임 연결은 공개 사이트의 <strong>US Amazon 외부 링크 클릭 → Supabase RPC</strong>뿐이며, Autopilot의 발행·Threads insights·주문·수수료 원장 동기화는 미배선입니다.</p></div></div><div class="diagram-frame"><svg class="diagram-svg" viewBox="0 0 1280 560" role="img" aria-labelledby="lifoli-title lifoli-desc">
+      <title id="lifoli-title">HeightCue와 LiFoli Company OS 경계</title>
+      <desc id="lifoli-desc">Autopilot과 Company OS는 별도 실행 경계이지만 공개 HeightCue 사이트의 US Amazon 외부 링크 클릭만 Supabase RPC로 직접 기록된다. 발행, Threads insights, 주문과 수수료 ledger 동기화 worker는 확인되지 않았다.</desc>
+      <defs>
+      <marker id="lifoli-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#53687a"/></marker>
+      <marker id="lifoli-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#0e8074"/></marker>
+      <marker id="lifoli-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
+      <marker id="lifoli-coral" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#ff966f"/></marker>
+      <marker id="lifoli-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0,8 3,0 6" fill="none" stroke="#53687a" stroke-width="1.2"/></marker>
+    </defs>
+      <rect width="1280" height="560" fill="#f7f5f1"/>
+      <rect x="24" y="52" width="360" height="428" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.18)" stroke-width="1"/>
+    <rect x="36" y="46" width="220" height="16" rx="2" fill="#f7f5f1"/>
+    <text x="44" y="57" class="svg-eyebrow">HEIGHTCUE EXECUTION PLANE</text><rect x="424" y="52" width="328" height="428" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.18)" stroke-width="1"/>
+    <rect x="436" y="46" width="212" height="16" rx="2" fill="#f7f5f1"/>
+    <text x="444" y="57" class="svg-eyebrow">VERIFIED BROWSER INGRESS</text><rect x="792" y="52" width="464" height="428" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.18)" stroke-width="1" stroke-dasharray="4,4"/>
+    <rect x="804" y="46" width="156" height="16" rx="2" fill="#f7f5f1"/>
+    <text x="812" y="57" class="svg-eyebrow">LIFOLI COMPANY OS</text><path d="M 192,176 V 240" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#lifoli-arrow)"/><path d="M 312,408 H 480" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#lifoli-link)"/><rect x="344.0" y="370" width="104" height="16" rx="2" fill="#f7f5f1"/><text x="396" y="381" class="svg-arrow-label">US CLICK RPC</text><path d="M 312,264 H 436" fill="none" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#lifoli-arrow)"/><rect x="315.0" y="226" width="118" height="16" rx="2" fill="#f7f5f1"/><text x="374" y="237" class="svg-arrow-label">NO LEDGER SYNC</text><path d="M 676,368 H 744 Q 752,368 752,360 V 144 Q 752,136 760,136 H 856" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#lifoli-link)"/><rect x="764" y="116" width="80" height="14" fill="#f7f5f1"/><text x="804" y="127" class="svg-arrow-label" fill="#2e5aa8">ADMIN READ</text><g class="svg-node">
+      <rect x="72" y="96" width="240" height="80" rx="8" fill="#e3efec" stroke="#0e8074" stroke-width="1.2"/>
+      <rect x="80" y="102" width="44" height="14" rx="2" fill="transparent" stroke="#0e8074" stroke-opacity=".42"/>
+      <text x="102.0" y="112" class="svg-tag" fill="#0e8074">CODE</text>
+      <text x="192.0" y="132" class="svg-name" fill="#102a43">Autopilot runtime</text>
+      <text x="192.0" y="150" class="svg-sub">generation · publish · comments</text>
+    </g><g class="svg-node">
+      <rect x="72" y="240" width="240" height="80" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="80" y="246" width="51" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="105.5" y="256" class="svg-tag" fill="#53687a">STATE</text>
+      <text x="192.0" y="276" class="svg-name" fill="#102a43">Local operating ledgers</text>
+      <text x="192.0" y="294" class="svg-sub">JSON / JSONL · media_id · revenue</text>
+    </g><g class="svg-node">
+      <rect x="72" y="368" width="240" height="80" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.30)" stroke-width="1.2"/>
+      <rect x="80" y="374" width="37" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.30)" stroke-opacity=".42"/>
+      <text x="98.5" y="384" class="svg-tag" fill="rgba(16,42,67,.30)">WEB</text>
+      <text x="192.0" y="404" class="svg-name" fill="#102a43">Public HeightCue site</text>
+      <text x="192.0" y="422" class="svg-sub">app.js · US Amazon links only</text>
+    </g><g class="svg-node">
+      <rect x="436" y="224" width="280" height="80" rx="8" fill="rgba(184,84,80,.07)" stroke="#b85450" stroke-width="1.2"/>
+      <rect x="444" y="230" width="37" height="14" rx="2" fill="transparent" stroke="#b85450" stroke-opacity=".42"/>
+      <text x="462.5" y="240" class="svg-tag" fill="#b85450">GAP</text>
+      <text x="576.0" y="260" class="svg-name" fill="#102a43">No ledger sync worker</text>
+      <text x="576.0" y="278" class="svg-sub">publication · insights · commission</text>
+    </g><g class="svg-node">
+      <rect x="480" y="368" width="216" height="80" rx="8" fill="rgba(255,150,111,.12)" stroke="#ff966f" stroke-width="1.2"/>
+      <rect x="488" y="374" width="36" height="14" rx="2" fill="transparent" stroke="#ff966f" stroke-opacity=".42"/>
+      <text x="506.0" y="384" class="svg-tag" fill="#ff966f">DB</text>
+      <text x="588.0" y="404" class="svg-name" fill="#102a43">Public click RPC + DB</text>
+      <text x="588.0" y="422" class="svg-sub">hc_public_events</text><text x="588.0" y="436" class="svg-sub">hc_funnel_observations</text>
+    </g><g class="svg-node">
+      <rect x="856" y="96" width="240" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="864" y="102" width="36" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="882.0" y="112" class="svg-tag" fill="#102a43">UI</text>
+      <text x="976.0" y="132" class="svg-name" fill="#102a43">Company OS admin</text>
+      <text x="976.0" y="150" class="svg-sub">Supabase-backed HeightCue views</text>
+    </g><g class="svg-node">
+      <rect x="816" y="224" width="200" height="80" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="824" y="230" width="51" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="849.5" y="240" class="svg-tag" fill="#53687a">MODEL</text>
+      <text x="916.0" y="260" class="svg-name" fill="#102a43">Projects · agents</text>
+      <text x="916.0" y="278" class="svg-sub">ownership · assets · edits</text>
+    </g><g class="svg-node">
+      <rect x="1032" y="224" width="200" height="80" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="1040" y="230" width="51" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="1065.5" y="240" class="svg-tag" fill="#53687a">MODEL</text>
+      <text x="1132.0" y="260" class="svg-name" fill="#102a43">Experiments · funnel</text>
+      <text x="1132.0" y="278" class="svg-sub">channels · publications</text>
+    </g><g class="svg-node">
+      <rect x="924" y="368" width="240" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="932" y="374" width="36" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="950.0" y="384" class="svg-tag" fill="#102a43">OS</text>
+      <text x="1044.0" y="404" class="svg-name" fill="#102a43">KPI · profitability</text>
+      <text x="1044.0" y="422" class="svg-sub">targets · costs · controls</text>
+    </g><line x1="32" y1="500" x2="1248" y2="500" stroke="rgba(16,42,67,.15)"/><text x="32" y="520" class="svg-eyebrow">LEGEND</text><line x1="132" y1="516" x2="164" y2="516" stroke="#53687a" stroke-width="1.4"/><text x="172" y="520" class="svg-legend">Autopilot 실행</text><line x1="300" y1="516" x2="332" y2="516" stroke="#2e5aa8" stroke-width="1.4"/><text x="340" y="520" class="svg-legend">검증된 browser RPC</text><rect x="468" y="508" width="20" height="16" rx="2" fill="rgba(184,84,80,.07)" stroke="#b85450"/><text x="508" y="520" class="svg-legend">미배선 ledger bridge</text><line x1="636" y1="516" x2="668" y2="516" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4"/><text x="676" y="520" class="svg-legend">별도 control plane</text>
+    </svg></div>
+<table><thead><tr><th>경계</th><th>HeightCue Autopilot</th><th>LiFoli Company OS</th><th>연결 상태</th></tr></thead><tbody>
+<tr><td>실행</td><td>Python CLI·cron·Hermes routines</td><td>관리 UI·조직·프로젝트 control plane</td><td>분리</td></tr>
+<tr><td>직접 연결</td><td><code>app.js</code>가 US Amazon 링크 클릭만 전송</td><td><code>hc_record_public_click</code> → <code>hc_public_events</code> + <code>hc_funnel_observations</code></td><td><span class="badge observed">코드 경로 관측</span> KR site click은 이 RPC에서 건너뜀</td></tr>
+<tr><td>로컬 상태</td><td>JSON/JSONL · media_id · evidence · revenue</td><td>Supabase tables/migrations · admin views</td><td>publication/insights/revenue sync worker 미발견</td></tr>
+<tr><td>성과</td><td>Threads analytics + 제휴 revenue ledger</td><td>클릭·KPI·profitability·project metrics 표현</td><td>공개 클릭은 기록; 주문·수수료는 <code>null</code>로 남아 북극성 귀속 미완성</td></tr>
+<tr><td>에이전트</td><td>Hermes profiles + routines</td><td>조직도·책임·운영 가시화</td><td>개념/관리 모델 연결</td></tr>
+</tbody></table></section>
+
+<section id="economics"><div class="section-head"><div class="section-no">09 / ECONOMICS</div><div><h2>수익이 학습을 닫는 플라이휠</h2><p class="section-intro">조회수나 문장 점수는 “무엇이 먹혔는지”를 추정하는 중간 신호입니다. 시스템이 완성되는 지점은 실제 링크 클릭·주문·수수료·생성비가 증거와 다시 결합될 때입니다.</p></div></div><div class="diagram-frame"><svg class="diagram-svg" viewBox="0 0 1280 600" role="img" aria-labelledby="loop-title loop-desc">
+      <title id="loop-title">HeightCue 수익 학습 플라이휠</title>
+      <desc id="loop-desc">수요, 소싱, 제작, 배포, 측정, 학습이 반복되고 각 단계가 증거와 수익의 공유 운영 원장으로 기록되는 강화 루프.</desc>
+      <defs>
+      <marker id="loop-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#53687a"/></marker>
+      <marker id="loop-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#0e8074"/></marker>
+      <marker id="loop-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
+      <marker id="loop-coral" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#ff966f"/></marker>
+      <marker id="loop-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0,8 3,0 6" fill="none" stroke="#53687a" stroke-width="1.2"/></marker>
+    </defs>
+      <rect width="1280" height="600" fill="#f7f5f1"/>
+      <path d="M 640,104 A 208,208 0 0 1 800,176" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#loop-arrow)"/><path d="M 800,176 A 208,208 0 0 1 800,364" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#loop-arrow)"/><path d="M 800,364 A 208,208 0 0 1 640,420" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#loop-arrow)"/><path d="M 640,420 A 208,208 0 0 1 480,364" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#loop-arrow)"/><path d="M 480,364 A 208,208 0 0 1 480,176" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#loop-arrow)"/><path d="M 480,176 A 208,208 0 0 1 640,104" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#loop-arrow)"/><path d="M 640,104 L 640,240" fill="none" stroke="#7b877f" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#loop-arrow)"/><path d="M 760,192 L 752,240" fill="none" stroke="#7b877f" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#loop-arrow)"/><path d="M 760,316 L 752,368" fill="none" stroke="#7b877f" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#loop-arrow)"/><path d="M 640,420 L 640,368" fill="none" stroke="#7b877f" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#loop-arrow)"/><path d="M 520,316 L 528,368" fill="none" stroke="#7b877f" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#loop-arrow)"/><path d="M 520,192 L 528,240" fill="none" stroke="#7b877f" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#loop-arrow)"/><g class="svg-node">
+      <rect x="560" y="24" width="160" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="568" y="30" width="44" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="590.0" y="40" class="svg-tag" fill="#102a43">LOOP</text>
+      <text x="640.0" y="60" class="svg-name" fill="#102a43">Demand</text>
+      <text x="640.0" y="78" class="svg-sub">search · trends</text>
+    </g><g class="svg-node">
+      <rect x="760" y="112" width="160" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="768" y="118" width="44" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="790.0" y="128" class="svg-tag" fill="#102a43">LOOP</text>
+      <text x="840.0" y="148" class="svg-name" fill="#102a43">Source</text>
+      <text x="840.0" y="166" class="svg-sub">products · UX</text>
+    </g><g class="svg-node">
+      <rect x="760" y="316" width="160" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="768" y="322" width="44" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="790.0" y="332" class="svg-tag" fill="#102a43">LOOP</text>
+      <text x="840.0" y="352" class="svg-name" fill="#102a43">Create</text>
+      <text x="840.0" y="370" class="svg-sub">text / video</text>
+    </g><g class="svg-node">
+      <rect x="560" y="420" width="160" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="568" y="426" width="44" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="590.0" y="436" class="svg-tag" fill="#102a43">LOOP</text>
+      <text x="640.0" y="456" class="svg-name" fill="#102a43">Distribute</text>
+      <text x="640.0" y="474" class="svg-sub">Threads KR / US</text>
+    </g><g class="svg-node">
+      <rect x="360" y="316" width="160" height="80" rx="8" fill="rgba(255,150,111,.12)" stroke="#ff966f" stroke-width="1.2"/>
+      <rect x="368" y="322" width="44" height="14" rx="2" fill="transparent" stroke="#ff966f" stroke-opacity=".42"/>
+      <text x="390.0" y="332" class="svg-tag" fill="#ff966f">LOOP</text>
+      <text x="440.0" y="352" class="svg-name" fill="#102a43">Measure</text>
+      <text x="440.0" y="370" class="svg-sub">views → orders</text>
+    </g><g class="svg-node">
+      <rect x="360" y="112" width="160" height="80" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="368" y="118" width="44" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="390.0" y="128" class="svg-tag" fill="#102a43">LOOP</text>
+      <text x="440.0" y="148" class="svg-name" fill="#102a43">Learn</text>
+      <text x="440.0" y="166" class="svg-sub">prompts · sourcing</text>
+    </g><g class="svg-node">
+      <rect x="528" y="240" width="224" height="128" rx="8" fill="#102a43" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="536" y="246" width="37" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="554.5" y="256" class="svg-tag" fill="#102a43">HUB</text>
+      <text x="640.0" y="300" class="svg-name" fill="#f7f5f1">Evidence + Revenue</text>
+      <text x="640.0" y="318" class="svg-sub">shared operating record</text>
+    </g><line x1="32" y1="540" x2="1248" y2="540" stroke="rgba(16,42,67,.15)"/><text x="32" y="560" class="svg-eyebrow">LEGEND</text><line x1="132" y1="556" x2="164" y2="556" stroke="#53687a" stroke-width="1.4"/><text x="172" y="560" class="svg-legend">운영 흐름</text><line x1="300" y1="556" x2="332" y2="556" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4"/><text x="340" y="560" class="svg-legend">공유 원장 write-back</text><rect x="468" y="548" width="20" height="16" rx="2" fill="rgba(184,84,80,.07)" stroke="#b85450"/><text x="508" y="560" class="svg-legend">수익 측정 focal</text>
+    </svg></div>
+<table><thead><tr><th>계층</th><th>지표</th><th>의사결정에 쓰는 법</th></tr></thead><tbody>
+<tr><td>Attention</td><td>views · likes · replies · reposts</td><td>훅/서사/시간대의 초기 진단. 최종 승자 판정 금지.</td></tr>
+<tr><td>Intent</td><td>link clicks · landing visits</td><td>CTA·제품 적합도·링크 접근성 진단.</td></tr>
+<tr><td>Conversion</td><td>orders · conversion rate</td><td>실제 구매 발생 여부. 채널/상품/포스트 연결 필요.</td></tr>
+<tr><td>Economics</td><td>commission · refunds · AI/media cost · net profit</td><td>북극성. 다음 소싱·콘텐츠 유형·영상 예산 배분을 결정.</td></tr>
+</tbody></table><div class="callout"><strong>명칭 주의:</strong> <code>analytics.attribution_complete</code>는 훅·각도·상품·폼팩터 같은 콘텐츠 메타데이터 완전성입니다. 주문·수수료 경제 귀속 완료를 뜻하지 않으며 현행 <code>conversions</code>·<code>commission</code> 결합은 비어 있습니다.</div></section>
+
+<section id="truth"><div class="section-head"><div class="section-no">10 / SNAPSHOT</div><div><h2>2026-08-29 현재 운영 진실</h2><p class="section-intro">아래는 선언값이 아니라 18:50 KST에 <code>health.py --json</code>, <code>run.py status</code>, <code>run.py video status --json</code>, crontab과 프로세스에서 다시 읽은 관측값입니다.</p></div></div>
+<div class="metric-row"><div class="metric accent"><span class="value">OK</span><span class="label">overall health</span></div><div class="metric"><span class="value">22</span><span class="label">검증된 실발행 이력</span></div><div class="metric"><span class="value">29</span><span class="label">preview 리허설</span></div><div class="metric"><span class="value">10 / 7</span><span class="label">증거 원자 / 미사용</span></div><div class="metric risk"><span class="value">3 · OFF</span><span class="label">영상 queued · 생성 비활성</span></div></div>
+<table><thead><tr><th>항목</th><th>관측</th><th>해석</th></tr></thead><tbody>
+<tr><td>발행 게이트</td><td><span class="status-dot ok"></span><code>publish=true</code>, <code>dry_run=false</code></td><td>clean 텍스트 자동 실발행이 현재 허용됨</td></tr>
+<tr><td>최근 발행</td><td><span class="status-dot ok"></span>약 2.7시간 전</td><td>live path가 최근 동작</td></tr>
+<tr><td>소싱 큐</td><td><span class="status-dot warn"></span>감사 보류 31 · 통과 0 · 대기 0</td><td>신규 감사 통과 재고가 비어 있음</td></tr>
+<tr><td>US registry</td><td><span class="status-dot warn"></span>1건</td><td>US 상품 다양성/재고가 얇음</td></tr>
+<tr><td>보류함</td><td><span class="status-dot warn"></span>1건</td><td>weekly review 대상</td></tr>
+<tr><td>댓글 cron</td><td><span class="status-dot ok"></span>3분 전 실행</td><td>engagement worker cadence 정상</td></tr>
+<tr><td>오류</td><td><span class="status-dot ok"></span>최근 24h harvest 2건, 이후 회복 확인</td><td>현재 overall fail 사유 아님</td></tr>
+<tr><td>영상</td><td><span class="status-dot warn"></span>enabled=false · production_generation_enabled=false · markets 기본 KR · $2/day · max 1/run</td><td>주 queue 3건은 US라 gate 불일치; 별도 $1.40 실험 spend/output은 있으나 queued jobs의 상태 전이와 연결되지 않음</td></tr>
+</tbody></table>
+<h3>결함·모순·운영 위험</h3>
+<table><thead><tr><th>심각도</th><th>관측된 문제</th><th>왜 위험한가</th><th>정확한 다음 조치</th></tr></thead><tbody>
+<tr><td><span class="badge conflict">Critical</span></td><td><code>cron.log</code>에 외부 API query credential이 평문으로 기록된 흔적</td><td>로컬 로그·백업·공유에서 credential 노출 가능</td><td>credential 회전, URL query logging 제거, 기존 로그 안전 정리</td></tr>
+<tr><td><span class="badge conflict">High</span></td><td>user crontab과 Hermes publisher routines의 명령/시간 중복</td><td>중복 생성·중복 게시·댓글 중복·비용 중복 가능</td><td>스케줄 소유자 하나로 통합 + 발행 멱등키를 외부 media까지 검증</td></tr>
+<tr><td><span class="badge conflict">High</span></td><td><code>run.py video process</code> 종단 오케스트레이터 미배선</td><td>5분 poller가 실행돼도 queued 잡은 생성·합성·QA로 전이하지 않음</td><td>claim→generate→compose→QA dispatcher를 상태 전이·예산·lease 계약에 연결</td></tr>
+<tr><td><span class="badge conflict">High</span></td><td>상품 provenance gate가 KR Aside queue에만 적용</td><td>manual/Open API/US registry 상품이 audit owner·review/official provenance 없이 판매글 소재가 될 수 있음</td><td>모든 source adapter가 공통 <code>ProductEvidence</code>와 audit gate를 통과한 뒤에만 <code>pick()</code></td></tr>
+<tr><td><span class="badge conflict">High</span></td><td>영상 기본 market KR ↔ queued jobs US</td><td>process를 배선·활성화해도 현재 3건은 market gate 밖</td><td>US를 명시적으로 승인하거나 queue를 허용 market과 맞춘 뒤 canary</td></tr>
+<tr><td><span class="badge conflict">High</span></td><td>영상 publishing 회수 후 생성 경로 재진입</td><td>외부 API가 성공한 뒤 worker가 죽으면 재발행 가능성</td><td>recovered_from=publishing이면 먼저 Threads existence reconcile</td></tr>
+<tr><td><span class="badge gap">Gap</span></td><td>LiFoli에는 공개 US 클릭 RPC만 연결; publication/insights/revenue sync 미배선</td><td>Company OS의 퍼널·수익 숫자가 로컬 운영 진실과 drift할 수 있음</td><td>source timestamp와 reconciliation status를 가진 read-only ledger sync worker</td></tr>
+<tr><td><span class="badge gap">Gap</span></td><td><code>demand_signals.json</code>과 producer 부재</td><td>신호 수집과 상품 소싱 사이에 명시적 수요 계약·재현 가능한 큐가 없음</td><td>관측 출처·시각·시장·의도·confidence를 가진 demand signal 원장 정의</td></tr>
+<tr><td><span class="badge gap">Gap</span></td><td>게시물별 주문·수수료 자동 귀속 미완성</td><td>북극성 대신 조회·좋아요·클릭을 최적화할 위험</td><td>affiliate report → sub-ID/publication → order/commission → net profit reconciliation</td></tr>
+<tr><td><span class="badge conflict">Drift</span></td><td>profile cron CLI의 gateway false negative + FAL adapter test 1건 실패</td><td>실행 중인 scheduler를 정지로 오판하거나 stale test 계약을 production 결함으로 오판</td><td>multiplex-aware status probe + <code>motion_prompt</code> 폐기 계약에 테스트 갱신</td></tr>
+<tr><td><span class="badge gap">Gap</span></td><td>영상 end-to-end 실발행 0</td><td>계약·단위 테스트가 실제 네이티브 음성, 픽셀 고지, Graph publish를 보장하지 않음</td><td>enable 전 1건 canary: generation → decode → transcript → visual QA → private review → publish verification</td></tr>
+<tr><td><span class="badge conflict">Drift</span></td><td>문서별 모델명·발행량·프로필 완료·각색 허용 표현 불일치</td><td>운영자가 다른 문서를 읽고 다른 규칙을 적용</td><td>SSOT에 현재 결정만 남기고 코드 상수를 import하는 검증 추가</td></tr>
+</tbody></table></section>
+
+<section id="operator"><div class="section-head"><div class="section-no">11 / OPERATOR</div><div><h2>운영자가 실제로 만지는 진입점</h2><p class="section-intro">대시보드가 모든 진실을 대표하지 않습니다. 장애·실행·상태 판단은 아래 순서와 실제 외부 산출물을 기준으로 합니다.</p></div></div>
+<div class="grid two"><div class="card accent"><h3>상태 먼저</h3><p><code>cd autopilot && ../.venv/bin/python health.py</code></p><p><code>../.venv/bin/python run.py status</code></p><p><code>../.venv/bin/python run.py video status --json</code></p></div><div class="card"><h3>텍스트 실행</h3><p><code>run.py daily</code> · <code>run.py post story kr</code> · <code>run.py post value us</code> · <code>run.py comments</code> · <code>run.py weekly</code></p></div><div class="card"><h3>영상 CLI</h3><p><code>video enqueue</code> · <code>publish</code> · <code>reconcile</code>는 구현. <code>video process</code>는 현재 종단 미배선으로 <strong>exit 5</strong>이므로 작동하는 worker로 취급하지 않습니다.</p></div><div class="card risk"><h3>성공 판정</h3><p>크론 exit나 파일 존재만 보지 않습니다. 텍스트/영상 모두 <strong>media_id + Threads Graph 존재 확인</strong>이 외부 부작용의 최종 증거입니다.</p></div></div></section>
+
+<section id="sources"><div class="section-head"><div class="section-no">12 / SOURCES</div><div><h2>근거·파일 지도</h2><p class="section-intro">비밀정보와 private identifier는 포함하지 않았습니다. 경로는 저장소 상대 경로로 표시합니다.</p></div></div>
+<ul class="source-list">
+<li><code>heightcue-SSOT-v2.md</code> — 전략·북극성·채널·불변 규칙</li><li><code>AGENTS.md</code> — 파일 지도·실행 규칙·봇 핸들</li><li><code>LAUNCH-STATUS.md</code> — 운영 준비/관측 상태</li><li><code>README-autopilot.md</code> — CLI와 크론 사용법</li><li><code>context/execution-contract.json</code> — 모델/발행 실행 계약</li><li><code>context/user-intent-contract.md</code> — 사용자 의도·비타협 조건</li><li><code>context/compliance.md</code> — 금칙·고지·법적 경계</li><li><code>autopilot/run.py</code> — CLI 오케스트레이터와 영상 미배선 경계</li><li><code>autopilot/sourcing.py</code> — KR/US 소싱·감사</li><li><code>autopilot/evidence.py</code> — 증거 원자 SSOT</li><li><code>autopilot/harvest.py</code> — Aside 기반 신호 수집</li><li><code>autopilot/generate.py</code> — 후보 생성·블라인드 선발</li><li><code>autopilot/execution_contract.py</code> — 실행 provenance·seal</li><li><code>autopilot/post_check.py</code> — 정책/인과/형식 검사</li><li><code>autopilot/publish.py</code> — Threads 발행 경계</li><li><code>autopilot/comments.py</code> — 댓글·답글 워커</li><li><code>autopilot/analytics.py</code> — 성과 수집</li><li><code>autopilot/improve.py</code> — 주간 개선 루프</li><li><code>autopilot/video_*.py</code> — 영상 계약·큐·생성·QA·handoff</li><li><code>autopilot/product_*.py</code> — 상품 자산·충실도</li><li><code>app.js</code> — 공개 US Amazon 클릭 RPC</li><li><code>OpenMontage/</code> — 전사·조립·미디어 QA 경계</li><li><code>lifoli/supabase/migrations/20260821_heightcue_public_clicks_v44.sql</code> — 공개 클릭 DB 경로</li><li><code>~/.hermes/profiles/*</code> — Bot profile·SOUL·routines</li><li><code>crontab -l</code> — live user scheduler</li>
+</ul>
+<h3>실행 모듈 지도 · <code>autopilot/*.py</code> 직접 범위 63 files</h3>
+<table><thead><tr><th>경계</th><th>현행 모듈</th><th>책임</th></tr></thead><tbody>
+<tr><td>Control</td><td><code>run.py</code> · <code>common.py</code> · <code>health.py</code> · <code>validate.py</code></td><td>CLI 라우팅, 설정/상태 경로, 운영 health, 입력 검증</td></tr>
+<tr><td>Demand & sourcing</td><td><code>harvest.py</code> · <code>sourcing.py</code> · <code>briefing.py</code> · <code>collect_viral_ugc.py</code> · <code>viral_ugc.py</code></td><td>Aside 신호 수집, KR/US 상품 감사, 인텔리전스·콘텐츠 brief</td></tr>
+<tr><td>Evidence & creation</td><td><code>evidence.py</code> · <code>generate.py</code> · <code>viral_intelligence.py</code> · <code>execution_contract.py</code> · <code>post_check.py</code></td><td>원자 원장, 8+1 토너먼트, 모델/입출력 seal, 인과·형식·정책 게이트</td></tr>
+<tr><td>Distribution & learning</td><td><code>publish.py</code> · <code>comments.py</code> · <code>analytics.py</code> · <code>improve.py</code></td><td>예약/검증 발행, 댓글·답글, 성과·수익 ledger, 주간 개선</td></tr>
+<tr><td>Video contracts</td><td><code>video_contracts.py</code> · <code>video_queue.py</code> · <code>video_storyboard.py</code> · <code>product_assets.py</code> · <code>product_fidelity.py</code></td><td>상태·스키마 SSOT, lease/멱등성, 컷 계약, 자산 provenance·상품 동일성</td></tr>
+<tr><td>Video execution</td><td><code>codex_image_bridge.py</code> · <code>fal_upload.py</code> · <code>video_generate.py</code> · <code>stage_assets.py</code> · <code>video_compose.py</code> · <code>video_qa.py</code> · <code>video_handoff.py</code> · <code>monitor_video_publish.py</code></td><td>첫 프레임→I2V→조립→QA→발행 packet→외부 존재 reconcile</td></tr>
+<tr><td>Verification</td><td><code>test_*.py</code> 27개 + 별도 검증 스크립트</td><td>텍스트 계약·댓글·증거·영상 상태·생성·QA·handoff·모니터 검증. 현재 focused FAL suite는 31 pass / 1 contract-drift fail</td></tr>
+</tbody></table>
+<h3><code>autopilot/state/</code> 전체 인벤토리 · 57 files</h3>
+<table><thead><tr><th>영역</th><th>파일 수</th><th>정본/산출물</th></tr></thead><tbody>
+<tr><td>발행·운영 진실</td><td>7</td><td><code>published.jsonl</code> · <code>preview.jsonl</code> · <code>holdbox.jsonl</code> · <code>deletions.jsonl</code> · <code>gone_posts.json</code> · <code>errors.jsonl</code> · verified migration backup</td></tr>
+<tr><td>Engagement</td><td>3</td><td><code>comments_log.jsonl</code> · <code>replies_handled.json</code> · <code>comments.lock</code></td></tr>
+<tr><td>증거·리서치·콘텐츠 메모리</td><td>14</td><td><code>evidence.jsonl</code> · <code>evidence_rejects.jsonl</code> · <code>insight_atoms.json</code> · <code>ux_discovery.json</code> · <code>sourced_history.json</code> · <code>us_products.json</code> · viral seeds/goldens · account/model memory · brief/playbook · intelligence JSON/MD</td></tr>
+<tr><td>성과·수익·개선</td><td>3</td><td><code>metrics.jsonl</code> · <code>revenue.json</code> · <code>weekly_report.md</code></td></tr>
+<tr><td>Aside browser queue</td><td>4</td><td><code>browser-queue/requests.json</code> · <code>results.json</code> · <code>failed.json</code> · re-audit backup</td></tr>
+<tr><td>영상 원장·비용·fixture</td><td>7</td><td><code>video/ledger.json</code> · <code>events.jsonl</code> · <code>spend_ledger.json</code> + <code>_18d_*</code> 검증 fixture 4개</td></tr>
+<tr><td>상품 자산 provenance</td><td>7</td><td>상품별 <code>product_assets.json</code> · events ledger · source image 5개</td></tr>
+<tr><td>Preview·archive·logs·housekeeping</td><td>12</td><td>preview HTML 5 · dry-run archive 4 · <code>cron.log</code> · <code>rehearsal-run.log</code> · <code>.DS_Store</code></td></tr>
+</tbody></table>
+<div class="callout"><strong>레거시·동결 영역:</strong> Shorts·articles·<code>en/</code>·<code>cn/</code>·pre-v46 Company OS publication 객체·retired D3 URL은 현행 텍스트/영상 실행 경로에 재진입시키지 않는 audit/archive 영역입니다.</div>
+<h3>외부 의존성과 신뢰 경계</h3>
+<table><thead><tr><th>외부 시스템</th><th>용도</th><th>신뢰/실패 경계</th></tr></thead><tbody>
+<tr><td>Aside CLI</td><td>인증 브라우저 검색·수집·검증</td><td>주제별 독립 호출, JSON 회수/파싱, health에서 접근성 관측</td></tr>
+<tr><td>Coupang · Amazon</td><td>KR/US 상품·affiliate 목적지</td><td>KR Aside queue는 audit/provenance 강제; manual/API/US registry adapter는 동등 gate 미배선</td></tr>
+<tr><td>OpenRouter Gemini</td><td>본문 후보 8개 + 블라인드 심사 1회</td><td>실행 모델은 runtime config 정본, provider metadata와 digest seal 필요</td></tr>
+<tr><td>Threads Graph API</td><td>KR/US 게시·스레드·댓글·analytics</td><td>publish 응답만 믿지 않고 ID+본문 GET 대조 후 <code>verified</code>; 불일치는 <code>verification_pending</code></td></tr>
+<tr><td>Hermes openai-codex</td><td>실제 상품사진 기반 첫 프레임</td><td><code>gpt-image-2-medium</code> / underlying <code>gpt-image-2</code> 외 fail closed</td></tr>
+<tr><td>FAL storage · MiniMax</td><td>자산 업로드 · <code>minimax/h3-max/image-to-video</code></td><td>9:16 · 768P · 5초/컷 · 비용 ledger; 두 enable gate가 현재 OFF</td></tr>
+<tr><td>OpenMontage · ffmpeg · faster-whisper</td><td>조립·디코딩·오디오/전사 QA·SRT</td><td>별도 venv/interpreter probe; import 성공과 실제 한국어 의미 품질을 구분</td></tr>
+<tr><td>HeightCue public site · Supabase RPC</td><td>US Amazon 외부 링크 click ingress</td><td><code>app.js</code> → <code>hc_record_public_click</code>; 클릭만 직접 기록하고 주문·수수료는 채우지 않음</td></tr>
+<tr><td>LiFoli Company OS</td><td>조직·프로젝트·KPI·profitability control plane</td><td>관리 스키마/UI는 관측; Autopilot publication·Threads insights·affiliate revenue sync worker는 미배선</td></tr>
+</tbody></table>
+<div class="callout"><strong>근거 우선순위:</strong> <code>heightcue-SSOT-v2.md</code> → 현행 코드 → <code>LAUNCH-STATUS.md</code> → <code>README-autopilot.md</code>. 다만 “실제로 돌고 있는가”는 언제나 live state와 외부 media existence가 문서를 이깁니다.</div></section>
+<footer>HEIGHTCUE SYSTEM ATLAS · GENERATED 2026-08-29 · BRAND TOKENS: PAPER #F7F5F1 · INK #102A43 · ACCENT #0E8074 · CORAL #FF966F · SECRETS [REDACTED]</footer>
+</main></body>
+</html>

@@ -125,7 +125,8 @@ class TestExistingCommandsUnchanged(unittest.TestCase):
     """run.py 의 인자 파싱·디스패치가 영상 배선 후에도 동일한지 증명한다."""
 
     def _main(self, argv, cfg=None):
-        cfg = cfg or {"mode": {"dry_run": True}, "threads": {}, "paths": {}}
+        cfg = cfg or {"mode": {"dry_run": True}, "threads": {}, "paths": {},
+                      "openrouter": {"model": "test-model"}}
         with mock.patch.object(run, "load_config", return_value=cfg), \
                 mock.patch.object(sys, "argv", ["run.py"] + argv):
             buf = io.StringIO()
@@ -191,7 +192,8 @@ class TestExistingCommandsUnchanged(unittest.TestCase):
                 mock.patch.object(run.improve, "run"):
             with mock.patch.object(run, "load_config",
                                    return_value={"mode": {"dry_run": True},
-                                                 "threads": {}, "paths": {}}), \
+                                                 "threads": {}, "paths": {},
+                                                 "openrouter": {"model": "test-model"}}), \
                     mock.patch.object(sys, "argv", ["run.py"]):
                 buf = io.StringIO()
                 with redirect_stdout(buf):

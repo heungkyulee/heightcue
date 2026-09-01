@@ -28,6 +28,72 @@ def _git(args):
     return subprocess.run(["git"] + args, cwd=REPO, capture_output=True, text=True, timeout=120)
 
 
+def us_page(cfg, product, master, deploy=True):
+    """Build and optionally deploy a US approved-product landing page."""
+    slug = _slug(product.get("product_key"))
+    rel = f"us/p/{slug}.html"
+    url = f"{SITE_BASE}/{rel}"
+    contract_master = dict(master or {})
+    for key in ("mechanism", "failure_mode", "skip_if"):
+        if product.get(key):
+            contract_master[key] = product[key]
+    if isinstance(contract_master.get("skip_if"), str):
+        contract_master["skip_if"] = [contract_master["skip_if"]]
+    html_text = sitegen_lt.render_product_us(
+        {**product, "_slug": slug}, contract_master
+    )
+
+    if not deploy:
+        prev_dir = os.path.join(cfg["paths"]["state_dir"], "preview-pages")
+        os.makedirs(prev_dir, exist_ok=True)
+        with open(os.path.join(prev_dir, f"us-{slug}.html"), "w", encoding="utf-8") as f:
+            f.write(html_text)
+        log(f"US page(rehearsal): state/preview-pages/us-{slug}.html (no deploy)")
+        return url
+
+    path = os.path.join(REPO, rel)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    already_live = False
+    try:
+        already_live = requests.get(url, timeout=10).status_code == 200
+    except Exception:
+        pass
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html_text)
+
+    r = _git(["add", rel])
+    if r.returncode != 0:
+        log(f"US page deploy failed(git add): {r.stderr.strip()[:120]}")
+        return None
+    if _git(["diff", "--cached", "--quiet"]).returncode == 0:
+        log(f"US page: no changes → {url}")
+        return url
+    r = _git(["commit", "-m", f"page: US guide {slug}"])
+    if r.returncode != 0:
+        log(f"US page deploy failed(commit): {r.stderr.strip()[:120]}")
+        return None
+    r = _git(["push", "origin", "main"])
+    if r.returncode != 0:
+        _git(["pull", "--rebase", "origin", "main"])
+        r = _git(["push", "origin", "main"])
+    if r.returncode != 0:
+        log(f"US page deploy failed(push): {r.stderr.strip()[:120]}")
+        return None
+
+    if already_live:
+        return url
+    for _ in range(10):
+        time.sleep(15)
+        try:
+            if requests.get(url, timeout=10).status_code == 200:
+                log(f"US page live: {url}")
+                return url
+        except Exception:
+            pass
+    log(f"US page propagation check failed after push: {url}")
+    return None
+
+
 def kr_page(cfg, product, master, deploy=True):
     """페이지 생성(+허브 갱신+배포·검증). 반환: 라이브 URL 또는 None(폴백 신호)."""
     slug = _slug(product.get("product_key"))

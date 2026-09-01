@@ -16,6 +16,7 @@ import improve
 import generate
 import post_check
 import publish
+import sitegen
 import sitegen_lt
 from common import append_jsonl, read_jsonl
 
@@ -163,7 +164,8 @@ def test_us_sales_preview_never_calls_threads_readback():
          patch.object(companyos,'release_product_claim') as release:
         media,reason=run._us_sales({'mode':{'publish':False}},None,False)
     assert (media,reason)==('PREVIEW-1','published')
-    verify.assert_not_called(); record.assert_not_called()
+    verify.assert_not_called()
+    record.assert_not_called()
     assert release.call_args.args[1]=='preview_only'
 
 
@@ -267,6 +269,89 @@ def test_site_landing_discloses_before_affiliate_cta():
     disclosure = "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."
     assert disclosure in html
     assert html.index(disclosure) < html.index('data-track="coupang-x"')
+
+
+def test_us_site_landing_uses_exact_offer_binding_and_no_static_price_or_efficacy_claim():
+    product = {
+        "product_name": "VAL Magnesium Cream for Kids",
+        "product_key": "us-val-magnesium-cream-kids",
+        "link": "https://www.amazon.com/dp/B0C1XX99RJ?tag=heightcue-20",
+        "tracking_key": "amazon-us-val-magnesium-cream-kids",
+        "sub_id": "us-guide-val-magnesium",
+        "price_info": {"amount": 25.90, "currency": "USD"},
+        "official_sources": [{"url": "https://www.amazon.com/dp/B0C1XX99RJ", "title": "Amazon listing"}],
+        "_slug": "us-val-magnesium-cream-kids",
+    }
+    master = {
+        "mechanism": "Topical cream format used in a short massage routine",
+        "failure_mode": "Oral-format refusal",
+        "skip_if": ["The child is under age 2 or has broken or irritated skin"],
+    }
+    html = sitegen_lt.render_product_us(product, master)
+    disclosure = "As an Amazon Associate I earn from qualifying purchases."
+    assert '<html lang="en">' in html
+    assert disclosure in html
+    assert html.index(disclosure) < html.index('data-track="amazon-us-val-magnesium-cream-kids"')
+    assert 'data-sub-id="us-guide-val-magnesium"' in html
+    assert product["link"] in html
+    assert 'https://www.amazon.com/dp/B0C1XX99RJ' in html
+    assert '$25.90' not in html and '25.90' not in html
+    lowered = html.lower()
+    assert "transdermal" not in lowered and "sleep faster" not in lowered and "absorbed" not in lowered
+    assert "Skip if" in html
+
+
+def test_numbered_marker_requires_space_after_marker_not_decimal_dimension():
+    assert post_check.RE_NUMBERED_MARKER.search("1. First step")
+    assert post_check.RE_NUMBERED_MARKER.search("2) Second step")
+    assert not post_check.RE_NUMBERED_MARKER.search(
+        "Each bin is 5.375 x 4.125 x 3 inches"
+    )
+
+
+def test_us_page_uses_approved_product_contract_when_master_omits_it(tmp_path):
+    product = {
+        "product_name": "ReadySpace bins",
+        "product_key": "us-readyspace-extra-small-bins",
+        "category": "toy_storage",
+        "link": "https://www.amazon.com/dp/B0GZ7C8QRT?tag=heightcue-20",
+        "tracking_key": "amazon-us-readyspace-extra-small-bins",
+        "sub_id": "us-readyspace-extra-small-bins",
+        "official_sources": [{"url": "https://www.amazon.com/dp/B0GZ7C8QRT"}],
+        "mechanism": "approved open-front mechanism",
+        "failure_mode": "approved mixed-bin failure",
+        "skip_if": "Skip if the pieces are too large.",
+    }
+    url = sitegen.us_page({"paths": {"state_dir": str(tmp_path)}}, product,
+                           {"mechanism": "fabricated mechanism"}, deploy=False)
+    assert url.endswith("/us/p/us-readyspace-extra-small-bins.html")
+    preview = tmp_path / "preview-pages" / "us-us-readyspace-extra-small-bins.html"
+    html = preview.read_text()
+    assert "approved open-front mechanism" in html
+    assert "approved mixed-bin failure" in html
+    assert "Skip if the pieces are too large." in html
+    assert "fabricated mechanism" not in html
+    assert "Topical use only" not in html
+    assert "pediatrician" not in html
+    assert "sleep, growth, or medical outcomes" not in html
+
+
+def test_us_page_rehearsal_writes_preview_without_deploy(tmp_path):
+    product = {
+        "product_name": "VAL Magnesium Cream for Kids",
+        "product_key": "us-val-magnesium-cream-kids",
+        "link": "https://www.amazon.com/dp/B0C1XX99RJ?tag=heightcue-20",
+        "tracking_key": "amazon-us-val-magnesium-cream-kids",
+        "sub_id": "us-guide-val-magnesium",
+        "official_sources": [{"url": "https://www.amazon.com/dp/B0C1XX99RJ"}],
+    }
+    master = {"mechanism": "Topical cream format", "failure_mode": "Oral-format refusal",
+              "skip_if": ["The child is under age 2"]}
+    url = sitegen.us_page({"paths": {"state_dir": str(tmp_path)}}, product, master, deploy=False)
+    assert url == "https://heightcue.lifoli.co.kr/us/p/us-val-magnesium-cream-kids.html"
+    preview = tmp_path / "preview-pages" / "us-us-val-magnesium-cream-kids.html"
+    assert preview.exists()
+    assert 'data-sub-id="us-guide-val-magnesium"' in preview.read_text()
 
 
 def test_review_quote_must_exist_in_saved_source():
@@ -401,8 +486,7 @@ def test_sales_arm_ignores_dry_publications():
 
 
 def test_attribution_completeness_and_subid_mapping():
-    with tempfile.TemporaryDirectory() as tmp:
-        cfg = {"paths": {"state_dir": tmp}}
+    with tempfile.TemporaryDirectory():
         complete_row = {
             "media_id": "REAL-101", "country": "KR", "post_type": "sales",
             "hook_family": "F2", "angle_id": "a1", "product_id": "p1",

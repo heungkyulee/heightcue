@@ -20,7 +20,19 @@ def load_config():
 
 
 def state_path(cfg, name):
-    return os.path.join(cfg["paths"]["state_dir"], name)
+    """Return a state-file path for complete and lightweight test configs.
+
+    Callers such as the comments lock need the directory to exist even when a
+    mocked config omits ``paths.state_dir``.  Production configs still use the
+    normalized path prepared by ``load_config``.
+    """
+    paths = cfg.setdefault("paths", {})
+    state_dir = paths.get("state_dir")
+    if not state_dir:
+        state_dir = os.path.join(BASE, "state")
+        paths["state_dir"] = state_dir
+    os.makedirs(state_dir, exist_ok=True)
+    return os.path.join(state_dir, name)
 
 
 def read_json(path, default):
@@ -32,14 +44,22 @@ def read_json(path, default):
 
 
 def write_json(path, data):
-    with open(path, "w", encoding="utf-8") as f:
+    path = os.fspath(path)
+    if os.path.exists(path):
+        os.chmod(path, 0o600)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 def append_jsonl(path, record):
     record = dict(record)
     record.setdefault("ts", time.strftime("%Y-%m-%dT%H:%M:%S"))
-    with open(path, "a", encoding="utf-8") as f:
+    path = os.fspath(path)
+    if os.path.exists(path):
+        os.chmod(path, 0o600)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
@@ -59,15 +79,34 @@ def read_jsonl(path):
 
 
 def is_real_publication(record):
+    """정확한 read-back까지 끝난 게시만 분석·댓글의 성공 입력으로 인정한다."""
     media_id = str(record.get("media_id") or "")
-    return bool(media_id) and not media_id.upper().startswith("DRY")
+    status = str((record.get("meta") or {}).get("publish_status") or "")
+    return bool(media_id) and status == "verified"
+
+
+def is_possible_live_publication(record):
+    """중복 차단에는 verified와 verification_pending을 모두 live 점유로 본다."""
+    media_id = str(record.get("media_id") or "")
+    status = str((record.get("meta") or {}).get("publish_status") or "")
+    return bool(media_id) and status in ("verified", "verification_pending")
 
 
 def redact_secrets(text):
-    pattern = re.compile(
-        r"(?i)\b(access_token|api_key|apikey|authorization|client_secret|secret_key|token)\s*=\s*([^&\s\"']+)"
+    """Remove secrets from query strings, mappings, and HTTP-style headers."""
+    keys = r"access_token|api_key|apikey|authorization|client_secret|secret_key|token"
+    clean = str(text)
+    clean = re.sub(
+        rf"(?i)(\b(?:{keys})\b\s*=\s*)[^&\s\"']+",
+        r"\1[REDACTED]",
+        clean,
     )
-    return pattern.sub(lambda match: f"{match.group(1)}=[REDACTED]", str(text))
+    clean = re.sub(
+        rf"(?i)(['\"]?(?:{keys})['\"]?\s*:\s*['\"]?)(?:Bearer\s+)?[^,\s'\"}}]+",
+        r"\1[REDACTED]",
+        clean,
+    )
+    return clean
 
 
 def load_skill(cfg, name, country=None):
@@ -86,7 +125,7 @@ def load_skill(cfg, name, country=None):
     body = blocks[0].strip() if blocks else m.group(1).strip()
 
     ctx_dir = os.path.join(os.path.dirname(path), "context")  # 스킬 파일과 같은 디렉터리(레포 루트)
-    files = ["compliance.md", "persona.md"]
+    files = ["user-intent-contract.md", "compliance.md", "persona.md"]
     if country == "KR":
         files.append("voice-kr.md")
     elif country == "US":
@@ -122,7 +161,7 @@ def load_story_episodes(cfg):
 
 
 def log(msg):
-    print(f"[autopilot] {msg}")
+    print(f"[autopilot] {redact_secrets(msg)}")
 
 
 def record_error(cfg, where, err):

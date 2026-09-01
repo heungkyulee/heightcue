@@ -48,6 +48,23 @@ class CompanyOSProductTests(unittest.TestCase):
         self.assertEqual(product["_workflow"]["claim_token"], "claim-1")
         self.assertEqual(transport.calls[0][0], "hc_claim_active_product")
 
+    def test_approved_generation_packet_maps_price_observation_to_price_info(self):
+        import companyos
+        observed = {"amount": 25.9, "currency": "USD", "observed_at": "2026-08-31T08:00:00Z"}
+        transport = FakeTransport([{
+            "product_key": "us-val-magnesium-cream-kids",
+            "product_name": "VAL Magnesium Cream for Kids",
+            "price_observation": observed,
+            "affiliate_url": "https://www.amazon.com/dp/B0C1XX99RJ?tag=heightcue-20",
+            "workflow_id": "w-val",
+            "evidence_revision": 1,
+        }])
+        product = companyos.get_product("us-val-magnesium-cream-kids", transport=transport)
+        self.assertEqual(product["price_info"], observed)
+        self.assertEqual(product["price_observation"], observed)
+        self.assertEqual(product["price_band"], "US_15_30")
+        self.assertEqual(product["link"], "https://www.amazon.com/dp/B0C1XX99RJ?tag=heightcue-20")
+
     def test_supabase_failure_fails_closed_without_json_fallback(self):
         import companyos
         transport = FakeTransport([companyos.CompanyOSError("offline")])

@@ -21,8 +21,8 @@ GOOD = {
     "topic": "sleep",
     "confidence": "moderate",
     "sources": [
-        {"type": "paper", "doi": "10.1000/xyz", "year": 2024,
-         "url": "https://pubmed.ncbi.nlm.nih.gov/00000000/"},
+        {"type": "paper", "doi": "10.1542/peds.2023-062053", "year": 2024,
+         "url": "https://pubmed.ncbi.nlm.nih.gov/38321999/"},
     ],
     "parent_emotion": "10시 취침 강박에 대한 죄책감",
     "hook_seeds": ["10시 취침 강박, 생각보다 근거가 얇습니다"],
@@ -65,6 +65,19 @@ def main():
     expect_reject("출처에 URL/DOI 없음",
                   lambda r: r.update(sources=[{"type": "paper", "year": 2024}]),
                   "source_locator_missing")
+    expect_reject("placeholder DOI와 URL",
+                  lambda r: r.update(sources=[{"type": "paper",
+                                               "doi": "10.1210/jcem.example",
+                                               "url": "https://pubmed.ncbi.nlm.nih.gov/example/"}]),
+                  "source_placeholder")
+    expect_reject("HTTPS가 아닌 출처",
+                  lambda r: r.update(sources=[{"type": "gov",
+                                               "url": "http://health.example.org/report"}]),
+                  "source_https_required")
+    expect_reject("localhost 출처",
+                  lambda r: r.update(sources=[{"type": "official_stat",
+                                               "url": "https://localhost/report"}]),
+                  "source_host_forbidden")
     expect_reject("반론 누락(정직성 규칙)",
                   lambda r: r.update(counter_claim=""), "counter_claim_required")
     expect_reject("인과 단정 — '자면 큰다'",
@@ -162,6 +175,30 @@ def main():
         check("채널별 미사용 재고가 분리 집계됨",
               inv2["unused_by_channel"].get("threads_kr") == 1
               and inv2["unused_by_channel"].get("tiktok_kr") == 1)
+
+        print("\n[7] 공급 시점 방어 — 과거에 들어온 불량 원자 격리")
+        store = evidence.atom_store(cfg)
+        store["atoms"].insert(0, {
+            "atom_id": "atom-placeholder",
+            "claim": "placeholder source claim",
+            "counter_claim": "한계",
+            "topic": "sleep",
+            "distance": 0,
+            "confidence": "strong",
+            "sources": [{"type": "paper", "doi": "10.1/example",
+                         "url": "https://pubmed.ncbi.nlm.nih.gov/example/"}],
+            "used_in": {},
+            "performance": {},
+            "promoted_at": "2020-01-01T00:00:00+09:00",
+        })
+        evidence.save_atoms(cfg, store)
+        selected = evidence.pick_atom(cfg, country="KR", channel="youtube")
+        check("불량 원자는 pick_atom에서 공급되지 않음",
+              selected is not None and selected["atom_id"] != "atom-placeholder")
+        audit = evidence.quarantine_invalid_atoms(cfg)
+        check("불량 원자 1건이 active에서 quarantine으로 이동",
+              audit["quarantined"] == 1
+              and all(a["atom_id"] != "atom-placeholder" for a in evidence.atom_store(cfg)["atoms"]))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

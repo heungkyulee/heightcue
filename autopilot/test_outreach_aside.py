@@ -48,7 +48,28 @@ def test_discovery_invokes_aside_u0_once_per_query_and_never_batches_topics():
     for (args, kwargs), query in zip(calls, ("bedtime routine", "lunchbox cleanup")):
         assert args[:4] == ["aside", "--account", "u0", "exec"]
         assert query in args[4]
-        assert kwargs["timeout"] >= 300
+        assert "astrology" in args[4]
+        assert "사주" in args[4]
+        assert kwargs["timeout"] == 360
+
+
+def test_discovery_third_positional_argument_is_source_limit():
+    calls = []
+
+    def fake_runner(args, **kwargs):
+        calls.append(args)
+        payload = [{
+            "source_post_id": "id-1",
+            "source_post_url": "https://www.threads.com/@p/post/P1",
+            "source_author": "p",
+            "source_text": "scene",
+            "source_published_at": "2026-09-01T10:00:00Z",
+        }]
+        return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+
+    rows = outreach_aside.discover("KR", ["등교 준비"], 1, runner=fake_runner)
+    assert len(rows) == 1
+    assert "up to 1 recent" in calls[0][4]
 
 
 def test_publish_uses_aside_then_independent_readback_before_verified(tmp_path):

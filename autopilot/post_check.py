@@ -37,7 +37,7 @@ KR_DISCLOSURE_EXACT = journey_policy.AFFILIATE_DISCLOSURES["KR"]
 RE_EMOJI = re.compile(
     "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F900-\U0001F9FF\U00002190-\U000021FF]"
 )
-RE_NUMBERED_MARKER = re.compile(r"(^|\s)(?:[①②③④⑤⑥⑦⑧⑨⑩]|\d+[.)])\s*")
+RE_NUMBERED_MARKER = re.compile(r"(^|\s)(?:[①②③④⑤⑥⑦⑧⑨⑩]|\d+[.)])\s+")
 RE_ANY_LINK = re.compile(r"\[쿠팡|\[amazon|\[아마존|https?://", re.I)
 RE_CTA = re.compile(r"👉|링크|link|where to buy|breakdown|→", re.I)
 
@@ -149,7 +149,7 @@ def format_check(text, post_type, country):
             tips.append("CTA(👉 등) 없음 — 링크만 덜렁 있으면 클릭이 죽음")
         if not RE_SKIP_IF.search(text):
             tips.append("비추천(skip if) 슬롯 없음 — 비토권이 신뢰를 만든다. 한 줄 추가 권장")
-    body_lines = [l for l in text.splitlines() if l.strip()]
+    body_lines = [line for line in text.splitlines() if line.strip()]
     if n > 250 and len(body_lines) <= 2:
         tips.append("줄바꿈 부족 — 벽글은 스크롤에서 죽는다. 2~3줄 단위로 끊기")
 

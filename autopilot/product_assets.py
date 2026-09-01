@@ -76,7 +76,7 @@ ALLOWED_FORMATS = ("png", "jpeg")
 OFFICIAL_IMAGE_HOSTS: Dict[str, Tuple[str, ...]] = {
     "KR": ("coupangcdn.com", "coupang.com"),
     "US": ("media-amazon.com", "ssl-images-amazon.com", "images-amazon.com",
-           "amazon.com"),
+           "amazon.com", "vitaminddrops.com"),
 }
 
 #: CDN 콘텐츠 협상을 고정한다. requests 기본값 `Accept: */*` 를 그대로 두면

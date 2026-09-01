@@ -1,0 +1,58 @@
+{
+  "task_id": "t_32d9d0a5",
+  "project": "heightcue",
+  "changed_paths": [
+    "autopilot/generation_ssot.py",
+    "autopilot/test_authoritative_generation.py"
+  ],
+  "root_cause": {
+    "classification": "stale fixture/input identifier",
+    "rpc": "hc_get_approved_product_input",
+    "stale_product_key": "us-dry-ddrops",
+    "authoritative_product_key": "us-ddrops-kids-600iu",
+    "evidence": "live read-only RPC returned HTTP 400 P0001 unknown product for stale key; authoritative key returned product_id and evidence_revision 1"
+  },
+  "red": {
+    "test": "test_episode_identity_resolves_approved_story_facts",
+    "result": "FAIL before implementation: episode:E5 raised ValueError('narrative archive inputs are retired') instead of resolving confirmed story-bank facts"
+  },
+  "green": {
+    "focused": "python -m unittest test_supabase_products test_authoritative_generation test_execution_contract",
+    "focused_result": "61/61 passed",
+    "full_discovery": "1113/1113 passed",
+    "rehearsal_path_test": "pytest -s -q test_ops.py::test_rehearsal_entrypoint_runs_real_daily_us_sales_and_reads_attested_preview: 1 passed",
+    "health": "python test_health.py: 8/8 passed",
+    "post_check": "post_check.py test_posts.json --test: 39/39 passed",
+    "diff_check": "changed paths clean"
+  },
+  "implementation": {
+    "resolver": "generation_ssot.resolve_inputs now parses the project story-bank.md for episode:<id>, returns episode_id/title/approved_facts, excludes editorial bullets, and fails closed for missing or explicitly unconfirmed episodes",
+    "gates_preserved": [
+      "episode facts remain side-effect-free generation inputs",
+      "production Company OS product claim remains authoritative and no local JSON fallback was added",
+      "authoritative generation attestation required",
+      "no paid generation",
+      "publish=false"
+    ]
+  },
+  "rehearsal_readback": {
+    "entrypoint": "run.rehearsal",
+    "path": "run.rehearsal -> daily -> _us_sales -> publish.publish_text",
+    "validator": "committed no-cost harness; deterministic Ed25519-attested fixture only; no OpenRouter request",
+    "country": "US",
+    "product_key": "us-ddrops-kids-600iu",
+    "product_id": "us-ddrops-kids-600iu",
+    "media_id": "PREVIEW-1788135788",
+    "publish_status": "preview",
+    "generation_attestation_scope": "rehearsal",
+    "authoritative_product_truth": true,
+    "paid_generation_called": false,
+    "threads_publication": false,
+    "published_jsonl": "absent"
+  },
+  "remaining_errors": [
+    "No regression remains in episode identity resolution or the reproduced us_sales path.",
+    "Direct CLI rehearsal validation is intentionally not run because validate.py performs a live OpenRouter generation check; the committed harness invokes the exact run.rehearsal entrypoint and preserves the authoritative attestation boundary."
+  ],
+  "review_requested": "subin-qa"
+}

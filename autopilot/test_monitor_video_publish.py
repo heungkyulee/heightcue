@@ -14,9 +14,10 @@ Hermes 크론의 monitor 모드는 **stdout 바이트 해시**로 에이전트 �
 from __future__ import annotations
 
 import io
-import json
+
 import os
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 
@@ -53,12 +54,18 @@ def entry(job_id, *, market="kr", product_id="P-1", attempts=0,
 class StubLedger:
     """video_handoff.list_ready 가 쓰는 표면만 흉내낸다."""
 
-    def __init__(self, entries):
+    def __init__(self, entries, root=None):
         self._entries = list(entries)
+        self.root = root
+        self.recover_calls = 0
 
     def list_jobs(self, state=None):
         return [dict(e) for e in self._entries
                 if state is None or e["state"] == state]
+
+    def recover_stale(self):
+        self.recover_calls += 1
+        return []
 
 
 def run(ledger):
@@ -136,6 +143,33 @@ class TestChangeDetection(unittest.TestCase):
     def test_published_job_disappears_from_output(self):
         gone = entry("J-1", state="published")
         self.assertEqual(run(StubLedger([gone])), mon.NO_READY_OUTPUT)
+
+
+class TestActionableSignal(unittest.TestCase):
+    def test_ready_to_empty_keeps_same_hash_and_avoids_cleanup_wake(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = StubLedger([entry("J-1")], root=tmp)
+            before = mon.actionable_signal(ledger)
+            ledger._entries = [entry("J-1", state="published")]
+            after = mon.actionable_signal(ledger)
+            self.assertEqual(before, after)
+
+    def test_new_job_after_empty_changes_the_retained_signal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = StubLedger([entry("J-1")], root=tmp)
+            first = mon.actionable_signal(ledger)
+            ledger._entries = []
+            self.assertEqual(first, mon.actionable_signal(ledger))
+            ledger._entries = [entry("J-2")]
+            second = mon.actionable_signal(ledger)
+            self.assertNotEqual(first, second)
+            self.assertIn("J-2", second)
+
+    def test_every_tick_recovers_expired_leases_before_rendering(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = StubLedger([], root=tmp)
+            mon.actionable_signal(ledger)
+            self.assertEqual(ledger.recover_calls, 1)
 
 
 class TestRowShape(unittest.TestCase):

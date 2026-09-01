@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="description" content="HeightCue 전체 시스템을 한 화면에 요약한 포스터"/>
+<title>HeightCue 한 장 시스템 지도 · 2026-08-29</title>
+<style>
+:root { --paper:#f7f5f1; --paper-2:#efe9dd; --ink:#102a43; --muted:#53687a; --soft:#7b877f; --accent:#0e8074; --accent-tint:#e3efec; --link:#2e5aa8; --coral:#ff966f; --rust:#b85450; --rule:rgba(16,42,67,.15); }
+* { box-sizing:border-box; }
+html { scroll-behavior:smooth; }
+body { margin:0; background:var(--paper); color:var(--ink); font-family:'Geist','Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic',system-ui,sans-serif; line-height:1.55; }
+a { color:var(--link); }
+code,.mono { font-family:'Geist Mono','Noto Sans Mono CJK KR',ui-monospace,SFMono-Regular,monospace; }
+code { font-size:.88em; background:rgba(16,42,67,.05); padding:.08rem .28rem; border-radius:2px; overflow-wrap:anywhere; }
+main { width:min(1500px,100%); margin:0 auto; padding:32px 40px 80px; }
+header.hero { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(300px,.65fr); gap:40px; padding:32px 0 40px; border-bottom:1px solid var(--rule); }
+.eyebrow { margin:0 0 8px; color:var(--accent); font:600 11px/1.2 'Geist Mono',monospace; letter-spacing:.16em; text-transform:uppercase; }
+h1,h2,h3 { margin:0; color:var(--ink); }
+h1 { font-family:'Instrument Serif','Iowan Old Style',Georgia,serif; font-size:clamp(42px,5vw,72px); font-weight:400; line-height:.98; letter-spacing:-.025em; }
+h2 { font-family:'Instrument Serif','Iowan Old Style',Georgia,serif; font-size:clamp(30px,3.4vw,48px); font-weight:400; line-height:1.05; }
+h3 { font-size:18px; line-height:1.25; }
+.lede { max-width:780px; font-size:18px; color:var(--muted); margin:20px 0 0; }
+.hero-meta { border-left:3px solid var(--accent); background:var(--accent-tint); padding:20px 24px; align-self:end; }
+.hero-meta dl { display:grid; grid-template-columns:112px 1fr; gap:8px 12px; margin:0; font-size:13px; }
+.hero-meta dt { color:var(--soft); font-family:'Geist Mono',monospace; }
+.hero-meta dd { margin:0; font-weight:600; }
+nav.toc { display:flex; gap:8px; flex-wrap:wrap; padding:20px 0; border-bottom:1px solid var(--rule); position:sticky; top:0; z-index:20; background:rgba(247,245,241,.96); backdrop-filter:blur(8px); }
+nav.toc a { text-decoration:none; border:1px solid var(--rule); padding:6px 10px; border-radius:4px; color:var(--muted); font-size:12px; }
+nav.toc a:hover { border-color:var(--accent); color:var(--accent); }
+section { padding:64px 0 8px; scroll-margin-top:70px; }
+.section-head { display:grid; grid-template-columns:160px minmax(0,1fr); gap:24px; align-items:start; margin-bottom:24px; }
+.section-no { color:var(--accent); font:600 12px/1.3 'Geist Mono',monospace; letter-spacing:.12em; }
+.section-intro { max-width:980px; color:var(--muted); margin:10px 0 0; }
+.diagram-frame { overflow-x:auto; border:1px solid var(--rule); background:var(--paper); border-radius:8px; padding:16px; margin:20px 0 24px; }
+.diagram-svg { display:block; width:100%; min-width:960px; height:auto; }
+.svg-eyebrow,.svg-tag,.svg-arrow-label,.svg-legend { font-family:'Geist Mono','Noto Sans Mono CJK KR',monospace; text-anchor:middle; letter-spacing:.08em; }
+.svg-eyebrow { font-size:10px; fill:#53687a; text-anchor:start; }
+.svg-tag { font-size:8px; font-weight:600; }
+.svg-name { font-family:'Geist','Apple SD Gothic Neo','Noto Sans KR',sans-serif; font-size:14px; font-weight:600; text-anchor:middle; }
+.svg-sub { font-family:'Geist Mono','Noto Sans Mono CJK KR',monospace; font-size:10px; fill:#53687a; text-anchor:middle; }
+.svg-arrow-label { font-size:9px; fill:#53687a; }
+.svg-legend { font-size:9px; fill:#53687a; text-anchor:start; }
+.grid { display:grid; gap:16px; }
+.grid.two { grid-template-columns:1.1fr .9fr; }
+.grid.three { grid-template-columns:1.15fr 1fr .85fr; }
+.card { border:1px solid var(--rule); border-radius:6px; background:#fff; padding:20px; }
+.card.accent { border-color:rgba(14,128,116,.45); background:var(--accent-tint); }
+.card.risk { border-color:rgba(184,84,80,.45); background:rgba(184,84,80,.05); }
+.card.coral { border-color:rgba(255,150,111,.55); background:rgba(255,150,111,.09); }
+.card p:last-child,.card ul:last-child { margin-bottom:0; }
+.metric-row { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin:20px 0; }
+.metric { border-top:3px solid var(--ink); padding:12px 4px 0; }
+.metric.accent { border-color:var(--accent); }
+.metric.risk { border-color:var(--rust); }
+.metric .value { display:block; font:400 32px/1 'Instrument Serif',Georgia,serif; }
+.metric .label { color:var(--muted); font-size:12px; }
+.badge { display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border:1px solid var(--rule); border-radius:3px; font:600 10px/1.4 'Geist Mono',monospace; text-transform:uppercase; letter-spacing:.06em; }
+.badge.declared { border-color:#8c6d3f; color:#6d532f; background:rgba(140,109,63,.07); }
+.badge.enforced { border-color:var(--accent); color:var(--accent); background:var(--accent-tint); }
+.badge.observed { border-color:var(--link); color:var(--link); background:rgba(46,90,168,.06); }
+.badge.gap { border-style:dashed; color:var(--muted); }
+.badge.conflict { border-color:var(--rust); color:var(--rust); background:rgba(184,84,80,.05); }
+table { width:100%; border-collapse:collapse; margin:16px 0 28px; font-size:13px; }
+th,td { padding:11px 12px; border-bottom:1px solid var(--rule); text-align:left; vertical-align:top; }
+th { color:var(--muted); font:600 10px/1.4 'Geist Mono',monospace; letter-spacing:.09em; text-transform:uppercase; }
+tbody tr:hover { background:rgba(16,42,67,.025); }
+.status-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; background:var(--soft); }
+.status-dot.ok { background:var(--accent); }
+.status-dot.warn { background:var(--coral); }
+.status-dot.bad { background:var(--rust); }
+.callout { border-left:3px solid var(--coral); padding:12px 16px; background:rgba(255,150,111,.08); color:var(--muted); margin:16px 0; }
+.callout strong { color:var(--ink); }
+.source-list { columns:2; column-gap:32px; font-size:12px; }
+.source-list li { break-inside:avoid; margin:0 0 7px; }
+footer { margin-top:72px; padding-top:20px; border-top:1px solid var(--rule); color:var(--soft); font:11px/1.5 'Geist Mono',monospace; }
+@media (max-width:900px) { main { padding:20px 16px 56px; } header.hero,.grid.two,.grid.three,.section-head { grid-template-columns:1fr; } .hero-meta { border-left:0; border-top:3px solid var(--accent); } .metric-row { grid-template-columns:repeat(2,1fr); } .source-list { columns:1; } nav.toc { position:static; } }
+@media print { nav.toc { display:none; } section { break-inside:avoid; } main { max-width:none; padding:20px; } .diagram-frame { overflow:visible; } }
+
+body.poster { overflow:auto; }
+.poster-wrap { width:1280px; min-height:720px; margin:0 auto; padding:24px 32px; background:var(--paper); }
+.poster-head { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:1px solid var(--rule); padding-bottom:12px; }
+.poster-head h1 { font-size:44px; }
+.poster-kicker { color:var(--muted); font-size:13px; max-width:520px; text-align:right; }
+.poster-canvas { margin-top:16px; }
+.poster-svg { width:100%; height:auto; display:block; }
+.poster-foot { display:grid; grid-template-columns:1.25fr 1fr 1fr; gap:16px; margin-top:12px; }
+.poster-foot .card { padding:12px 14px; font-size:11px; }
+.poster-foot h3 { font-size:13px; margin-bottom:5px; }
+.poster-foot p { margin:0; color:var(--muted); }
+@media(max-width:1280px){ .poster-wrap{ transform-origin:top left; } }
+</style>
+</head>
+<body class="poster"><div class="poster-wrap"><div class="poster-head"><div><p class="eyebrow">HEIGHTCUE · ONE-PAGE SYSTEM MAP</p><h1>수요를 증거로, 증거를 수익으로.</h1></div><p class="poster-kicker">실운영 텍스트 루프 · process 미배선 영상 sidecar · Hermes 조직/스케줄 · US 클릭만 직결된 LiFoli control plane을 한 화면에 분리했습니다. Snapshot: 2026-08-29 18:50 KST.</p></div><div class="poster-canvas"><svg class="poster-svg" viewBox="0 0 1248 680" role="img" aria-labelledby="poster-title poster-desc">
+      <title id="poster-title">HeightCue 전체 시스템 요약 포스터</title>
+      <desc id="poster-desc">Hermes와 macOS 스케줄러가 부분 감사 텍스트 경로를 운용하고, US queue와 KR-only 기본 설정이 어긋난 미배선 영상 sidecar, US 공개 클릭만 직접 연결된 LiFoli control plane을 분리한 한 장 지도.</desc>
+      <defs>
+      <marker id="poster-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#53687a"/></marker>
+      <marker id="poster-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#0e8074"/></marker>
+      <marker id="poster-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
+      <marker id="poster-coral" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#ff966f"/></marker>
+      <marker id="poster-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0,8 3,0 6" fill="none" stroke="#53687a" stroke-width="1.2"/></marker>
+    </defs>
+      <rect width="1248" height="680" fill="#f7f5f1"/>
+      <rect x="16" y="40" width="1216" height="112" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.18)" stroke-width="1"/>
+    <rect x="28" y="34" width="492" height="16" rx="2" fill="#f7f5f1"/>
+    <text x="36" y="45" class="svg-eyebrow">ORCHESTRATION — MACOS CRONTAB · HERMES PROFILES · ASIDE CLI</text><rect x="16" y="168" width="1216" height="224" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.18)" stroke-width="1"/>
+    <rect x="28" y="162" width="196" height="16" rx="2" fill="#f7f5f1"/>
+    <text x="36" y="173" class="svg-eyebrow">LIVE TEXT REVENUE PATH</text><rect x="16" y="416" width="1216" height="112" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.18)" stroke-width="1" stroke-dasharray="4,4"/>
+    <rect x="28" y="410" width="492" height="16" rx="2" fill="#f7f5f1"/>
+    <text x="36" y="421" class="svg-eyebrow">VIDEO SIDECAR — COMPONENTS OBSERVED · PROCESS UNWIRED / OFF</text><rect x="16" y="552" width="1216" height="112" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.18)" stroke-width="1"/>
+    <rect x="28" y="546" width="252" height="16" rx="2" fill="#f7f5f1"/>
+    <text x="36" y="557" class="svg-eyebrow">TRUTH + LEARNING + COMPANY OS</text><path d="M 192,280 H 232" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#poster-arrow)"/><path d="M 384,280 H 424" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#poster-arrow)"/><path d="M 576,280 H 616" fill="none" stroke="#0e8074" stroke-width="1.6" marker-end="url(#poster-accent)"/><path d="M 768,280 H 808" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#poster-arrow)"/><path d="M 960,280 H 1000" fill="none" stroke="#53687a" stroke-width="1.2" marker-end="url(#poster-arrow)"/><path d="M 116,136 V 224" stroke="#53687a" stroke-dasharray="5,4" marker-end="url(#poster-arrow)"/><path d="M 308,136 V 224" stroke="#53687a" stroke-dasharray="5,4" marker-end="url(#poster-arrow)"/><path d="M 500,136 V 224" stroke="#53687a" stroke-dasharray="5,4" marker-end="url(#poster-arrow)"/><path d="M 692,136 V 224" stroke="#53687a" stroke-dasharray="5,4" marker-end="url(#poster-arrow)"/><path d="M 884,136 V 224" stroke="#53687a" stroke-dasharray="5,4" marker-end="url(#poster-arrow)"/><path d="M 1076,136 V 224" stroke="#53687a" stroke-dasharray="5,4" marker-end="url(#poster-arrow)"/><path d="M 1076,328 H 1200 Q 1208,328 1208,336 V 532 Q 1208,540 1200,540 H 760 C 752,540 752,528 744,528 C 736,528 736,540 728,540 H 448 Q 440,540 440,548 V 572" fill="none" stroke="#2e5aa8" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#poster-link)"/><rect x="1016" y="516" width="92" height="14" fill="#f7f5f1"/><text x="1062" y="527" class="svg-arrow-label">ECONOMICS</text><path d="M 744,572 V 412 Q 744,404 736,404 H 408 Q 400,404 400,396 V 312 Q 400,304 392,304 H 384" fill="none" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#poster-arrow)"/><rect x="504" y="380" width="112" height="14" fill="#f7f5f1"/><text x="560" y="391" class="svg-arrow-label">WEEKLY LEARNING</text><path d="M 332,328 V 368 Q 332,376 324,376 H 156 Q 148,376 148,384 V 436" fill="none" stroke="#53687a" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#poster-arrow)"/><rect x="176" y="352" width="112" height="14" fill="#f7f5f1"/><text x="232" y="363" class="svg-arrow-label">ELIGIBLE PRODUCT</text><path d="M 1152,328 H 1216 Q 1224,328 1224,336 V 552 Q 1224,560 1216,560 H 1192 Q 1184,560 1184,568 V 572" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#poster-link)"/><rect x="1136" y="540" width="72" height="14" fill="#f7f5f1"/><text x="1172" y="551" class="svg-arrow-label" fill="#2e5aa8">US CLICK RPC</text><path d="M 256,472 H 280" fill="none" stroke="#2e5aa8" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#poster-link)"/><path d="M 496,472 H 520" fill="none" stroke="#2e5aa8" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#poster-link)"/><path d="M 736,472 H 760" fill="none" stroke="#2e5aa8" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#poster-link)"/><path d="M 976,472 H 1000" fill="none" stroke="#2e5aa8" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#poster-link)"/><g class="svg-node">
+      <rect x="40" y="68" width="216" height="68" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="48" y="74" width="51" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="73.5" y="84" class="svg-tag" fill="#102a43">SCHED</text>
+      <text x="148.0" y="102" class="svg-name" fill="#102a43">User crontab</text>
+      <text x="148.0" y="120" class="svg-sub">9 live jobs</text>
+    </g><g class="svg-node">
+      <rect x="280" y="68" width="216" height="68" rx="8" fill="#e3efec" stroke="#0e8074" stroke-width="1.2"/>
+      <rect x="288" y="74" width="58" height="14" rx="2" fill="transparent" stroke="#0e8074" stroke-opacity=".42"/>
+      <text x="317.0" y="84" class="svg-tag" fill="#0e8074">AGENTS</text>
+      <text x="388.0" y="102" class="svg-name" fill="#102a43">Hermes Bot Mode</text>
+      <text x="388.0" y="120" class="svg-sub">Foli + 9 specialist profiles</text>
+    </g><g class="svg-node">
+      <rect x="520" y="68" width="216" height="68" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.30)" stroke-width="1.2"/>
+      <rect x="528" y="74" width="65" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.30)" stroke-opacity=".42"/>
+      <text x="560.5" y="84" class="svg-tag" fill="rgba(16,42,67,.30)">BROWSER</text>
+      <text x="628.0" y="102" class="svg-name" fill="#102a43">Aside CLI</text>
+      <text x="628.0" y="120" class="svg-sub">authenticated browser path</text>
+    </g><g class="svg-node">
+      <rect x="760" y="68" width="216" height="68" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="768" y="74" width="65" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="800.5" y="84" class="svg-tag" fill="#53687a">RUNTIME</text>
+      <text x="868.0" y="102" class="svg-name" fill="#102a43">Shared repo + state</text>
+      <text x="868.0" y="120" class="svg-sub">file ledgers</text>
+    </g><g class="svg-node">
+      <rect x="1000" y="68" width="216" height="68" rx="8" fill="rgba(16,42,67,.025)" stroke="rgba(16,42,67,.30)" stroke-width="1.2"/>
+      <rect x="1008" y="74" width="51" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.30)" stroke-opacity=".42"/>
+      <text x="1033.5" y="84" class="svg-tag" fill="rgba(16,42,67,.30)">CLOUD</text>
+      <text x="1108.0" y="102" class="svg-name" fill="#102a43">External services</text>
+      <text x="1108.0" y="120" class="svg-sub">retail · AI · Threads</text>
+    </g><g class="svg-node">
+      <rect x="40" y="224" width="152" height="104" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="48" y="230" width="51" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="73.5" y="240" class="svg-tag" fill="#102a43">STAGE</text>
+      <text x="116.0" y="272" class="svg-name" fill="#102a43">1. SIGNAL</text>
+      <text x="116.0" y="290" class="svg-sub">trends · UX</text><text x="116.0" y="304" class="svg-sub">products</text>
+    </g><g class="svg-node">
+      <rect x="232" y="224" width="152" height="104" rx="8" fill="#e3efec" stroke="#0e8074" stroke-width="1.2"/>
+      <rect x="240" y="230" width="51" height="14" rx="2" fill="transparent" stroke="#0e8074" stroke-opacity=".42"/>
+      <text x="265.5" y="240" class="svg-tag" fill="#0e8074">STAGE</text>
+      <text x="308.0" y="272" class="svg-name" fill="#102a43">2. PROVE</text>
+      <text x="308.0" y="290" class="svg-sub">KR queue audit</text><text x="308.0" y="304" class="svg-sub">evidence · fallback gaps</text>
+    </g><g class="svg-node">
+      <rect x="424" y="224" width="152" height="104" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="432" y="230" width="51" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="457.5" y="240" class="svg-tag" fill="#102a43">STAGE</text>
+      <text x="500.0" y="272" class="svg-name" fill="#102a43">3. CREATE</text>
+      <text x="500.0" y="290" class="svg-sub">8 candidates</text><text x="500.0" y="304" class="svg-sub">blind tournament</text>
+    </g><g class="svg-node">
+      <rect x="616" y="224" width="152" height="104" rx="8" fill="rgba(184,84,80,.07)" stroke="#b85450" stroke-width="1.2"/>
+      <rect x="624" y="230" width="51" height="14" rx="2" fill="transparent" stroke="#b85450" stroke-opacity=".42"/>
+      <text x="649.5" y="240" class="svg-tag" fill="#b85450">STAGE</text>
+      <text x="692.0" y="272" class="svg-name" fill="#102a43">4. GATE</text>
+      <text x="692.0" y="290" class="svg-sub">attestation</text><text x="692.0" y="304" class="svg-sub">policy + disclosure</text>
+    </g><g class="svg-node">
+      <rect x="808" y="224" width="152" height="104" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="816" y="230" width="51" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="841.5" y="240" class="svg-tag" fill="#102a43">STAGE</text>
+      <text x="884.0" y="272" class="svg-name" fill="#102a43">5. PUBLISH</text>
+      <text x="884.0" y="290" class="svg-sub">Threads KR / US</text><text x="884.0" y="304" class="svg-sub">comments · replies</text>
+    </g><g class="svg-node">
+      <rect x="1000" y="224" width="152" height="104" rx="8" fill="rgba(255,150,111,.12)" stroke="#ff966f" stroke-width="1.2"/>
+      <rect x="1008" y="230" width="51" height="14" rx="2" fill="transparent" stroke="#ff966f" stroke-opacity=".42"/>
+      <text x="1033.5" y="240" class="svg-tag" fill="#ff966f">STAGE</text>
+      <text x="1076.0" y="272" class="svg-name" fill="#102a43">6. MEASURE</text>
+      <text x="1076.0" y="290" class="svg-sub">views → clicks</text><text x="1076.0" y="304" class="svg-sub">orders/commission GAP</text>
+    </g><g class="svg-node">
+      <rect x="40" y="436" width="216" height="72" rx="8" fill="rgba(16,42,67,.018)" stroke="rgba(16,42,67,.24)" stroke-width="1.2" stroke-dasharray="5,4"/>
+      <rect x="48" y="442" width="51" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.24)" stroke-opacity=".42"/>
+      <text x="73.5" y="452" class="svg-tag" fill="rgba(16,42,67,.24)">VIDEO</text>
+      <text x="148.0" y="468" class="svg-name" fill="#53687a">Real product + storyboard</text>
+      <text x="148.0" y="486" class="svg-sub">3 US jobs · default market KR</text>
+    </g><g class="svg-node">
+      <rect x="280" y="436" width="216" height="72" rx="8" fill="rgba(16,42,67,.018)" stroke="rgba(16,42,67,.24)" stroke-width="1.2" stroke-dasharray="5,4"/>
+      <rect x="288" y="442" width="51" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.24)" stroke-opacity=".42"/>
+      <text x="313.5" y="452" class="svg-tag" fill="rgba(16,42,67,.24)">IMAGE</text>
+      <text x="388.0" y="468" class="svg-name" fill="#53687a">Codex first frame</text>
+      <text x="388.0" y="486" class="svg-sub">gpt-image-2</text>
+    </g><g class="svg-node">
+      <rect x="520" y="436" width="216" height="72" rx="8" fill="rgba(16,42,67,.018)" stroke="rgba(16,42,67,.24)" stroke-width="1.2" stroke-dasharray="5,4"/>
+      <rect x="528" y="442" width="37" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.24)" stroke-opacity=".42"/>
+      <text x="546.5" y="452" class="svg-tag" fill="rgba(16,42,67,.24)">I2V</text>
+      <text x="628.0" y="468" class="svg-name" fill="#53687a">FAL → H3 Max 768P</text>
+      <text x="628.0" y="486" class="svg-sub">native dialogue · component run</text>
+    </g><g class="svg-node">
+      <rect x="760" y="436" width="216" height="72" rx="8" fill="rgba(16,42,67,.018)" stroke="rgba(16,42,67,.24)" stroke-width="1.2" stroke-dasharray="5,4"/>
+      <rect x="768" y="442" width="36" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.24)" stroke-opacity=".42"/>
+      <text x="786.0" y="452" class="svg-tag" fill="rgba(16,42,67,.24)">QA</text>
+      <text x="868.0" y="468" class="svg-name" fill="#53687a">OpenMontage + QA</text>
+      <text x="868.0" y="486" class="svg-sub">clean · captioned · SRT</text>
+    </g><g class="svg-node">
+      <rect x="1000" y="436" width="216" height="72" rx="8" fill="rgba(16,42,67,.018)" stroke="rgba(16,42,67,.24)" stroke-width="1.2" stroke-dasharray="5,4"/>
+      <rect x="1008" y="442" width="65" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.24)" stroke-opacity=".42"/>
+      <text x="1040.5" y="452" class="svg-tag" fill="rgba(16,42,67,.24)">PUBLISH</text>
+      <text x="1108.0" y="468" class="svg-name" fill="#53687a">Threads handoff</text>
+      <text x="1108.0" y="486" class="svg-sub">not reached end-to-end</text>
+    </g><g class="svg-node">
+      <rect x="40" y="572" width="240" height="64" rx="8" fill="rgba(16,42,67,.05)" stroke="#53687a" stroke-width="1.2"/>
+      <rect x="48" y="578" width="51" height="14" rx="2" fill="transparent" stroke="#53687a" stroke-opacity=".42"/>
+      <text x="73.5" y="588" class="svg-tag" fill="#53687a">STATE</text>
+      <text x="160.0" y="606" class="svg-name" fill="#102a43">Observed truth</text>
+      <text x="160.0" y="624" class="svg-sub">health · JSONL · media_id</text>
+    </g><g class="svg-node">
+      <rect x="320" y="572" width="240" height="64" rx="8" fill="#102a43" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="328" y="578" width="86" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="371.0" y="588" class="svg-tag" fill="#102a43">NORTH STAR</text>
+      <text x="440.0" y="606" class="svg-name" fill="#f7f5f1">Evidence + revenue hub</text>
+      <text x="440.0" y="624" class="svg-sub">shared economic record</text>
+    </g><g class="svg-node">
+      <rect x="600" y="572" width="240" height="64" rx="8" fill="#ffffff" stroke="#102a43" stroke-width="1.2"/>
+      <rect x="608" y="578" width="51" height="14" rx="2" fill="transparent" stroke="#102a43" stroke-opacity=".42"/>
+      <text x="633.5" y="588" class="svg-tag" fill="#102a43">LEARN</text>
+      <text x="720.0" y="606" class="svg-name" fill="#102a43">Weekly improve</text>
+      <text x="720.0" y="624" class="svg-sub">prompts · sourcing · cadence</text>
+    </g><g class="svg-node">
+      <rect x="880" y="572" width="336" height="64" rx="8" fill="rgba(16,42,67,.018)" stroke="rgba(16,42,67,.24)" stroke-width="1.2" stroke-dasharray="5,4"/>
+      <rect x="888" y="578" width="65" height="14" rx="2" fill="transparent" stroke="rgba(16,42,67,.24)" stroke-opacity=".42"/>
+      <text x="920.5" y="588" class="svg-tag" fill="rgba(16,42,67,.24)">CONTROL</text>
+      <text x="1048.0" y="606" class="svg-name" fill="#53687a">LiFoli Company OS</text>
+      <text x="1048.0" y="624" class="svg-sub">US click RPC only · ledgers unsynced</text>
+    </g>
+    </svg></div><div class="poster-foot"><div class="card accent"><h3>북극성</h3><p>게시량·조회수가 아니라 실제 클릭 → 주문 → 수수료 → 생성비를 합친 제휴 순수익.</p></div><div class="card"><h3>현재 관측</h3><p>health OK · 실발행 22 · evidence 10(미사용 7) · 영상 queued 3 / process OFF / default KR.</p></div><div class="card risk"><h3>최우선 위험</h3><p>소싱 fallback audit 우회 · 영상 US↔KR gate · 스케줄 중복 · credential 로그 · 경제 귀속 미배선.</p></div></div></div></body>
+</html>

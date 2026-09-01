@@ -28,7 +28,7 @@ import json
 import os
 import shutil
 import subprocess
-import sys
+
 from typing import Any, Dict, Iterable, List, Optional
 
 import video_contracts as vc
@@ -52,8 +52,24 @@ assert_first_frame_geometry = vc.assert_first_frame_geometry
 parse_pixel_size = vc.parse_pixel_size
 FirstFrameGeometryError = vc.FirstFrameGeometryError
 
-HERMES_HOME = os.path.expanduser(
-    os.environ.get("HERMES_HOME", "~/.hermes"))
+def _resolve_hermes_home() -> str:
+    """Resolve profile-local Hermes installs with a shared-install fallback.
+
+    Bot profiles may set ``HERMES_HOME`` to a profile directory, while the
+    installed Hermes source/venv can be shared at ``~/.hermes``.  Prefer the
+    explicit profile when it contains the agent tree; otherwise use the shared
+    tree rather than constructing paths that cannot be executed.
+    """
+    configured = os.path.expanduser(os.environ.get("HERMES_HOME", "~/.hermes"))
+    if os.path.isdir(os.path.join(configured, "hermes-agent")):
+        return configured
+    shared = os.path.expanduser("~/.hermes")
+    if os.path.isdir(os.path.join(shared, "hermes-agent")):
+        return shared
+    return configured
+
+
+HERMES_HOME = _resolve_hermes_home()
 HERMES_AGENT_DIR = os.path.join(HERMES_HOME, "hermes-agent")
 HERMES_PYTHON = os.path.join(HERMES_AGENT_DIR, "venv", "bin", "python")
 HERMES_DISPATCHER_FILE = os.path.join(

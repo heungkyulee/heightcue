@@ -351,7 +351,7 @@ class TestFrameAdapter(Base):
         s = FakeSession()
         seed = fu.make_image_url_for(session=s, api_key=FAKE_KEY,
                                      sleeper=self.sleeper)
-        req = vg.build_cut_request(self._frame(), motion_prompt="a hand lifts it",
+        req = vg.build_cut_request(self._frame(), generation_prompt="a hand lifts it",
                                    output_path=os.path.join(self.tmp, "c0.mp4"),
                                    image_url=seed(self._frame()))
         self.assertEqual(req["payload"]["image_url"], FILE_URL)
