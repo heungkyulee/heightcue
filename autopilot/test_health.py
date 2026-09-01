@@ -175,8 +175,13 @@ def test_companyos_workflow_break_is_fail():
     assert s == health.OK
     unavailable = {"ok": True, "counts": {"approved": 1, "published": 1}, "claimable_now": 0,
                    "claimable_by_market": {},
+                   "next_claimable_at": "2026-09-08T09:14:15+00:00",
                    "checks": {"all_us_products_tracked": True, "approvals_current": True}}
     s, msg = health.check_companyos_workflow({}, probe=unavailable)
+    assert s == health.OK, (s, msg)
+    assert "cooldown" in msg
+    unavailable_without_cooldown = {**unavailable, "next_claimable_at": None}
+    s, msg = health.check_companyos_workflow({}, probe=unavailable_without_cooldown)
     assert s == health.WARN, (s, msg)
     assert "즉시 claim 가능 0" in msg
     missing = {"ok": True, "counts": {"approved": 1},

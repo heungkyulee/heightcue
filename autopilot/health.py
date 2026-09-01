@@ -306,6 +306,12 @@ def check_companyos_workflow(cfg, probe=None):
     if not isinstance(claimable, int) or isinstance(claimable, bool):
         return WARN, f"Company OS 상품 원장 정상 ({summary}); claimable_now 미보고 — health RPC 배포 확인 필요"
     if claimable <= 0:
+        next_claimable_at = probe.get("next_claimable_at")
+        if isinstance(next_claimable_at, str) and next_claimable_at.strip():
+            return OK, (
+                f"Company OS 상품 원장 정상 ({summary}); cooldown 정상, "
+                f"다음 claim {next_claimable_at.strip()}"
+            )
         by_market = probe.get("claimable_by_market") or {}
         market_summary = ", ".join(f"{key}={value}" for key, value in sorted(by_market.items())) or "시장별 0"
         return WARN, f"Company OS 상품 원장 정상 ({summary}); 즉시 claim 가능 0 ({market_summary})"
