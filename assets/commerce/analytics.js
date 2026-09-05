@@ -16,6 +16,8 @@ let ref='';try{ref=new URL(document.referrer).origin}catch(_){}
 g('config',id,{send_page_view:false,page_location:location.origin+p,page_referrer:ref,allow_google_signals:false,allow_ad_personalization_signals:false});
 const common={market,product_id:product,experiment_id:experiment,traffic_type:qa?'internal':'external',page_location:location.origin+p,page_referrer:ref};
 g('event',qa?'hc_qa_page_view':'page_view',common);
+// Only fixed portfolio labels; never forward calculator or household inputs.
+window.hcPortfolioEvent=(name,resource)=>{if(!['tool_complete','resource_open'].includes(name)||!['refill-cost','home-reset','chomchom'].includes(resource))return;g('event',qa?'hc_qa_'+name:name,Object.assign({},common,{resource_id:resource}));};
 // A small optional control enables reportable analytics only after a visitor chooses it.
 const panel=document.createElement('div');panel.id='hc-analytics-choice';
 panel.style.cssText='max-width:900px;margin:12px auto;padding:12px 25px;font:13px/1.5 system-ui;color:#536052';
@@ -27,6 +29,7 @@ const s=document.createElement('script');s.async=true;s.src='https://www.googlet
 document.addEventListener('click',e=>{
  const a=e.target.closest&&e.target.closest('a[href]');if(!a)return;
  let u;try{u=new URL(a.href,location.href)}catch(_){return}
+ if(u.origin===location.origin&&p.includes('/tools/')){const resource=u.pathname.includes('chomchom')?'chomchom':u.pathname.includes('home-reset')?'home-reset':null;if(resource)window.hcPortfolioEvent('resource_open',resource);}
  if(!['link.coupang.com','www.amazon.com'].includes(u.hostname)||!a.rel.split(/\s+/).includes('sponsored'))return;
  g('event',qa?'hc_qa_affiliate_click':'affiliate_click',Object.assign({},common,{retailer:u.hostname==='www.amazon.com'?'amazon':'coupang',link_position:a.classList.contains('button')?'button':'product_image',transport_type:'beacon'}));
 },true);
