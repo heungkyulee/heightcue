@@ -202,3 +202,7 @@ python3 ~/.hermes/scripts/check_rename_integrity.py   # 0=정상, 1=끊긴 참�
 `price_provenance`는 dict, `review_provenance`·`official_provenance`는 list of dict를
 기대하며, 어긋나면 크래시 대신 `*_invalid` 보류 사유로 처리한다. 새 provenance 필드를
 추가할 때도 같은 방어를 넣는다.
+
+
+## 2026-09-14 현재 공개 구매 자료
+`kr/tools/lg-a9-check.html`: 실제 한국 청소기 구매 문의를 바탕으로 만든 AX920BWE 시험 조건·무게·관리 확인표. kr/index.html과 sitemap.xml에 연결하며 assets/commerce/analytics.js에서 lg-a9-check 방문/제휴 클릭을 구분한다. 신규 발행은 사용자 전면 재시작 지시에 따른 Codex commerce 운영 폴더에서 관리한다. 과거 Hermes 봇을 재가동하지 않는다.

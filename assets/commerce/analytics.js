@@ -3,7 +3,7 @@
 if(window.__hcMeasured)return;window.__hcMeasured=true;
 const id='G-1LW7HW1R4M',p=location.pathname;
 const market=p.startsWith('/us/')?'US':p.startsWith('/kr/')?'KR':'global';
-const product=p.includes('vacuum-check')?'vacuum-check':p.includes('shark-zu102')?'shark-zu102':p.includes('flip-light')?'flip-light':p.includes('chomchom')?'chomchom':'none';
+const product=p.includes('lg-a9-check')?'lg-a9-check':p.includes('vacuum-check')?'vacuum-check':p.includes('shark-zu102')?'shark-zu102':p.includes('flip-light')?'flip-light':p.includes('chomchom')?'chomchom':'none';
 const experiment=p.endsWith('/flip-light-photo01.html')?'kr-flip-photo-01':p.endsWith('/chomchom-photo01.html')?'us-chomchom-photo-01':'unattributed';
 const qa=new URLSearchParams(location.search).get('hc_qa')==='1';
 window.dataLayer=window.dataLayer||[];function g(){window.dataLayer.push(arguments)}window.gtag=g;
